@@ -59,12 +59,10 @@ def extract_interval(ztfname, t0_inf, t0_sup, off_mul):
 
     return dict([(filt, _compute_min_max_interval(lc_df, t_inf, t_sup, filt)) for filt in ['zr', 'zg','zi']]), t_inf, t_sup, t_0
 
-
 lc_dict, t_inf, t_sup, t_0 = extract_interval(ztfname, t0_inf, t0_sup, off_mul)
-
+print(".", flush=True, end="")
 
 def plot_obs_count(ax, lc_df, t_0, t_inf, t_sup):
-    center_pos = (t_0 - lc_df.iloc[0].name)/(lc_df.iloc[-1].name - lc_df.iloc[0].name)
     ax.text(0., 0.15, str(len(lc_df.loc[:t_inf])), fontsize=15, transform=ax.transAxes, horizontalalignment='left', verticalalignment='top')
     ax.text(t_0, 0.15, str(len(lc_df.loc[t_inf:t_sup])), fontsize=15, transform=ax.get_xaxis_transform(), horizontalalignment='left', verticalalignment='top')
     ax.text(1., 0.15, str(len(lc_df.loc[t_sup:])), fontsize=15, transform=ax.transAxes, horizontalalignment='right', verticalalignment='top')
@@ -118,36 +116,65 @@ def _fix_ipac_file(filename):
 
 
 def generate_lc_df(lc_dict, zfilter):
-    lc_dict[zfilter]['lc']['ipac_file'] = lc_dict[zfilter]['lc']['ipac_file'].apply(_fix_ipac_file)
-    return lc_dict[zfilter]['lc']['ipac_file']
+    if lc_dict[zfilter] is not None:
+        lc_dict[zfilter]['lc']['ipac_file'] = lc_dict[zfilter]['lc']['ipac_file'].apply(_fix_ipac_file)
+        return lc_dict[zfilter]['lc']['ipac_file']
 
 
 def generate_params_df(lc_dict, zfilter):
-    params = {'t_0': t_0,
-              't_inf': t_inf,
-              't_sup': t_sup,
-              't_min': lc_dict[zfilter]['t_min'],
-              't_max': lc_dict[zfilter]['t_max'],
-              'zmax': zmax,
-              'off_mul': off_mul}
+    if lc_dict[zfilter] is not None:
+        params = {'t_0': t_0,
+                't_inf': t_inf,
+                't_sup': t_sup,
+                't_min': lc_dict[zfilter]['t_min'],
+                't_max': lc_dict[zfilter]['t_max'],
+                'zmax': zmax,
+                'off_mul': off_mul}
 
-    return pd.DataFrame.from_records([params])
+        return pd.DataFrame.from_records([params])
 
 
 def save_df(df_lc_zg, df_lc_zr, df_lc_zi, df_params_zg, df_params_zr, df_params_zi):
-    df_lc_zg.to_csv(save_folder.joinpath("{}_{}.csv".format(ztfname, 'zg')), sep=",")
-    df_lc_zr.to_csv(save_folder.joinpath("{}_{}.csv".format(ztfname, 'zr')), sep=",")
-    df_lc_zi.to_csv(save_folder.joinpath("{}_{}.csv".format(ztfname, 'zi')), sep=",")
-    df_params_zg.to_csv(save_folder.joinpath("{}_{}_params.csv".format(ztfname, 'zg')), sep=",")
-    df_params_zr.to_csv(save_folder.joinpath("{}_{}_params.csv".format(ztfname, 'zr')), sep=",")
-    df_params_zi.to_csv(save_folder.joinpath("{}_{}_params.csv".format(ztfname, 'zi')), sep=",")
+    def _save_df_filter(df_lc, df_params, zfilter, first=False):
+        if df_lc is not None and df_params is not None:
+            if first:
+                mode = 'w'
+            else:
+                mode = 'a'
 
-    df_lc_zg.to_hdf("{}.hd5".format(ztfname), key='lc_zg', mode='w')
-    df_lc_zr.to_hdf("{}.hd5".format(ztfname), key='lc_zr')
-    df_lc_zi.to_hdf("{}.hd5".format(ztfname), key='lc_zi')
-    df_params_zg.to_hdf("{}.hd5".format(ztfname), key='params_zg')
-    df_params_zr.to_hdf("{}.hd5".format(ztfname), key='params_zr')
-    df_params_zi.to_hdf("{}.hd5".format(ztfname), key='params_zi')
+            df_lc.to_csv(save_folder.joinpath("{}_{}.csv".format(ztfname, zfilter)), sep=",")
+            df_params.to_csv(save_folder.joinpath("{}_{}_params.csv".format(ztfname, zfilter)), sep=",")
+            df_lc.to_hdf(save_folder.joinpath("{}.hd5".format(ztfname)), key='lc_{}'.format(zfilter), mode=mode)
+            df_params.to_hdf(save_folder.joinpath("{}.hd5".format(ztfname)), key='params_{}'.format(zfilter))
+
+    #pd.DataFrame().to_hdf(save_folder.joinpath("{}.hd5".format(ztfname)), key='void', mode='w')
+    _save_df_filter(df_lc_zg, df_params_zg, 'zg', first=True)
+    _save_df_filter(df_lc_zr, df_params_zr, 'zr')
+    _save_df_filter(df_lc_zi, df_params_zi, 'zi')
+
+    # if df_lc_zr is not None:
+    #     df_lc_zr.to_csv(save_folder.joinpath("{}_{}.csv".format(ztfname, 'zr')), sep=",")
+    #     df_params_zi.to_csv(save_folder.joinpath("{}_{}_params.csv".format(ztfname, 'zr')), sep=",")
+    #     df_lc_zr.to_hdf("{}.hd5".format(ztfname), key='lc_zg', mode='w')
+    #     df_params_zr.to_hdf("{}.hd5".format(ztfname), key='params_zg')
+
+    # if df_lc_zi is not None:
+    #     df_lc_zi.to_csv(save_folder.joinpath("{}_{}.csv".format(ztfname, 'zg')), sep=",")
+    #     df_params_zi.to_csv(save_folder.joinpath("{}_{}_params.csv".format(ztfname, 'zg')), sep=",")
+    #     df_lc_zi.to_hdf(save_folder.joinpath("{}.hd5".format(ztfname)), key='lc_zg', mode='w')
+    #     df_params_zi.to_hdf(save_folder.joinpath("{}.hd5".format(ztfname)), key='params_zg')
+
+
+    # df_lc_zr.to_csv(save_folder.joinpath("{}_{}.csv".format(ztfname, 'zr')), sep=",")
+    # df_lc_zi.to_csv(save_folder.joinpath("{}_{}.csv".format(ztfname, 'zi')), sep=",")
+    # df_params_zg.to_csv(save_folder.joinpath("{}_{}_params.csv".format(ztfname, 'zg')), sep=",")
+    # df_params_zr.to_csv(save_folder.joinpath("{}_{}_params.csv".format(ztfname, 'zr')), sep=",")
+    # df_params_zi.to_csv(save_folder.joinpath("{}_{}_params.csv".format(ztfname, 'zi')), sep=",")
+
+    # df_lc_zr.to_hdf("{}.hd5".format(ztfname), key='lc_zr')
+    # df_lc_zi.to_hdf("{}.hd5".format(ztfname), key='lc_zi')
+    # df_params_zr.to_hdf("{}.hd5".format(ztfname), key='params_zr')
+    # df_params_zi.to_hdf("{}.hd5".format(ztfname), key='params_zi')
 
 save_df(generate_lc_df(lc_dict, 'zg'),
         generate_lc_df(lc_dict, 'zr'),
