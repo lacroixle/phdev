@@ -20,7 +20,7 @@ off_mul = float(sys.argv[4])
 
 data_folder = pathlib.Path(os.environ.get("DATA_FOLDER"))
 salt_df = pd.read_csv(data_folder.joinpath("ztf/ztfcosmoidr/dr2/params/DR2_SALT2fit_params.csv"), delimiter=",", index_col="name")
-
+redshift_df = pd.read_csv(data_folder.joinpath("ztf/ztfcosmoidr/dr2/params/DR2_redshifts.csv"), delimiter=",", index_col="ztfname")
 
 plot = True
 if len(sys.argv) > 5:
@@ -77,8 +77,9 @@ def estimate_lc_params(ztfname):
 
         return dict([(filt, _compute_min_max_interval(lc_df, t_inf, t_sup, filt)) for filt in ['zr', 'zg','zi']]), t_inf, t_sup, t_0
 
+
     lc_dict, t_inf, t_sup, t_0 = extract_interval(ztfname, t0_inf, t0_sup, off_mul)
-    #print(".", flush=True, end="")
+
 
     def plot_obs_count(ax, lc_df, t_0, t_inf, t_sup):
         ax.text(0., 0.15, str(len(lc_df.loc[:t_inf])), fontsize=15, transform=ax.transAxes, horizontalalignment='left', verticalalignment='top')
@@ -177,6 +178,11 @@ def estimate_lc_params(ztfname):
             generate_params_df(lc_dict, 'zg'),
             generate_params_df(lc_dict, 'zr'),
             generate_params_df(lc_dict, 'zi'))
+
+    # fgallery description file
+    with open(save_folder.joinpath("{}.txt".format(ztfname)), mode='w') as f:
+        f.write("z={}\n".format(redshift_df.loc[ztfname]['redshift']))
+        f.write("(ra, dec)=({}, {})".format(redshift_df.loc[ztfname]['host_ra'], redshift_df.loc[ztfname]['host_dec']))
 
     print(".", end="", flush=True)
 
