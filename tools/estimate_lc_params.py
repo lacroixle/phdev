@@ -23,14 +23,16 @@ salt_df = pd.read_csv(data_folder.joinpath("ztf/ztfcosmoidr/dr2/params/DR2_SALT2
 redshift_df = pd.read_csv(data_folder.joinpath("ztf/ztfcosmoidr/dr2/params/DR2_redshifts.csv"), delimiter=",", index_col="ztfname")
 
 plot = True
+n_jobs = 1
 if len(sys.argv) > 5:
     plot = bool(distutils.util.strtobool(sys.argv[6]))
     if not plot:
-        n_proc = int(sys.argv[5])
+        n_jobs = int(sys.argv[5])
         save_folder = pathlib.Path(sys.argv[7]).resolve()
 
 
 ztfnames = []
+
 
 if not ztfname_folder.is_dir():
     ztfnames = [str(ztfname_folder)]
@@ -80,6 +82,9 @@ def estimate_lc_params(ztfname):
 
     lc_dict, t_inf, t_sup, t_0 = extract_interval(ztfname, t0_inf, t0_sup, off_mul)
 
+    # Check that at least for one filter we have data
+    if not any([lc_dict[zfilter] is not None for zfilter in ['zg', 'zr', 'zi']]):
+        return
 
     def plot_obs_count(ax, lc_df, t_0, t_inf, t_sup):
         ax.text(0., 0.15, str(len(lc_df.loc[:t_inf])), fontsize=15, transform=ax.transAxes, horizontalalignment='left', verticalalignment='top')
@@ -93,6 +98,8 @@ def estimate_lc_params(ztfname):
     with plt.style.context('seaborn-whitegrid'):
 
         fig, ax = plt.subplots(figsize=(15, 8), nrows=3, ncols=1, sharex=True)
+        fig.suptitle("{}".format(ztfname))
+
         if lc_dict['zg']:
             ax = plt.subplot(3, 1, 1)
             lc_dict['zg']['lc']['flux'].plot(ax=ax, yerr=lc_dict['zg']['lc']['flux_err'], linestyle='None', marker='.', color='blue')
@@ -100,8 +107,9 @@ def estimate_lc_params(ztfname):
             ax.grid(ls='--', linewidth=0.8)
             ax.set_xlabel("MJD")
             ax.set_ylabel("Flux - g")
-
-            ax.set_title(ztfname)
+        else:
+            ax = plt.subplot(3, 1, 1)
+            ax.text(0.5, 0.5, "No data", fontsize=30, transform=ax.transAxes, horizontalalignment='center', verticalalignment='center')
 
         if lc_dict['zr']:
             ax = plt.subplot(3, 1, 2)
@@ -110,7 +118,9 @@ def estimate_lc_params(ztfname):
             ax.grid(ls='--', linewidth=0.8)
             ax.set_xlabel("MJD")
             ax.set_ylabel("Flux - r")
-
+        else:
+            ax = plt.subplot(3, 1, 2)
+            ax.text(0.5, 0.5, "No data", fontsize=30, transform=ax.transAxes, horizontalalignment='center', verticalalignment='center')
 
         if lc_dict['zi']:
             ax = plt.subplot(3, 1, 3)
@@ -119,6 +129,9 @@ def estimate_lc_params(ztfname):
             ax.grid(ls='--', linewidth=0.8)
             ax.set_xlabel("MJD")
             ax.set_ylabel("Flux - i")
+        else:
+            ax = plt.subplot(3, 1, 3)
+            ax.text(0.5, 0.5, "No data", fontsize=30, transform=ax.transAxes, horizontalalignment='center', verticalalignment='center')
 
         plt.tight_layout()
 
@@ -172,19 +185,20 @@ def estimate_lc_params(ztfname):
         _save_df_filter(df_lc_zi, df_params_zi, 'zi')
 
 
-    save_df(generate_lc_df(lc_dict, 'zg'),
-            generate_lc_df(lc_dict, 'zr'),
-            generate_lc_df(lc_dict, 'zi'),
-            generate_params_df(lc_dict, 'zg'),
-            generate_params_df(lc_dict, 'zr'),
-            generate_params_df(lc_dict, 'zi'))
+    if not plot:
+        save_df(generate_lc_df(lc_dict, 'zg'),
+                generate_lc_df(lc_dict, 'zr'),
+                generate_lc_df(lc_dict, 'zi'),
+                generate_params_df(lc_dict, 'zg'),
+                generate_params_df(lc_dict, 'zr'),
+                generate_params_df(lc_dict, 'zi'))
 
-    # fgallery description file
-    with open(save_folder.joinpath("{}.txt".format(ztfname)), mode='w') as f:
-        f.write("z={}\n".format(redshift_df.loc[ztfname]['redshift']))
-        f.write("(ra, dec)=({}, {})".format(redshift_df.loc[ztfname]['host_ra'], redshift_df.loc[ztfname]['host_dec']))
+        # fgallery description file
+        with open(save_folder.joinpath("{}.txt".format(ztfname)), mode='w') as f:
+            f.write("z={}\n".format(redshift_df.loc[ztfname]['redshift']))
+            f.write("(ra, dec)=({}, {})".format(redshift_df.loc[ztfname]['host_ra'], redshift_df.loc[ztfname]['host_dec']))
 
-    print(".", end="", flush=True)
+        print(".", end="", flush=True)
 
 
 
