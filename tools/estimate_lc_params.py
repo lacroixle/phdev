@@ -195,6 +195,7 @@ def estimate_lc_params(ztfname):
 
         # fgallery description file
         with open(save_folder.joinpath("{}.txt".format(ztfname)), mode='w') as f:
+            f.write("{}\n".format(ztfname))
             f.write("z={}\n".format(redshift_df.loc[ztfname]['redshift']))
             f.write("(ra, dec)=({}, {})".format(redshift_df.loc[ztfname]['host_ra'], redshift_df.loc[ztfname]['host_dec']))
 
