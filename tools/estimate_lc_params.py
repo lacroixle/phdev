@@ -188,6 +188,6 @@ def estimate_lc_params(ztfname):
 
 
 
-Parallel(n_jobs=4)(delayed(estimate_lc_params)(ztfname) for ztfname in ztfnames)
+Parallel(n_jobs=n_jobs)(delayed(estimate_lc_params)(ztfname) for ztfname in ztfnames)
 
 print("")
