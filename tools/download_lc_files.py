@@ -33,7 +33,7 @@ def download_lc(ztfname, filter_key):
     print("Estimated size to download=~{} GB".format(estimated_filesize))
 
     def _download_lc(lc_filename):
-        science.ScienceQuadrant.from_filename(lc_filename)
+        science.ScienceQuadrant.from_filename(lc_filename).get_data('clean')
         print(".", end="", flush=True)
 
     #for lc_filename in lc_df.to_list():
