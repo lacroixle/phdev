@@ -49,10 +49,17 @@ def download_lc(ztfname, filter_key):
     print("Average download speed={} MB/s".format(estimated_filesize/elapsed_time*1000))
     print("")
 
+
+zfilters = ['zr', 'zg', 'zi']
 start_dl_time = time.perf_counter()
-download_lc(ztfname, 'lc_zr')
-download_lc(ztfname, 'lc_zg')
-download_lc(ztfname, 'lc_zi')
+
+for zfilter in zfilters:
+    with pd.HDFStore(lc_folder.joinpath("{}.hd5".format(ztfname)), mode='r') as hdfstore:
+        if '/lc_{}'.format(zfilter) in hdfstore.keys():
+            download_lc(ztfname, 'lc_{}'.format(zfilter))
+        else:
+            print("No {} filter found for {}!".format(zfilter, ztfname))
+
 total_elapsed_time = time.perf_counter() - start_dl_time
 print("Total time elapsed={}".format(total_elapsed_time))
 print("Average download speed={} MB/s".format(total_estimated_filesize/total_elapsed_time*1000))
