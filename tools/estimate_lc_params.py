@@ -161,7 +161,7 @@ def estimate_lc_params(ztfname):
         return "{}_{}.fits".format(split[0], split[1])
 
 
-    def generate_lc_df(lc_dict, zfilter, t_min, t_max):
+    def generate_lc_df(lc_dict, zfilter):
         if lc_dict[zfilter] is not None:
             lc_dict[zfilter]['lc']['ipac_file'] = lc_dict[zfilter]['lc']['ipac_file'].apply(_fix_ipac_file)
             return lc_dict[zfilter]['lc']['ipac_file']
@@ -199,9 +199,9 @@ def estimate_lc_params(ztfname):
 
 
     if not plot:
-        save_df(generate_lc_df(lc_dict, 'zg', t_min, t_max),
-                generate_lc_df(lc_dict, 'zr', t_min, t_max),
-                generate_lc_df(lc_dict, 'zi', t_min, t_max),
+        save_df(generate_lc_df(lc_dict, 'zg'),
+                generate_lc_df(lc_dict, 'zr'),
+                generate_lc_df(lc_dict, 'zi'),
                 generate_params_df(lc_dict, 'zg'),
                 generate_params_df(lc_dict, 'zr'),
                 generate_params_df(lc_dict, 'zi'))
