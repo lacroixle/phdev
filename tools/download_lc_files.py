@@ -33,19 +33,21 @@ def download_lc(ztfname, filter_key):
     print("Estimated size to download=~{} GB".format(estimated_filesize))
 
     def _download_lc(lc_filename):
-        science.ScienceQuadrant.from_filename(lc_filename).get_data('clean')
-        print(".", end="", flush=True)
-
-    #for lc_filename in lc_df.to_list():
-    #    _download_lc(lc_filename)
+        try:
+            science.ScienceQuadrant.from_filename(lc_filename).get_data('clean')
+        except:
+            print("x")
+        else:
+            print(".", end="", flush=True)
 
     start_dl_filter_time = time.perf_counter()
     Parallel(n_jobs=n_jobs)(delayed(_download_lc)(lc_filename) for lc_filename in lc_df.to_list())
     elapsed_time = time.perf_counter() - start_dl_filter_time
+
     print("")
     print("Elapsed time={} s".format(elapsed_time))
     print("Average download speed={} MB/s".format(estimated_filesize/elapsed_time*1000))
-    print("\n", end="")
+    print("")
 
 start_dl_time = time.perf_counter()
 download_lc(ztfname, 'lc_zr')

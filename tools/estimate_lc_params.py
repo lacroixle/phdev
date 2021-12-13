@@ -10,6 +10,8 @@ import matplotlib.pyplot as plt
 from scipy import stats
 import numpy as np
 from joblib import Parallel, delayed
+from ztfquery import query
+import astropy.time
 
 
 ztfname_folder = pathlib.Path(sys.argv[1])
@@ -44,16 +46,30 @@ else:
 # For some reason this sn does not exist in the SALT db
 blacklist = ["ZTF18aaajrso"]
 
-zmax = 2
+zmax = 5
 
 
 def estimate_lc_params(ztfname):
     if ztfname in blacklist:
         return
 
-    def extract_interval(ztfname, t0_inf, t0_sup, off_mul):
+    def extract_interval(ztfname, t0_inf, t0_sup, off_mul, do_sql_request=True):
         lc_df = pd.read_csv(data_folder.joinpath("ztf/ztfcosmoidr/dr2/lightcurves/{}_LC.csv".format(ztfname)), delimiter="\s+", index_col="mjd")
         lc_df = lc_df[(np.abs(stats.zscore(lc_df['flux_err'])) < zmax)]
+
+        sql_lc_df = None
+        if do_sql_request:
+            zquery = query.ZTFQuery()
+            zquery.load_metadata(radec=(redshift_df.loc[ztfname]['host_ra'], redshift_df.loc[ztfname]['host_dec']))
+            sql_lc_df = zquery.metatable
+
+            # Add an obsmkd column and set it as index
+            def _jd_to_mjd(jd):
+                time = astropy.time.Time(jd, format='jd')
+                return time.mjd
+
+            sql_lc_df['obsmjd'] = sql_lc_df['obsjd'].apply(_jd_to_mjd)
+            sql_lc_df.set_index('obsmjd', inplace=True)
 
         t_0 = salt_df.loc[ztfname, "t0"]
 
@@ -74,7 +90,7 @@ def estimate_lc_params(ztfname):
             t_min = lc_f_df.iloc[idx_min].name
             t_max = lc_f_df.iloc[idx_max].name
 
-            return {'lc': lc_f_df.loc[t_min:t_max], 't_min': t_min, 't_max': t_max}
+            return {'lc': lc_f_df.loc[t_min:t_max], 't_min': t_min, 't_max': t_max, 'sql_lc': sql_lc_df.loc[sql_lc_df['filtercode'] == filt]}
 
 
         return dict([(filt, _compute_min_max_interval(lc_df, t_inf, t_sup, filt)) for filt in ['zr', 'zg','zi']]), t_inf, t_sup, t_0
@@ -87,12 +103,33 @@ def estimate_lc_params(ztfname):
         return
 
     def plot_obs_count(ax, lc_df, t_0, t_inf, t_sup):
-        ax.text(0., 0.15, str(len(lc_df.loc[:t_inf])), fontsize=15, transform=ax.transAxes, horizontalalignment='left', verticalalignment='top')
-        ax.text(t_0, 0.15, str(len(lc_df.loc[t_inf:t_sup])), fontsize=15, transform=ax.get_xaxis_transform(), horizontalalignment='left', verticalalignment='top')
-        ax.text(1., 0.15, str(len(lc_df.loc[t_sup:])), fontsize=15, transform=ax.transAxes, horizontalalignment='right', verticalalignment='top')
+        ax.text(0., 0.20, str(len(lc_df.loc[:t_inf])), fontsize=15, transform=ax.transAxes, horizontalalignment='left', verticalalignment='top')
+        ax.text(t_0, 0.20, str(len(lc_df.loc[t_inf:t_sup])), fontsize=15, transform=ax.get_xaxis_transform(), horizontalalignment='left', verticalalignment='top')
+        ax.text(1., 0.20, str(len(lc_df.loc[t_sup:])), fontsize=15, transform=ax.transAxes, horizontalalignment='right', verticalalignment='top')
         ax.axvline(t_inf)
         ax.axvline(t_0, linestyle='--')
         ax.axvline(t_sup)
+
+
+    def plot_sql_available(ax, sql_lc_df, t_inf, t_sup):
+        for mjd in list(sql_lc_df.index):
+            ax.axvline(mjd, ymin=0.02, ymax=0.09, linestyle='solid', color='grey')
+
+
+    def plot_lightcurve(ax, zfilter):
+        if lc_dict[zfilter]:
+            lc_dict[zfilter]['lc']['flux'].plot(ax=ax, yerr=lc_dict[zfilter]['lc']['flux_err'], linestyle='None', marker='.', color='blue')
+            plot_obs_count(ax, lc_dict[zfilter]['lc'], t_0, t_inf, t_sup)
+            ax.grid(ls='--', linewidth=0.8)
+            ax.set_xlabel("MJD")
+            ax.set_ylabel("Flux - {}".format(zfilter))
+
+            if lc_dict[zfilter]['sql_lc'] is not None:
+                plot_sql_available(ax, lc_dict[zfilter]['sql_lc'], t_inf, t_sup)
+
+        else:
+            ax.text(0.5, 0.5, "No data", fontsize=30, transform=ax.transAxes, horizontalalignment='center', verticalalignment='center')
+
 
 
     with plt.style.context('seaborn-whitegrid'):
@@ -100,38 +137,14 @@ def estimate_lc_params(ztfname):
         fig, ax = plt.subplots(figsize=(15, 8), nrows=3, ncols=1, sharex=True)
         fig.suptitle("{}".format(ztfname))
 
-        if lc_dict['zg']:
-            ax = plt.subplot(3, 1, 1)
-            lc_dict['zg']['lc']['flux'].plot(ax=ax, yerr=lc_dict['zg']['lc']['flux_err'], linestyle='None', marker='.', color='blue')
-            plot_obs_count(ax, lc_dict['zg']['lc'], t_0, t_inf, t_sup)
-            ax.grid(ls='--', linewidth=0.8)
-            ax.set_xlabel("MJD")
-            ax.set_ylabel("Flux - g")
-        else:
-            ax = plt.subplot(3, 1, 1)
-            ax.text(0.5, 0.5, "No data", fontsize=30, transform=ax.transAxes, horizontalalignment='center', verticalalignment='center')
+        ax = plt.subplot(3, 1, 1)
+        plot_lightcurve(ax, 'zg')
 
-        if lc_dict['zr']:
-            ax = plt.subplot(3, 1, 2)
-            lc_dict['zr']['lc']['flux'].plot(ax=ax, yerr=lc_dict['zr']['lc']['flux_err'], linestyle='None', marker='.', color='red')
-            plot_obs_count(ax, lc_dict['zr']['lc'], t_0, t_inf, t_sup)
-            ax.grid(ls='--', linewidth=0.8)
-            ax.set_xlabel("MJD")
-            ax.set_ylabel("Flux - r")
-        else:
-            ax = plt.subplot(3, 1, 2)
-            ax.text(0.5, 0.5, "No data", fontsize=30, transform=ax.transAxes, horizontalalignment='center', verticalalignment='center')
+        ax = plt.subplot(3, 1, 2)
+        plot_lightcurve(ax, 'zr')
 
-        if lc_dict['zi']:
-            ax = plt.subplot(3, 1, 3)
-            lc_dict['zi']['lc']['flux'].plot(ax=ax, yerr=lc_dict['zi']['lc']['flux_err'], linestyle='None', marker='.', color='orange')
-            plot_obs_count(ax, lc_dict['zi']['lc'], t_0, t_inf, t_sup)
-            ax.grid(ls='--', linewidth=0.8)
-            ax.set_xlabel("MJD")
-            ax.set_ylabel("Flux - i")
-        else:
-            ax = plt.subplot(3, 1, 3)
-            ax.text(0.5, 0.5, "No data", fontsize=30, transform=ax.transAxes, horizontalalignment='center', verticalalignment='center')
+        ax = plt.subplot(3, 1, 3)
+        plot_lightcurve(ax, 'zi')
 
         plt.tight_layout()
 
@@ -148,7 +161,7 @@ def estimate_lc_params(ztfname):
         return "{}_{}.fits".format(split[0], split[1])
 
 
-    def generate_lc_df(lc_dict, zfilter):
+    def generate_lc_df(lc_dict, zfilter, t_min, t_max):
         if lc_dict[zfilter] is not None:
             lc_dict[zfilter]['lc']['ipac_file'] = lc_dict[zfilter]['lc']['ipac_file'].apply(_fix_ipac_file)
             return lc_dict[zfilter]['lc']['ipac_file']
@@ -186,9 +199,9 @@ def estimate_lc_params(ztfname):
 
 
     if not plot:
-        save_df(generate_lc_df(lc_dict, 'zg'),
-                generate_lc_df(lc_dict, 'zr'),
-                generate_lc_df(lc_dict, 'zi'),
+        save_df(generate_lc_df(lc_dict, 'zg', t_min, t_max),
+                generate_lc_df(lc_dict, 'zr', t_min, t_max),
+                generate_lc_df(lc_dict, 'zi', t_min, t_max),
                 generate_params_df(lc_dict, 'zg'),
                 generate_params_df(lc_dict, 'zr'),
                 generate_params_df(lc_dict, 'zi'))
