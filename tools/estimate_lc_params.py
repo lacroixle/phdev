@@ -40,7 +40,7 @@ plot = args.plot
 zmax = args.zmax
 off_mul = args.off_mul
 sql_request = args.sql_request
-output_folder = args.output
+output_folder = args.output.expanduser().resolve()
 
 if args.cosmodr:
     cosmo_dr_folder = args.cosmodr
@@ -60,7 +60,6 @@ if args.ztfname:
     ztfnames = [args.ztfname]
     n_jobs = 1
 else:
-    print(lightcurve_folder.expanduser().resolve())
     ztf_files = lightcurve_folder.glob("*.csv")
 
     ztfnames = [ztf_file.stem.split("_")[0] for ztf_file in ztf_files]
@@ -77,17 +76,15 @@ def estimate_lc_params(ztfname):
         lc_df = pd.read_csv(lightcurve_folder.joinpath("{}_LC.csv".format(ztfname)), delimiter="\s+", index_col="mjd")
         lc_df = lc_df[(np.abs(stats.zscore(lc_df['flux_err'])) < zmax)]
 
-        if verbosity >= 1:
-            print("Processing {}...".format(ztfname))
-
         sql_lc_df = None
         if sql_request:
-            print("SQL request")
             zquery = query.ZTFQuery()
             zquery.load_metadata(radec=(redshift_df.loc[ztfname]['host_ra'], redshift_df.loc[ztfname]['host_dec']))
             sql_lc_df = zquery.metatable
 
-            print("Found {} entries".format(len(sql_lc_df)))
+            if verbosity >= 1:
+                print("{}: found SQL {} entries".format(ztfname, len(sql_lc_df)))
+
             # Add an obsmjd column and set it as index
             def _jd_to_mjd(jd):
                 time = astropy.time.Time(jd, format='jd')
@@ -235,7 +232,7 @@ def estimate_lc_params(ztfname):
             f.write("z={}\n".format(redshift_df.loc[ztfname]['redshift']))
             f.write("(ra, dec)=({}, {})".format(redshift_df.loc[ztfname]['host_ra'], redshift_df.loc[ztfname]['host_dec']))
 
-        if len(ztfnames) > 1:
+        if len(ztfnames) > 1 and verbosity == 0:
             print(".", end="", flush=True)
 
 
