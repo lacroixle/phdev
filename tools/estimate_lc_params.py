@@ -4,6 +4,7 @@ import sys
 import os
 import pathlib
 import distutils.util
+import argparse
 
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -13,42 +14,59 @@ from joblib import Parallel, delayed
 from ztfquery import query
 import astropy.time
 
+#ZTF19aaripqw
 
-ztfname_folder = pathlib.Path(sys.argv[1])
-t0_inf = int(sys.argv[2])
-t0_sup = int(sys.argv[3])
-off_mul = float(sys.argv[4])
+zfilters = ['zr', 'zg', 'zi']
+zfilter_plot_color = dict(zip(zfilters, ['blue', 'red', 'orange']))
 
+argparser = argparse.ArgumentParser(description="Lightcurve estimation tools.")
+argparser.add_argument("--output", type=pathlib.Path, help="Output folder")
+argparser.add_argument('-j', dest='n_jobs', type=int, default=1, help="Number of jobs to launch.")
+argparser.add_argument('--ztfname', type=str, nargs='?', help="Process a specific SN 1a.")
+argparser.add_argument('-v', type=int, dest='verbosity', default=0, help="Verbosity level.")
+argparser.add_argument('--cosmodr', type=pathlib.Path, help="Cosmo DR folder.")
+argparser.add_argument('--off_mul', type=int, default=3, help="Off SN 1a image statistics multiplier.")
+argparser.add_argument('--plot', action='store_true', help="If set, will plot the lightcurve. Only when --ztfname is set.")
+argparser.add_argument('--zmax', type=float, default=5., help="")
+argparser.add_argument('--sql-request', dest='sql_request', action='store_true')
 
-data_folder = pathlib.Path(os.environ.get("DATA_FOLDER"))
-salt_df = pd.read_csv(data_folder.joinpath("ztf/ztfcosmoidr/dr2/params/DR2_SALT2fit_params.csv"), delimiter=",", index_col="name")
-redshift_df = pd.read_csv(data_folder.joinpath("ztf/ztfcosmoidr/dr2/params/DR2_redshifts.csv"), delimiter=",", index_col="ztfname")
+args = argparser.parse_args()
 
-plot = True
-n_jobs = 1
-if len(sys.argv) > 5:
-    plot = bool(distutils.util.strtobool(sys.argv[6]))
-    if not plot:
-        n_jobs = int(sys.argv[5])
-        save_folder = pathlib.Path(sys.argv[7]).resolve()
+verbosity = args.verbosity
+n_jobs = args.n_jobs
+t0_inf = 50
+t0_sup = 120
+plot = args.plot
+zmax = args.zmax
+off_mul = args.off_mul
+sql_request = args.sql_request
+output_folder = args.output
+
+if args.cosmodr:
+    cosmo_dr_folder = args.cosmodr
+elif 'COSMO_DR_FOLDER' in os.environ.keys():
+    cosmo_dr_folder = pathlib.Path(os.environ.get("COSMO_DR_FOLDER"))
+else:
+    print("Cosmo DR folder not set! Either set COSMO_DR_FOLDER environnement variable or use the --cosmodr parameter.")
+    exit(-1)
+
+salt_df = pd.read_csv(cosmo_dr_folder.joinpath("params/DR2_SALT2fit_params.csv"), delimiter=",", index_col="name")
+redshift_df = pd.read_csv(cosmo_dr_folder.joinpath("params/DR2_redshifts.csv"), delimiter=",", index_col="ztfname")
+lightcurve_folder = cosmo_dr_folder.joinpath("lightcurves/").expanduser().resolve()
 
 
 ztfnames = []
-
-verbosity = 1
-
-
-if not ztfname_folder.is_dir():
-    ztfnames = [str(ztfname_folder)]
+if args.ztfname:
+    ztfnames = [args.ztfname]
+    n_jobs = 1
 else:
-    ztf_files = ztfname_folder.glob("*_LC.csv")
+    print(lightcurve_folder.expanduser().resolve())
+    ztf_files = lightcurve_folder.glob("*.csv")
 
     ztfnames = [ztf_file.stem.split("_")[0] for ztf_file in ztf_files]
 
 # For some reason this sn does not exist in the SALT db
 blacklist = ["ZTF18aaajrso"]
-
-zmax = 5
 
 
 def estimate_lc_params(ztfname):
@@ -56,14 +74,14 @@ def estimate_lc_params(ztfname):
         return
 
     def extract_interval(ztfname, t0_inf, t0_sup, off_mul, do_sql_request=True):
-        lc_df = pd.read_csv(data_folder.joinpath("ztf/ztfcosmoidr/dr2/lightcurves/{}_LC.csv".format(ztfname)), delimiter="\s+", index_col="mjd")
+        lc_df = pd.read_csv(lightcurve_folder.joinpath("{}_LC.csv".format(ztfname)), delimiter="\s+", index_col="mjd")
         lc_df = lc_df[(np.abs(stats.zscore(lc_df['flux_err'])) < zmax)]
 
         if verbosity >= 1:
             print("Processing {}...".format(ztfname))
 
         sql_lc_df = None
-        if do_sql_request:
+        if sql_request:
             print("SQL request")
             zquery = query.ZTFQuery()
             zquery.load_metadata(radec=(redshift_df.loc[ztfname]['host_ra'], redshift_df.loc[ztfname]['host_dec']))
@@ -97,7 +115,12 @@ def estimate_lc_params(ztfname):
             t_min = lc_f_df.iloc[idx_min].name
             t_max = lc_f_df.iloc[idx_max].name
 
-            return {'lc': lc_f_df.loc[t_min:t_max], 't_min': t_min, 't_max': t_max, 'sql_lc': sql_lc_df.loc[sql_lc_df['filtercode'] == filt]}
+            return_dict = {'lc': lc_f_df.loc[t_min:t_max], 't_min': t_min, 't_max': t_max}
+
+            if sql_request:
+                return_dict['sql_lc'] = sql_lc_df.loc[sql_lc_df['filtercode'] == filt]
+
+            return return_dict
 
 
         return dict([(filt, _compute_min_max_interval(lc_df, t_inf, t_sup, filt)) for filt in ['zr', 'zg','zi']]), t_inf, t_sup, t_0
@@ -108,6 +131,7 @@ def estimate_lc_params(ztfname):
     # Check that at least for one filter we have data
     if not any([lc_dict[zfilter] is not None for zfilter in ['zg', 'zr', 'zi']]):
         return
+
 
     def plot_obs_count(ax, lc_df, t_0, t_inf, t_sup):
         ax.text(0., 0.20, str(len(lc_df.loc[:t_inf])), fontsize=15, transform=ax.transAxes, horizontalalignment='left', verticalalignment='top')
@@ -125,18 +149,17 @@ def estimate_lc_params(ztfname):
 
     def plot_lightcurve(ax, zfilter):
         if lc_dict[zfilter]:
-            lc_dict[zfilter]['lc']['flux'].plot(ax=ax, yerr=lc_dict[zfilter]['lc']['flux_err'], linestyle='None', marker='.', color='blue')
+            lc_dict[zfilter]['lc']['flux'].plot(ax=ax, yerr=lc_dict[zfilter]['lc']['flux_err'], linestyle='None', marker='.', color=zfilter_plot_color[zfilter])
             plot_obs_count(ax, lc_dict[zfilter]['lc'], t_0, t_inf, t_sup)
             ax.grid(ls='--', linewidth=0.8)
             ax.set_xlabel("MJD")
             ax.set_ylabel("Flux - {}".format(zfilter))
 
-            if lc_dict[zfilter]['sql_lc'] is not None:
+            if 'sql_lc' in lc_dict[zfilter].keys():
                 plot_sql_available(ax, lc_dict[zfilter]['sql_lc'], t_inf, t_sup)
 
         else:
             ax.text(0.5, 0.5, "No data", fontsize=30, transform=ax.transAxes, horizontalalignment='center', verticalalignment='center')
-
 
 
     with plt.style.context('seaborn-whitegrid'):
@@ -144,22 +167,15 @@ def estimate_lc_params(ztfname):
         fig, ax = plt.subplots(figsize=(15, 8), nrows=3, ncols=1, sharex=True)
         fig.suptitle("{}".format(ztfname))
 
-        ax = plt.subplot(3, 1, 1)
-        plot_lightcurve(ax, 'zg')
-
-        ax = plt.subplot(3, 1, 2)
-        plot_lightcurve(ax, 'zr')
-
-        ax = plt.subplot(3, 1, 3)
-        plot_lightcurve(ax, 'zi')
+        [plot_lightcurve(plt.subplot(3, 1, i+1), zfilter) for i, zfilter in enumerate(zfilters)]
 
         plt.tight_layout()
 
         if plot:
             plt.show()
         else:
-            plt.savefig(save_folder.joinpath("{}/{}".format(save_folder, ztfname)).with_suffix(".png"), dpi=300)
-            plt.savefig(save_folder.joinpath("{}/{}".format(save_folder, ztfname)).with_suffix(".pdf"), dpi=300)
+            plt.savefig(output_folder.joinpath("{}/{}".format(output_folder, ztfname)).with_suffix(".png"), dpi=300)
+            plt.savefig(output_folder.joinpath("{}/{}".format(output_folder, ztfname)).with_suffix(".pdf"), dpi=300)
 
         plt.close()
 
@@ -195,17 +211,17 @@ def estimate_lc_params(ztfname):
                 else:
                     mode = 'a'
 
-                df_lc.to_csv(save_folder.joinpath("{}_{}.csv".format(ztfname, zfilter)), sep=",")
-                df_params.to_csv(save_folder.joinpath("{}_{}_params.csv".format(ztfname, zfilter)), sep=",")
-                df_lc.to_hdf(save_folder.joinpath("{}.hd5".format(ztfname)), key='lc_{}'.format(zfilter), mode=mode)
-                df_params.to_hdf(save_folder.joinpath("{}.hd5".format(ztfname)), key='params_{}'.format(zfilter))
+                df_lc.to_csv(output_folder.joinpath("{}_{}.csv".format(ztfname, zfilter)), sep=",")
+                df_params.to_csv(output_folder.joinpath("{}_{}_params.csv".format(ztfname, zfilter)), sep=",")
+                df_lc.to_hdf(output_folder.joinpath("{}.hd5".format(ztfname)), key='lc_{}'.format(zfilter), mode=mode)
+                df_params.to_hdf(output_folder.joinpath("{}.hd5".format(ztfname)), key='params_{}'.format(zfilter))
 
         _save_df_filter(df_lc_zg, df_params_zg, 'zg', first=True)
         _save_df_filter(df_lc_zr, df_params_zr, 'zr')
         _save_df_filter(df_lc_zi, df_params_zi, 'zi')
 
 
-    if not plot:
+    if output_folder:
         save_df(generate_lc_df(lc_dict, 'zg'),
                 generate_lc_df(lc_dict, 'zr'),
                 generate_lc_df(lc_dict, 'zi'),
@@ -214,15 +230,17 @@ def estimate_lc_params(ztfname):
                 generate_params_df(lc_dict, 'zi'))
 
         # fgallery description file
-        with open(save_folder.joinpath("{}.txt".format(ztfname)), mode='w') as f:
+        with open(output_folder.joinpath("{}.txt".format(ztfname)), mode='w') as f:
             f.write("{}\n".format(ztfname))
             f.write("z={}\n".format(redshift_df.loc[ztfname]['redshift']))
             f.write("(ra, dec)=({}, {})".format(redshift_df.loc[ztfname]['host_ra'], redshift_df.loc[ztfname]['host_dec']))
 
-        print(".", end="", flush=True)
+        if len(ztfnames) > 1:
+            print(".", end="", flush=True)
 
 
 
 Parallel(n_jobs=n_jobs)(delayed(estimate_lc_params)(ztfname) for ztfname in ztfnames)
 
-print("")
+if not plot and len(ztfnames) > 1:
+    print("")
