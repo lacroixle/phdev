@@ -90,8 +90,12 @@ def estimate_lc_params(ztfname):
                 time = astropy.time.Time(jd, format='jd')
                 return time.mjd
 
-            sql_lc_df['obsmjd'] = sql_lc_df['obsjd'].apply(_jd_to_mjd)
-            sql_lc_df.set_index('obsmjd', inplace=True)
+            if 'obsjd' in sql_lc.columns:
+                sql_lc_df['obsmjd'] = sql_lc_df['obsjd'].apply(_jd_to_mjd)
+                sql_lc_df.set_index('obsmjd', inplace=True)
+            else:
+                print("{}: no obsjd column in metatable!".format(ztfname))
+                return
 
         t_0 = salt_df.loc[ztfname, "t0"]
 
