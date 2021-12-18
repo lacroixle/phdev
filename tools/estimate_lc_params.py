@@ -35,6 +35,8 @@ if len(sys.argv) > 5:
 
 ztfnames = []
 
+verbosity = 1
+
 
 if not ztfname_folder.is_dir():
     ztfnames = [str(ztfname_folder)]
@@ -57,13 +59,18 @@ def estimate_lc_params(ztfname):
         lc_df = pd.read_csv(data_folder.joinpath("ztf/ztfcosmoidr/dr2/lightcurves/{}_LC.csv".format(ztfname)), delimiter="\s+", index_col="mjd")
         lc_df = lc_df[(np.abs(stats.zscore(lc_df['flux_err'])) < zmax)]
 
+        if verbosity >= 1:
+            print("Processing {}...".format(ztfname))
+
         sql_lc_df = None
         if do_sql_request:
+            print("SQL request")
             zquery = query.ZTFQuery()
             zquery.load_metadata(radec=(redshift_df.loc[ztfname]['host_ra'], redshift_df.loc[ztfname]['host_dec']))
             sql_lc_df = zquery.metatable
 
-            # Add an obsmkd column and set it as index
+            print("Found {} entries".format(len(sql_lc_df)))
+            # Add an obsmjd column and set it as index
             def _jd_to_mjd(jd):
                 time = astropy.time.Time(jd, format='jd')
                 return time.mjd
