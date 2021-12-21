@@ -20,7 +20,7 @@ zfilters = ['zr', 'zg', 'zi']
 zfilter_plot_color = dict(zip(zfilters, ['blue', 'red', 'orange']))
 
 argparser = argparse.ArgumentParser(description="Lightcurve estimation tools.")
-argparser.add_argument("--output", type=pathlib.Path, help="Output folder")
+argparser.add_argument("--output", type=pathlib.Path, help="Output folder", required=True)
 argparser.add_argument('-j', dest='n_jobs', type=int, default=1, help="Number of jobs to launch.")
 argparser.add_argument('--ztfname', type=str, nargs='?', help="Process a specific SN 1a.")
 argparser.add_argument('-v', type=int, dest='verbosity', default=0, help="Verbosity level.")
@@ -98,7 +98,7 @@ def estimate_lc_params(ztfname):
                     print("{}: SQL attempt n°{}".format(ztfname, i))
 
                 sql_lc_df = _sql_request()
-                if 'obsmjd' in sql_lc_df.columns:
+                if 'obsjd' in sql_lc_df.columns:
                     sql_successfull = True
 
             if not sql_successfull:
