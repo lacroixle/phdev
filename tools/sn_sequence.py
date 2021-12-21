@@ -24,13 +24,16 @@ argparser.add_argument('--zfilter', type=str, choices=zfilters, required=True)
 argparser.add_argument('-j', dest='n_jobs', type=int, default=1)
 argparser.add_argument('--lc-folder', dest='lc_folder', type=pathlib.Path, required=True)
 argparser.add_argument('--cosmodr', type=pathlib.Path)
+argparser.add_argument('--create-folder', dest='create_folder', action='store_true')
 
 args = argparser.parse_args()
 
-ztfname = args.ztfname
 zfilter = args.zfilter
 lc_folder = args.lc_folder.expanduser().resolve()
 n_jobs = args.n_jobs
+output_folder = args.output.expanduser().resolve()
+ztfname = args.ztfname
+create_folder = args.create_folder
 
 if args.cosmodr:
     cosmo_dr_folder = args.cosmodr
@@ -40,10 +43,18 @@ else:
     print("Cosmo DR folder not set! Either set COSMO_DR_FOLDER environnement variable or use the --cosmodr parameter.")
     exit(-1)
 
+
+print("Extracting SN sequence for {} with filter {}".format(ztfname, zfilter))
+with pd.HDFStore(lc_folder.joinpath("{}.hd5".format(ztfname)), mode='r') as hdfstore:
+   if '/lc_{}'.format(zfilter) in hdfstore.keys():
+      lc_df = pd.read_hdf(hdfstore, key='lc_{}'.format(zfilter))
+      print("Found {} quadrants".format(len(lc_df)))
+   else:
+      print("No data for filter {}".format(zfilter))
+      exit()
+
+
 coords_file = cosmo_dr_folder.joinpath("ztfdr2_coords.csv")
-
-
-lc_df = pd.read_hdf(lc_folder.joinpath("{}.hd5".format(ztfname)), key='lc_{}'.format(zfilter))
 coords_df = pd.read_csv(coords_file, sep=" ", index_col='ztfname')
 
 sn_ra = coords_df.loc[ztfname]['host_ra']
@@ -55,28 +66,28 @@ def extract_stamp(sciimg_file):
    x, y = quadrant.wcs.world_to_pixel(astropy.coordinates.SkyCoord(sn_ra, sn_dec, unit='deg'))
    print(".", end="", flush=True)
 
-   return np.asarray(ztfimg.stamps.stamp_it(quadrant.get_data('clean'), x, y, 40, asarray=True))
+   return np.asarray(ztfimg.stamps.stamp_it(quadrant.get_data('clean'), x, y, 20, asarray=True))
 
+print("Extracting SN stamp sequence")
 stamps = Parallel(n_jobs=n_jobs)(delayed(extract_stamp)(sciimg_file) for sciimg_file in lc_df)
 
 print("")
-print("Building stamp tensor...")
+print("Building stamp tensor")
 stamps = np.nan_to_num(np.stack(stamps))
-print(np.min(stamps), np.max(stamps))
 
-print("Normalizing...")
-#stamps = (stamps*np.nanmax(stamps)).astype(np.uint8)
+print("Normalizing")
 stamps = (stamps - np.min(stamps))/(np.max(stamps) - np.min(stamps))
 stamps = (stamps*255.).astype(np.uint8)
 print(np.min(stamps), np.max(stamps))
-#print(stamps)
 
 print("Saving")
+if create_folder:
+   output_folder.joinpath(ztfname).mkdir(exist_ok=True)
+   output_folder = output_folder.joinpath("{}/{}".format(ztfname, zfilter))
+   output_folder.mkdir(exist_ok=True)
+
 for i, stamp in enumerate(stamps):
    img = Image.fromarray(stamp)
-   img.save("sn/{}.png".format(i))
-   print(".", end="", flush=True)
+   img.save(output_folder.joinpath("{}.png".format(i)))
 
-print()
-
-
+print("Done")
