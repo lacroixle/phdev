@@ -78,24 +78,43 @@ def estimate_lc_params(ztfname):
 
         sql_lc_df = None
         if sql_request:
-            zquery = query.ZTFQuery()
-            zquery.load_metadata(radec=(redshift_df.loc[ztfname]['host_ra'], redshift_df.loc[ztfname]['host_dec']))
-            sql_lc_df = zquery.metatable
+            def _sql_request():
+                zquery = query.ZTFQuery()
+                zquery.load_metadata(radec=(redshift_df.loc[ztfname]['host_ra'], redshift_df.loc[ztfname]['host_dec']))
+                sql_lc_df = zquery.metatable
 
-            if verbosity >= 1:
-                print("{}: found SQL {} entries".format(ztfname, len(sql_lc_df)))
+                if verbosity >= 1:
+                    print("{}: found SQL {} entries".format(ztfname, len(sql_lc_df)))
+
+                return sql_lc_df
+
+            sql_successfull = False
+            max_sql_attempts = 5
+            for i in range(0, max_sql_attempts):
+                if sql_successfull:
+                    break
+
+                if i > 1:
+                    print("{}: SQL attempt n°{}".format(ztfname, i))
+
+                sql_lc_df = _sql_request()
+                if 'obsmjd' in sql_lc_df.columns:
+                    sql_successfull = True
+
+            if not sql_successfull:
+                print("{}: no obsjd column in metatable after {} attempts".format(ztfname, max_sql_attempts))
+                return
+
+
 
             # Add an obsmjd column and set it as index
             def _jd_to_mjd(jd):
                 time = astropy.time.Time(jd, format='jd')
                 return time.mjd
 
-            if 'obsjd' in sql_lc.columns:
-                sql_lc_df['obsmjd'] = sql_lc_df['obsjd'].apply(_jd_to_mjd)
-                sql_lc_df.set_index('obsmjd', inplace=True)
-            else:
-                print("{}: no obsjd column in metatable!".format(ztfname))
-                return
+            sql_lc_df['obsmjd'] = sql_lc_df['obsjd'].apply(_jd_to_mjd)
+            sql_lc_df.set_index('obsmjd', inplace=True)
+
 
         t_0 = salt_df.loc[ztfname, "t0"]
 
