@@ -78,7 +78,6 @@ stamps = np.nan_to_num(np.stack(stamps))
 print("Normalizing")
 stamps = (stamps - np.min(stamps))/(np.max(stamps) - np.min(stamps))
 stamps = (stamps*255.).astype(np.uint8)
-print(np.min(stamps), np.max(stamps))
 
 print("Saving")
 if create_folder:
