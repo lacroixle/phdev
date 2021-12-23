@@ -25,6 +25,7 @@ argparser.add_argument('-j', dest='n_jobs', type=int, default=1)
 argparser.add_argument('--lc-folder', dest='lc_folder', type=pathlib.Path, required=True)
 argparser.add_argument('--cosmodr', type=pathlib.Path)
 argparser.add_argument('--create-folder', dest='create_folder', action='store_true')
+argparser.add_argument('--stamp-size', dest='stamp_size', type=int, default=20)
 
 args = argparser.parse_args()
 
@@ -34,6 +35,7 @@ n_jobs = args.n_jobs
 output_folder = args.output.expanduser().resolve()
 ztfname = args.ztfname
 create_folder = args.create_folder
+stamp_size = args.stamp_size
 
 if args.cosmodr:
     cosmo_dr_folder = args.cosmodr
@@ -66,7 +68,7 @@ def extract_stamp(sciimg_file):
    x, y = quadrant.wcs.world_to_pixel(astropy.coordinates.SkyCoord(sn_ra, sn_dec, unit='deg'))
    print(".", end="", flush=True)
 
-   return np.asarray(ztfimg.stamps.stamp_it(quadrant.get_data('clean'), x, y, 20, asarray=True))
+   return np.asarray(ztfimg.stamps.stamp_it(quadrant.get_data('clean'), x, y, stamp_size, asarray=True))
 
 print("Extracting SN stamp sequence")
 stamps = Parallel(n_jobs=n_jobs)(delayed(extract_stamp)(sciimg_file) for sciimg_file in lc_df)
