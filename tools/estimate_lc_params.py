@@ -121,6 +121,8 @@ def estimate_lc_params(ztfname):
         # Add reference IPAC/IRSA image name
         sql_lc_df['ipac_file'] = buildurl.build_filename_from_dataframe(sql_lc_df)
 
+        col_to_str = ['filtercode', 'imgtype', 'imgtypecode', 'obsdate', 'ipac_pub_date', 'ipac_file']
+        sql_lc_df[col_to_str] = sql_lc_df[col_to_str].apply(str)
 
         # Zero order SN event time interval
         t_0 = salt_df.loc[ztfname, "t0"]
