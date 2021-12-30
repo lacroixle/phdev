@@ -90,9 +90,14 @@ def estimate_lc_params(ztfname):
             zquery.load_metadata(radec=(redshift_df.loc[ztfname]['host_ra'], redshift_df.loc[ztfname]['host_dec']))
             sql_lc_df = zquery.metatable
 
-            if verbosity >= 1:
-                print("{}: found {} SQL entries - discarded".format(ztfname, len(sql_lc_df)))
+            if len(sql_lc_df) == 0:
+                if verbosity >= 1:
+                    print("{}: no SQL entry found - discarded".format(ztfname))
+
                 raise EmptySQLResult()
+
+            if verbosity >= 1:
+                print("{}: found {} SQL entries".format(ztfname, len(sql_lc_df)))
 
             return sql_lc_df
 
@@ -117,7 +122,7 @@ def estimate_lc_params(ztfname):
 
         # If no quadrant can be found, skip processing
         if len(sql_lc_df) == 0:
-            return # Maybe log something?
+            return
 
         # Add an obsmjd column and set it as index
         sql_lc_df['obsmjd'] = sql_lc_df['obsjd'].apply(lambda jd: astropy.time.Time(jd, format='jd').mjd)
