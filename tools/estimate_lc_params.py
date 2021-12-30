@@ -74,6 +74,11 @@ def estimate_lc_params(ztfname):
     if ztfname in blacklist:
         return
 
+
+    class EmptySQLResult(Exception):
+        def __init__(self):
+            pass
+
     def extract_interval(ztfname, t0_inf, t0_sup, off_mul, do_sql_request=True):
         # First load forced photometry lightcurve (useful for plotting)
         fp_lc_df = pd.read_csv(lightcurve_folder.joinpath("{}_LC.csv".format(ztfname)), delimiter="\s+", index_col="mjd")
@@ -86,7 +91,8 @@ def estimate_lc_params(ztfname):
             sql_lc_df = zquery.metatable
 
             if verbosity >= 1:
-                print("{}: found {} SQL entries".format(ztfname, len(sql_lc_df)))
+                print("{}: found {} SQL entries - discarded".format(ztfname, len(sql_lc_df)))
+                raise EmptySQLResult()
 
             return sql_lc_df
 
@@ -140,29 +146,23 @@ def estimate_lc_params(ztfname):
                 return None
 
             idx_min = max(0, int(len(lc_f_df[:t_inf]) - off_mul*obs_count))
-            idx_max = min(len(lc_f_df) - 1, int(len(lc_f_df[:t_sup]) + off_mul*obs_count) - 1)
+            idx_max = min(len(lc_f_df), int(len(lc_f_df[:t_sup]) + off_mul*obs_count)) - 1
 
             t_min = lc_f_df.iloc[idx_min].name
             t_max = lc_f_df.iloc[idx_max].name
-            # print(len(lc_f_df.loc[t_min:t_max]))
-            # print(lc_f_df.loc[t_min:t_inf].index)
-            # print(lc_f_df.loc[t_inf:t_sup].index)
-            # print(lc_f_df.loc[t_sup:t_max].index)
-            # print(len(lc_f_df.loc[t_min:t_inf].index))
-            # print(len(lc_f_df.loc[t_inf:t_sup].index))
-            # print(len(lc_f_df.loc[t_sup:t_max].index))
-            # exit()
 
             return {'sql_lc': lc_f_df.loc[t_min:t_max],
                     'fp_lc': fp_lc_df.loc[fp_lc_df['filter'] == 'ztf{}'.format(filtercode[1])].loc[t_min:t_max],
                     't_min': t_min,
                     't_max': t_max}
 
-
         return dict([(filt, _compute_min_max_interval(sql_lc_df, t_inf, t_sup, filt)) for filt in ['zr', 'zg','zi']]), t_inf, t_sup, t_0
 
 
-    lc_dict, t_inf, t_sup, t_0 = extract_interval(ztfname, t0_inf, t0_sup, off_mul)
+    try:
+        lc_dict, t_inf, t_sup, t_0 = extract_interval(ztfname, t0_inf, t0_sup, off_mul)
+    except EmptySQLResult:
+        return
 
     # Check that at least for one filter we have data
     if not any([lc_dict[zfilter] is not None for zfilter in ['zg', 'zr', 'zi']]):
