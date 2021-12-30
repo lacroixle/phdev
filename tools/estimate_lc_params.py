@@ -12,6 +12,7 @@ from scipy import stats
 import numpy as np
 from joblib import Parallel, delayed
 from ztfquery import query
+from ztfquery import buildurl
 import astropy.time
 
 #ZTF19aaripqw
@@ -25,10 +26,9 @@ argparser.add_argument('-j', dest='n_jobs', type=int, default=1, help="Number of
 argparser.add_argument('--ztfname', type=str, nargs='?', help="Process a specific SN 1a.")
 argparser.add_argument('-v', type=int, dest='verbosity', default=0, help="Verbosity level.")
 argparser.add_argument('--cosmodr', type=pathlib.Path, help="Cosmo DR folder.")
-argparser.add_argument('--off_mul', type=int, default=3, help="Off SN 1a image statistics multiplier.")
+argparser.add_argument('--off-mul', dest='off_mul', type=int, default=3, help="Off SN 1a image statistics multiplier.")
 argparser.add_argument('--plot', action='store_true', help="If set, will plot the lightcurve. Only when --ztfname is set.")
 argparser.add_argument('--zmax', type=float, default=5., help="")
-argparser.add_argument('--sql-request', dest='sql_request', action='store_true')
 
 args = argparser.parse_args()
 
@@ -39,8 +39,8 @@ t0_sup = 120
 plot = args.plot
 zmax = args.zmax
 off_mul = args.off_mul
-sql_request = args.sql_request
 output_folder = args.output.expanduser().resolve()
+
 
 if args.cosmodr:
     cosmo_dr_folder = args.cosmodr
@@ -49,6 +49,7 @@ elif 'COSMO_DR_FOLDER' in os.environ.keys():
 else:
     print("Cosmo DR folder not set! Either set COSMO_DR_FOLDER environnement variable or use the --cosmodr parameter.")
     exit(-1)
+
 
 salt_df = pd.read_csv(cosmo_dr_folder.joinpath("params/DR2_SALT2fit_params.csv"), delimiter=",", index_col="name")
 redshift_df = pd.read_csv(cosmo_dr_folder.joinpath("params/DR2_redshifts.csv"), delimiter=",", index_col="ztfname")
@@ -64,6 +65,7 @@ else:
 
     ztfnames = [ztf_file.stem.split("_")[0] for ztf_file in ztf_files]
 
+
 # For some reason this sn does not exist in the SALT db
 blacklist = ["ZTF18aaajrso"]
 
@@ -73,77 +75,89 @@ def estimate_lc_params(ztfname):
         return
 
     def extract_interval(ztfname, t0_inf, t0_sup, off_mul, do_sql_request=True):
-        lc_df = pd.read_csv(lightcurve_folder.joinpath("{}_LC.csv".format(ztfname)), delimiter="\s+", index_col="mjd")
-        lc_df = lc_df[(np.abs(stats.zscore(lc_df['flux_err'])) < zmax)]
+        # First load forced photometry lightcurve (useful for plotting)
+        fp_lc_df = pd.read_csv(lightcurve_folder.joinpath("{}_LC.csv".format(ztfname)), delimiter="\s+", index_col="mjd")
 
+        # Then retrieve available quadrants covering the host gallaxy position
         sql_lc_df = None
-        if sql_request:
-            def _sql_request():
-                zquery = query.ZTFQuery()
-                zquery.load_metadata(radec=(redshift_df.loc[ztfname]['host_ra'], redshift_df.loc[ztfname]['host_dec']))
-                sql_lc_df = zquery.metatable
+        def _sql_request():
+            zquery = query.ZTFQuery()
+            zquery.load_metadata(radec=(redshift_df.loc[ztfname]['host_ra'], redshift_df.loc[ztfname]['host_dec']))
+            sql_lc_df = zquery.metatable
 
-                if verbosity >= 1:
-                    print("{}: found SQL {} entries".format(ztfname, len(sql_lc_df)))
+            if verbosity >= 1:
+                print("{}: found {} SQL entries".format(ztfname, len(sql_lc_df)))
 
-                return sql_lc_df
+            return sql_lc_df
 
-            sql_successfull = False
-            max_sql_attempts = 5
-            for i in range(0, max_sql_attempts):
-                if sql_successfull:
-                    break
+        # For some reason (especially when heavely multithreaded), the metatable gets corrupted
+        # In that case we try again several times
+        sql_successfull = False
+        max_sql_attempts = 5
+        for i in range(0, max_sql_attempts):
+            if sql_successfull:
+                break
 
-                if i > 1:
-                    print("{}: SQL attempt n°{}".format(ztfname, i))
+            if i > 1:
+                print("{}: SQL attempt n°{}".format(ztfname, i))
 
-                sql_lc_df = _sql_request()
-                if 'obsjd' in sql_lc_df.columns:
-                    sql_successfull = True
+            sql_lc_df = _sql_request()
+            if 'obsjd' in sql_lc_df.columns:
+                sql_successfull = True
 
-            if not sql_successfull:
-                print("{}: no obsjd column in metatable after {} attempts".format(ztfname, max_sql_attempts))
-                return
+        if not sql_successfull:
+            print("{}: no obsjd column in metatable after {} attempts".format(ztfname, max_sql_attempts))
+            return
+
+        # If no quadrant can be found, skip processing
+        if len(sql_lc_df) == 0:
+            return # Maybe log something?
+
+        # Add an obsmjd column and set it as index
+        sql_lc_df['obsmjd'] = sql_lc_df['obsjd'].apply(lambda jd: astropy.time.Time(jd, format='jd').mjd)
+        sql_lc_df.set_index('obsmjd', inplace=True)
+        sql_lc_df.sort_index(inplace=True)
+
+        # Add reference IPAC/IRSA image name
+        sql_lc_df['ipac_file'] = buildurl.build_filename_from_dataframe(sql_lc_df)
 
 
-
-            # Add an obsmjd column and set it as index
-            def _jd_to_mjd(jd):
-                time = astropy.time.Time(jd, format='jd')
-                return time.mjd
-
-            sql_lc_df['obsmjd'] = sql_lc_df['obsjd'].apply(_jd_to_mjd)
-            sql_lc_df.set_index('obsmjd', inplace=True)
-
-
+        # Zero order SN event time interval
         t_0 = salt_df.loc[ztfname, "t0"]
-
         t_inf = t_0 - t0_inf
         t_sup = t_0 + t0_sup
 
-        def _compute_min_max_interval(lc_df, t_inf, t_sup, filt):
-            lc_f_df = lc_df.loc[lc_df['filter'] == 'ztf{}'.format(filt[-1])]
 
-            obs_count = len(lc_f_df[t_inf:t_sup]) - 1
+        # Compute the time interval covering the SN event with off acquisition (ie, only the host galaxy)
+        def _compute_min_max_interval(lc_df, t_inf, t_sup, filtercode):
+            lc_f_df = lc_df.loc[lc_df['filtercode'] == filtercode]
 
-            if obs_count == -1:
+            obs_count = len(lc_f_df.loc[t_inf:t_sup])
+
+            if obs_count == 0:
                 return None
 
-            idx_min = max(0, int(len(lc_f_df[:t_inf]) - off_mul*obs_count) - 1)
-            idx_max = min(len(lc_f_df) - 1, int(len(lc_f_df[:t_sup]) + off_mul*obs_count))
+            idx_min = max(0, int(len(lc_f_df[:t_inf]) - off_mul*obs_count))
+            idx_max = min(len(lc_f_df) - 1, int(len(lc_f_df[:t_sup]) + off_mul*obs_count) - 1)
 
             t_min = lc_f_df.iloc[idx_min].name
             t_max = lc_f_df.iloc[idx_max].name
+            # print(len(lc_f_df.loc[t_min:t_max]))
+            # print(lc_f_df.loc[t_min:t_inf].index)
+            # print(lc_f_df.loc[t_inf:t_sup].index)
+            # print(lc_f_df.loc[t_sup:t_max].index)
+            # print(len(lc_f_df.loc[t_min:t_inf].index))
+            # print(len(lc_f_df.loc[t_inf:t_sup].index))
+            # print(len(lc_f_df.loc[t_sup:t_max].index))
+            # exit()
 
-            return_dict = {'lc': lc_f_df.loc[t_min:t_max], 't_min': t_min, 't_max': t_max}
-
-            if sql_request:
-                return_dict['sql_lc'] = sql_lc_df.loc[sql_lc_df['filtercode'] == filt]
-
-            return return_dict
+            return {'sql_lc': lc_f_df.loc[t_min:t_max],
+                    'fp_lc': fp_lc_df.loc[fp_lc_df['filter'] == 'ztf{}'.format(filtercode[1])].loc[t_min:t_max],
+                    't_min': t_min,
+                    't_max': t_max}
 
 
-        return dict([(filt, _compute_min_max_interval(lc_df, t_inf, t_sup, filt)) for filt in ['zr', 'zg','zi']]), t_inf, t_sup, t_0
+        return dict([(filt, _compute_min_max_interval(sql_lc_df, t_inf, t_sup, filt)) for filt in ['zr', 'zg','zi']]), t_inf, t_sup, t_0
 
 
     lc_dict, t_inf, t_sup, t_0 = extract_interval(ztfname, t0_inf, t0_sup, off_mul)
@@ -169,14 +183,13 @@ def estimate_lc_params(ztfname):
 
     def plot_lightcurve(ax, zfilter):
         if lc_dict[zfilter]:
-            lc_dict[zfilter]['lc']['flux'].plot(ax=ax, yerr=lc_dict[zfilter]['lc']['flux_err'], linestyle='None', marker='.', color=zfilter_plot_color[zfilter])
-            plot_obs_count(ax, lc_dict[zfilter]['lc'], t_0, t_inf, t_sup)
+            lc_dict[zfilter]['fp_lc']['flux'].plot(ax=ax, yerr=lc_dict[zfilter]['fp_lc']['flux_err'], linestyle='None', marker='.', color=zfilter_plot_color[zfilter])
+            plot_obs_count(ax, lc_dict[zfilter]['sql_lc'], t_0, t_inf, t_sup)
             ax.grid(ls='--', linewidth=0.8)
             ax.set_xlabel("MJD")
             ax.set_ylabel("Flux - {}".format(zfilter))
 
-            if 'sql_lc' in lc_dict[zfilter].keys():
-                plot_sql_available(ax, lc_dict[zfilter]['sql_lc'], t_inf, t_sup)
+            plot_sql_available(ax, lc_dict[zfilter]['sql_lc'], t_inf, t_sup)
 
         else:
             ax.text(0.5, 0.5, "No data", fontsize=30, transform=ax.transAxes, horizontalalignment='center', verticalalignment='center')
@@ -199,15 +212,10 @@ def estimate_lc_params(ztfname):
 
         plt.close()
 
-    def _fix_ipac_file(filename):
-        split = filename.split(".")
-        return "{}_{}.fits".format(split[0], split[1])
-
 
     def generate_lc_df(lc_dict, zfilter):
         if lc_dict[zfilter] is not None:
-            lc_dict[zfilter]['lc']['ipac_file'] = lc_dict[zfilter]['lc']['ipac_file'].apply(_fix_ipac_file)
-            return lc_dict[zfilter]['lc']['ipac_file']
+            return lc_dict[zfilter]['sql_lc']
 
 
     def generate_params_df(lc_dict, zfilter):
