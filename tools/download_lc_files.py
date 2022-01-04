@@ -36,9 +36,9 @@ print("Running {} threads...".format(n_jobs))
 total_estimated_filesize = 0
 
 def download_lc(hdfstore, filter_key):
-    lc_df = pd.read_hdf(hdfstore, key=filter_key)
+    lc_df = pd.read_hdf(hdfstore, key=filter_key)['ipac_file']
 
-    estimated_filesize = lc_df.size*(sciimg_size+mskimg_size)/1000
+    estimated_filesize = len(lc_df)*(sciimg_size+mskimg_size)/1000
     global total_estimated_filesize
     total_estimated_filesize = total_estimated_filesize + estimated_filesize
     print("Downloading filter r ({} quadrants)".format(lc_df.size))
