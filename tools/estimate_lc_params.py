@@ -67,6 +67,7 @@ else:
 # For some reason this sn does not exist in the SALT db
 blacklist = ["ZTF18aaajrso"]
 
+empty_snae = []
 
 def estimate_lc_params(ztfname):
     if ztfname in blacklist:
@@ -91,6 +92,8 @@ def estimate_lc_params(ztfname):
             if len(sql_lc_df) == 0:
                 if verbosity >= 1:
                     print("{}: no SQL entry found - discarded".format(ztfname))
+
+                empty_snae.append(ztfname)
 
                 raise EmptySQLResult()
 
@@ -274,6 +277,10 @@ def estimate_lc_params(ztfname):
 
 
 Parallel(n_jobs=n_jobs)(delayed(estimate_lc_params)(ztfname) for ztfname in ztfnames)
+
+print("Discarded SN1a")
+for sn in empty_snae:
+    print(sn)
 
 if not plot and len(ztfnames) > 1:
     print("")
