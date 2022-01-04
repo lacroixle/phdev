@@ -28,7 +28,6 @@ argparser.add_argument('-v', type=int, dest='verbosity', default=0, help="Verbos
 argparser.add_argument('--cosmodr', type=pathlib.Path, help="Cosmo DR folder.")
 argparser.add_argument('--off-mul', dest='off_mul', type=int, default=3, help="Off SN 1a image statistics multiplier.")
 argparser.add_argument('--plot', action='store_true', help="If set, will plot the lightcurve. Only when --ztfname is set.")
-argparser.add_argument('--zmax', type=float, default=5., help="")
 
 args = argparser.parse_args()
 
@@ -37,7 +36,6 @@ n_jobs = args.n_jobs
 t0_inf = 50
 t0_sup = 120
 plot = args.plot
-zmax = args.zmax
 off_mul = args.off_mul
 output_folder = args.output.expanduser().resolve()
 
@@ -132,16 +130,16 @@ def estimate_lc_params(ztfname):
         # Add reference IPAC/IRSA image name
         sql_lc_df['ipac_file'] = buildurl.build_filename_from_dataframe(sql_lc_df)
 
+        # Fix optimisation bug (convert object types into strings)
         col_to_str = ['filtercode', 'imgtype', 'imgtypecode', 'obsdate', 'ipac_pub_date', 'ipac_file']
-        sql_lc_df[col_to_str] = sql_lc_df[col_to_str].apply(str)
+        sql_lc_df[col_to_str] = sql_lc_df[col_to_str].astype('str')
 
         # Zero order SN event time interval
         t_0 = salt_df.loc[ztfname, "t0"]
         t_inf = t_0 - t0_inf
         t_sup = t_0 + t0_sup
 
-
-        # Compute the time interval covering the SN event with off acquisition (ie, only the host galaxy)
+        # Compute the time interval covering the SN event with off acquisitions (ie, only the host galaxy)
         def _compute_min_max_interval(lc_df, t_inf, t_sup, filtercode):
             lc_f_df = lc_df.loc[lc_df['filtercode'] == filtercode]
 
@@ -161,13 +159,14 @@ def estimate_lc_params(ztfname):
                     't_min': t_min,
                     't_max': t_max}
 
-        return dict([(filt, _compute_min_max_interval(sql_lc_df, t_inf, t_sup, filt)) for filt in ['zr', 'zg','zi']]), t_inf, t_sup, t_0
+        return dict([(filtercode, _compute_min_max_interval(sql_lc_df, t_inf, t_sup, filtercode)) for filtercode in zfilters]), t_inf, t_sup, t_0
 
 
     try:
         lc_dict, t_inf, t_sup, t_0 = extract_interval(ztfname, t0_inf, t0_sup, off_mul)
     except EmptySQLResult:
         return
+
 
     # Check that at least for one filter we have data
     if not any([lc_dict[zfilter] is not None for zfilter in ['zg', 'zr', 'zi']]):
@@ -232,7 +231,6 @@ def estimate_lc_params(ztfname):
                     't_sup': t_sup,
                     't_min': lc_dict[zfilter]['t_min'],
                     't_max': lc_dict[zfilter]['t_max'],
-                    'zmax': zmax,
                     'off_mul': off_mul}
 
             return pd.DataFrame.from_records([params])
