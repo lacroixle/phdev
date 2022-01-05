@@ -22,8 +22,9 @@ zfilters = ['zg', 'zr', 'zi']
 for sn in sn_df.index:
     poloka_dir.joinpath("{}".format(sn)).mkdir(exist_ok=True)
 
-    def _create_subfolders(zfilter):
-        lc_df = pd.read_hdf(lc_dir.joinpath("{}.hd5".format(sn)), key='lc_{}'.format(zfilter))
+    def _create_subfolders(zfilter, hdfstore):
+        #lc_df = pd.read_hdf(lc_dir.joinpath("{}.hd5".format(sn)), key='lc_{}'.format(zfilter))
+        lc_df = pd.read_hdf(hdfstore, key='lc_{}'.format(zfilter))
 
         for sciimg_filename_fits in lc_df['ipac_file']:
             # First create filter path
@@ -46,4 +47,4 @@ for sn in sn_df.index:
     with pd.HDFStore(lc_dir.joinpath("{}.hd5".format(sn)), mode='r') as hdfstore:
         for zfilter in zfilters:
             if '/lc_{}'.format(zfilter) in hdfstore.keys():
-                _create_subfolders(zfilter)
+                _create_subfolders(zfilter, hdfstore)
