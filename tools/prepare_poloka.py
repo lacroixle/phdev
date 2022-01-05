@@ -20,13 +20,16 @@ copy_files = True
 zfilters = ['zg', 'zr', 'zi']
 
 for sn in sn_df.index:
+    print("In SN {}".format(sn))
     poloka_dir.joinpath("{}".format(sn)).mkdir(exist_ok=True)
 
     def _create_subfolders(zfilter, hdfstore):
+        print("In filter subfolder {}".format(zfilter))
         #lc_df = pd.read_hdf(lc_dir.joinpath("{}.hd5".format(sn)), key='lc_{}'.format(zfilter))
         lc_df = pd.read_hdf(hdfstore, key='lc_{}'.format(zfilter))
 
         for sciimg_filename_fits in lc_df['ipac_file']:
+            print("Moving {}".format(sciimg_filename_fits))
             # First create filter path
 
             poloka_dir.joinpath("{}/{}".format(sn, zfilter)).mkdir(exist_ok=True)
@@ -37,11 +40,14 @@ for sn in sn_df.index:
             folder_path.joinpath(".dbstuff").touch()
 
             sciimg_path = pathlib.Path(ztfquery.io.get_file(sciimg_filename_fits, downloadit=False, suffix='sciimg.fits'))
-            mskimg_path = patylib.Path(ztfquery.io.get_file(sciimg_filename_fits, downloadit=False, suffix='mskimg.fits'))
+            mskimg_path = pathlib.Path(ztfquery.io.get_file(sciimg_filename_fits, downloadit=False, suffix='mskimg.fits'))
 
             if copy_files:
-                shutil.copy2(sciimg_path, folder_path)
-                shutil.copy2(mskimg_path, folder_path)
+                try:
+                    shutil.copy2(sciimg_path, folder_path)
+                    shutil.copy2(mskimg_path, folder_path)
+                except FileNotFoundError:
+                    print("File not found")
 
 
     with pd.HDFStore(lc_dir.joinpath("{}.hd5".format(sn)), mode='r') as hdfstore:
