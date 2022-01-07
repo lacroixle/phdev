@@ -30,8 +30,15 @@ for sn in sn_df.index:
 
         for sciimg_filename_fits in lc_df['ipac_file']:
             print("Moving {}".format(sciimg_filename_fits))
-            # First create filter path
+            # Check files exist
+            sciimg_path = pathlib.Path(ztfquery.io.get_file(sciimg_filename_fits, downloadit=False, suffix='sciimg.fits'))
+            mskimg_path = pathlib.Path(ztfquery.io.get_file(sciimg_filename_fits, downloadit=False, suffix='mskimg.fits'))
 
+            if not sciimg_path.exists() or not mskimg_path.exists():
+                print("Could not find files! (either sciimg or mskimg)")
+                continue
+
+            # First create filter path
             poloka_dir.joinpath("{}/{}".format(sn, zfilter)).mkdir(exist_ok=True)
             folder_name = sciimg_filename_fits[:37]
             folder_path = poloka_dir.joinpath("{}/{}/{}".format(sn, zfilter, folder_name))
@@ -39,15 +46,10 @@ for sn in sn_df.index:
             folder_path.mkdir(exist_ok=True)
             folder_path.joinpath(".dbstuff").touch()
 
-            sciimg_path = pathlib.Path(ztfquery.io.get_file(sciimg_filename_fits, downloadit=False, suffix='sciimg.fits'))
-            mskimg_path = pathlib.Path(ztfquery.io.get_file(sciimg_filename_fits, downloadit=False, suffix='mskimg.fits'))
-
-            if copy_files:
-                try:
-                    shutil.copy2(sciimg_path, folder_path)
-                    shutil.copy2(mskimg_path, folder_path)
-                except FileNotFoundError:
-                    print("File not found")
+            # Copy files
+            sciimg_path.symlink_to(folder_path.joinpath("elixir.fits"))
+            shutil.copy2(sciimg_path, folder_path.joinpath("calibrated.fits"))
+            shutil.copy2(mskimg_path, folder_path.joinpath("mask.fits"))
 
 
     with pd.HDFStore(lc_dir.joinpath("{}.hd5".format(sn)), mode='r') as hdfstore:
