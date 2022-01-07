@@ -47,7 +47,7 @@ for sn in sn_df.index:
             folder_path.joinpath(".dbstuff").touch()
 
             # Copy files
-            sciimg_path.symlink_to(folder_path.joinpath("elixir.fits"))
+            folder_path.joinpath("elixir.fits").symlink_to(sciimg_path)
             shutil.copy2(sciimg_path, folder_path.joinpath("calibrated.fits"))
             shutil.copy2(mskimg_path, folder_path.joinpath("mask.fits"))
 
