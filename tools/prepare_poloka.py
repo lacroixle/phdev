@@ -40,8 +40,11 @@ for sn in sn_df.index:
             mskimg_path = patylib.Path(ztfquery.io.get_file(sciimg_filename_fits, downloadit=False, suffix='mskimg.fits'))
 
             if copy_files:
-                shutil.copy2(sciimg_path, folder_path)
-                shutil.copy2(mskimg_path, folder_path)
+                try:
+                    shutil.copy2(sciimg_path, folder_path)
+                    shutil.copy2(mskimg_path, folder_path)
+                except FileNotFoundError:
+                    print("File not found")
 
 
     with pd.HDFStore(lc_dir.joinpath("{}.hd5".format(sn)), mode='r') as hdfstore:

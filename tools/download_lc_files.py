@@ -36,7 +36,7 @@ print("Running {} threads...".format(n_jobs))
 total_estimated_filesize = 0
 
 def download_lc(hdfstore, filter_key):
-    lc_df = pd.read_hdf(hdfstore, key=filter_key)['ipac_file']
+    lc_df = pd.read_hdf(hdfstore, key=filter_key)
 
     estimated_filesize = len(lc_df)*(sciimg_size+mskimg_size)/1000
     global total_estimated_filesize
@@ -48,12 +48,13 @@ def download_lc(hdfstore, filter_key):
         try:
             science.ScienceQuadrant.from_filename(lc_filename).get_data('clean')
         except:
-            print("x")
+            print("x", end="", flush=True)
+            print(lc_df.loc[lc_df['ipac_file'] == lc_filename].iloc[0])
         else:
             print(".", end="", flush=True)
 
     start_dl_filter_time = time.perf_counter()
-    Parallel(n_jobs=n_jobs)(delayed(_download_lc)(lc_filename) for lc_filename in lc_df.to_list())
+    Parallel(n_jobs=n_jobs)(delayed(_download_lc)(lc_filename) for lc_filename in lc_df['ipac_file'].to_list())
     elapsed_time = time.perf_counter() - start_dl_filter_time
 
     print("")
