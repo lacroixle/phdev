@@ -3,6 +3,7 @@ import sys
 import time
 import argparse
 import pathlib
+import warnings
 
 import pandas as pd
 from ztfimg import science
@@ -23,7 +24,6 @@ ztfname = args.ztfname
 lc_folder = args.lc_folder
 n_jobs = args.n_jobs
 if args.filtercode:
-    print("hey")
     filtercodes = [args.filtercode]
 
 # Image size in MB
@@ -41,20 +41,24 @@ def download_lc(hdfstore, filter_key):
     estimated_filesize = len(lc_df)*(sciimg_size+mskimg_size)/1000
     global total_estimated_filesize
     total_estimated_filesize = total_estimated_filesize + estimated_filesize
-    print("Downloading filter r ({} quadrants)".format(lc_df.size))
+    print("Downloading filter r ({} quadrants)".format(len(lc_df)))
     print("Estimated size to download=~{} GB".format(estimated_filesize))
 
     def _download_lc(lc_filename):
         try:
             science.ScienceQuadrant.from_filename(lc_filename).get_data('clean')
-        except:
+        except FileNotFoundError:
             print("x", end="", flush=True)
-            print(lc_df.loc[lc_df['ipac_file'] == lc_filename].iloc[0])
+            return False
+        except Exception as e:
+            print(e)
+            return False
         else:
             print(".", end="", flush=True)
+            return True
 
     start_dl_filter_time = time.perf_counter()
-    Parallel(n_jobs=n_jobs)(delayed(_download_lc)(lc_filename) for lc_filename in lc_df['ipac_file'].to_list())
+    results = Parallel(n_jobs=n_jobs)(delayed(_download_lc)(lc_filename) for lc_filename in lc_df['ipac_file'].to_list())
     elapsed_time = time.perf_counter() - start_dl_filter_time
 
     print("")
@@ -62,6 +66,14 @@ def download_lc(hdfstore, filter_key):
     print("Average download speed={} MB/s".format(estimated_filesize/elapsed_time*1000))
     print("")
 
+    if not all(results):
+        print("Quadrants that could not be downloaded:")
+        [print(quadrant_filename) for quadrant_filename, result in zip(lc_df['ipac_file'], results) if not result]
+        print("")
+
+
+# Remove user warning which messes up my beautiful dot plotting
+warnings.simplefilter('ignore')
 
 start_dl_time = time.perf_counter()
 
