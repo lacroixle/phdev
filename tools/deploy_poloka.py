@@ -60,6 +60,26 @@ def pipeline(folder, logger):
 
 poloka_fct.append(pipeline)
 
+
+files_to_keep = ["elixir.fits", "mask.fits", "calibrated.fits", ".dbstuff"]
+def clean(folder, logger):
+    # calibrated.fits header gets modified, it might be problematic at some point (or not)
+    if args.dry_run:
+        print("In quadrant folder {}".format(folder))
+
+    files = list(folder.glob("*"))
+    files_to_delete = [file_to_delete for file_to_delete in files if file_to_delete.name not in files_to_keep]
+
+    for file_to_delete in files_to_delete:
+        if not args.dry_run:
+            file_to_delete.unlink()
+        else:
+            print("File to delete: {}".format(file_to_delete))
+
+    return True
+
+poloka_fct.append(clean)
+
 poloka_fct = dict(zip([fct.__name__ for fct in poloka_fct], poloka_fct))
 
 
@@ -71,10 +91,11 @@ def launch(folder, fct):
 
     result = fct(folder, logger)
 
-    if result:
-        print(".", end="", flush=True)
-    else:
-        print("x", end="", flush=True)
+    if not args.dry_run:
+        if result:
+            print(".", end="", flush=True)
+        else:
+            print("x", end="", flush=True)
 
     logger.info("Done.")
     return result
@@ -85,29 +106,31 @@ argparser.add_argument('--ztfname', type=str, required=True)
 argparser.add_argument('-j', dest='n_jobs', type=int, default=1)
 argparser.add_argument('--wd', type=pathlib.Path, help="Working directory")
 argparser.add_argument('--filtercode', choices=filtercodes)
-argparser.add_argument('--func', choices=poloka_fct.keys(), default='pipeline')
+argparser.add_argument('--func', type=str, choices=poloka_fct.keys(), default='pipeline')
+argparser.add_argument('--dry-run', dest='dry_run', action='store_true')
 
 args = argparser.parse_args()
-
+args.wd = args.wd.expanduser().resolve()
 
 print("Running Poloka function {} on {}-{}".format(args.func, args.ztfname, args.filtercode))
 
 # First check if there is quadrants associated with the selected filter
-if not args.wd.joinpath("{}/{}".format(args.ztfname, args.filtercode)).exists():
+if not args.wd.joinpath("{}/{}".format(args.ztfname, args.filtercode)).is_dir():
     print("No quadrant for filter {}! Skipping.".format(args.filtercode))
+    exit()
 
 cwd = args.wd.joinpath("{}/{}".format(args.ztfname, args.filtercode))
 os.chdir(cwd)
 
 folders = list(cwd.glob("*"))
 
-print("Found {} quadrant folder.".format(len(folders)))
-results = Parallel(n_jobs=args.n_jobs)(delayed(launch)(folder, wholeseq) for folder in folders)
+print("Found {} quadrant folders".format(len(folders)))
+results = Parallel(n_jobs=args.n_jobs)(delayed(launch)(folder, poloka_fct[args.func]) for folder in folders)
 
 print("")
 
 # Print quadrant that failed
-if any not results:
+if not all(results):
     [print(folder) for folder, result in zip(folders, results) if not result]
 
     print("")
