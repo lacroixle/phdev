@@ -53,6 +53,7 @@ else:
 salt_df = pd.read_csv(cosmo_dr_folder.joinpath("params/DR2_SALT2fit_params.csv"), delimiter=",", index_col="name")
 redshift_df = pd.read_csv(cosmo_dr_folder.joinpath("params/DR2_redshifts.csv"), delimiter=",", index_col="ztfname")
 lightcurve_folder = cosmo_dr_folder.joinpath("lightcurves/").expanduser().resolve()
+coords_df = pd.read_csv(cosmo_dr_folder.joinpath("ztfdr2_coords.csv"), delimiter=" ", index_col="ztfname")
 
 
 ztfnames = []
@@ -71,6 +72,9 @@ blacklist = ["ZTF18aaajrso"]
 empty_snae = []
 
 def estimate_lc_params(ztfname):
+    import warnings
+    warnings.filterwarnings('ignore',category=pd.io.pytables.PerformanceWarning)
+
     if ztfname in blacklist:
         return
 
@@ -153,6 +157,18 @@ def estimate_lc_params(ztfname):
             gaia_cal_df.set_index('Source', inplace=True)
             gaia_cal_df.rename(columns={'level_1': 'field', 'level_0': 'rcid'}, inplace=True)
 
+        sn_info = {}
+        sn_info['ztfname'] = ztfname
+        sn_info['sn_ra'] = float(coords_df.loc[ztfname]['sn_ra'])
+        sn_info['sn_dec'] = coords_df.loc[ztfname]['sn_dec']
+        sn_info['host_ra'] = coords_df.loc[ztfname]['host_ra']
+        sn_info['host_dec'] = coords_df.loc[ztfname]['host_dec']
+        sn_info['redshift'] = redshift_df.loc[ztfname]['redshift']
+        sn_info['fieldid'] = list(set(sql_lc_df['field']))
+        sn_info['t0mjd'] = t_0
+        sn_info['peakmjd'] = t_0
+        sn_info_df = pd.DataFrame([sn_info])
+
         # Compute the time interval covering the SN event with off acquisitions (ie, only the host galaxy)
         def _compute_min_max_interval(lc_df, t_inf, t_sup, filtercode):
             lc_f_df = lc_df.loc[lc_df['filtercode'] == filtercode]
@@ -173,11 +189,11 @@ def estimate_lc_params(ztfname):
                     't_min': t_min,
                     't_max': t_max}
 
-        return dict([(filtercode, _compute_min_max_interval(sql_lc_df, t_inf, t_sup, filtercode)) for filtercode in zfilters]), t_inf, t_sup, t_0, gaia_cal_df
+        return dict([(filtercode, _compute_min_max_interval(sql_lc_df, t_inf, t_sup, filtercode)) for filtercode in zfilters]), t_inf, t_sup, t_0, gaia_cal_df, sn_info_df
 
 
     try:
-        lc_dict, t_inf, t_sup, t_0, gaia_cal_df = extract_interval(ztfname, t0_inf, t0_sup, off_mul)
+        lc_dict, t_inf, t_sup, t_0, gaia_cal_df, sn_info_df = extract_interval(ztfname, t0_inf, t0_sup, off_mul)
     except EmptySQLResult:
         return
 
@@ -249,7 +265,7 @@ def estimate_lc_params(ztfname):
             return pd.DataFrame.from_records([params])
 
 
-    def save_df(df_lc_zg, df_lc_zr, df_lc_zi, df_params_zg, df_params_zr, df_params_zi, gaia_cal_df):
+    def save_df(df_lc_zg, df_lc_zr, df_lc_zi, df_params_zg, df_params_zr, df_params_zi, gaia_cal_df, sn_info_df):
         def _save_df_filter(df_lc, df_params, zfilter, first=False):
             if df_lc is not None and df_params is not None:
                 if first:
@@ -266,6 +282,7 @@ def estimate_lc_params(ztfname):
         _save_df_filter(df_lc_zr, df_params_zr, 'zr')
         _save_df_filter(df_lc_zi, df_params_zi, 'zi')
         gaia_cal_df.to_hdf(output_folder.joinpath("{}.hd5".format(ztfname)), key='gaia_cal')
+        sn_info_df.to_hdf(output_folder.joinpath("{}.hd5".format(ztfname)), key='sn_info')
 
 
     if output_folder:
@@ -275,7 +292,8 @@ def estimate_lc_params(ztfname):
                 generate_params_df(lc_dict, 'zg'),
                 generate_params_df(lc_dict, 'zr'),
                 generate_params_df(lc_dict, 'zi'),
-                gaia_cal_df)
+                gaia_cal_df,
+                sn_info_df)
 
         # fgallery description file
         with open(output_folder.joinpath("{}.txt".format(ztfname)), mode='w') as f:
@@ -290,9 +308,10 @@ def estimate_lc_params(ztfname):
 
 Parallel(n_jobs=n_jobs)(delayed(estimate_lc_params)(ztfname) for ztfname in ztfnames)
 
-print("Discarded SN1a")
-for sn in empty_snae:
-    print(sn)
+if len(ztfnames) > 1:
+    print("Discarded SN1a")
+    for sn in empty_snae:
+        print(sn)
 
 if not plot and len(ztfnames) > 1:
     print("")
