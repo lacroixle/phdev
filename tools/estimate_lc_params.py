@@ -5,6 +5,7 @@ import os
 import pathlib
 import distutils.util
 import argparse
+import itertools
 
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -15,8 +16,8 @@ from ztfquery import query
 from ztfquery import buildurl
 import astropy.time
 from ztfimg import io
+import ztfquery.fields
 
-#ZTF19aaripqw
 
 zfilters = ['zr', 'zg', 'zi']
 zfilter_plot_color = dict(zip(zfilters, ['blue', 'red', 'orange']))
@@ -73,11 +74,10 @@ empty_snae = []
 
 def estimate_lc_params(ztfname):
     import warnings
-    warnings.filterwarnings('ignore',category=pd.io.pytables.PerformanceWarning)
+    warnings.simplefilter("ignore")
 
     if ztfname in blacklist:
         return
-
 
     class EmptySQLResult(Exception):
         def __init__(self):
@@ -91,7 +91,7 @@ def estimate_lc_params(ztfname):
         sql_lc_df = None
         def _sql_request():
             zquery = query.ZTFQuery()
-            zquery.load_metadata(radec=(redshift_df.loc[ztfname]['host_ra'], redshift_df.loc[ztfname]['host_dec']))
+            zquery.load_metadata(radec=(redshift_df.loc[ztfname]['host_ra'], redshift_df.loc[ztfname]['host_dec']), sql_query="infobits < 33554432 and field <= 1895")
             sql_lc_df = zquery.metatable
 
             if len(sql_lc_df) == 0:
@@ -142,17 +142,21 @@ def estimate_lc_params(ztfname):
         col_to_str = ['filtercode', 'imgtype', 'imgtypecode', 'obsdate', 'ipac_pub_date', 'ipac_file']
         sql_lc_df[col_to_str] = sql_lc_df[col_to_str].astype('str')
 
+        # Used to check for calibration fields & for gaia calibrators
+        # Thank you StackOverflow
+        # https://stackoverflow.com/questions/2213923/removing-duplicates-from-a-list-of-lists
+        field_rcid_pairs = list(map(list, set(map(tuple, sql_lc_df[['field', 'rcid']].values.tolist()))))
+        fields = [pair[0] for pair in field_rcid_pairs]
+        rcids = [pair[1] for pair in field_rcid_pairs]
+
         # Zero order SN event time interval
         t_0 = salt_df.loc[ztfname, "t0"]
         t_inf = t_0 - t0_inf
         t_sup = t_0 + t0_sup
 
         # Get gaia calibrators
-        gaia_cal_df = None
         if output_folder:
-            fields = list(set(sql_lc_df['field']))
-            rcid = list(set(sql_lc_df['rcid']))
-            gaia_cal_df = io.GaiaCalibrators.fetch_data(rcid, fields).drop(labels=['ps1_id', 'sdssdr13_id'], axis=1)
+            gaia_cal_df = io.GaiaCalibrators.fetch_data(rcids, fields).drop(labels=['ps1_id', 'sdssdr13_id'], axis=1)
             gaia_cal_df.reset_index(inplace=True)
             gaia_cal_df.set_index('Source', inplace=True)
             gaia_cal_df.rename(columns={'level_1': 'field', 'level_0': 'rcid'}, inplace=True)
@@ -306,7 +310,7 @@ def estimate_lc_params(ztfname):
 
 
 
-Parallel(n_jobs=n_jobs)(delayed(estimate_lc_params)(ztfname) for ztfname in ztfnames)
+Parallel(n_jobs=n_jobs)(delayed(estimate_lc_params)(ztfname) for ztfname in ztfnames[45:])
 
 if len(ztfnames) > 1:
     print("Discarded SN1a")
