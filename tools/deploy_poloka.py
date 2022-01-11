@@ -103,7 +103,6 @@ def stats(folder, logger):
 
         return True
 
-
     import warnings
     warnings.filterwarnings('ignore',category=pd.io.pytables.PerformanceWarning)
 
@@ -167,10 +166,12 @@ poloka_fct = dict(zip([fct['map'].__name__ for fct in poloka_fct], poloka_fct))
 
 
 def launch(folder, fct):
-    logger = logging.getLogger(folder.name)
-    logger.addHandler(logging.FileHandler(folder.joinpath("output.log"), mode='w'))
-    logger.setLevel(logging.INFO)
-    logger.info(datetime.datetime.today())
+    if fct.__name__ != 'clean':
+        logger = logging.getLogger(folder.name)
+        logger.addHandler(logging.FileHandler(folder.joinpath("output.log"), mode='a'))
+        logger.setLevel(logging.INFO)
+        logger.info(datetime.datetime.today())
+        logger.info("Running {}".format(fct.__name__))
 
     try:
         result = fct['map'](folder, logger)
@@ -185,7 +186,9 @@ def launch(folder, fct):
         else:
             print("x", end="", flush=True)
 
-    logger.info("Done.")
+    if fct.__name__ != 'clean':
+        logger.info("Done.")
+
     return result
 
 
