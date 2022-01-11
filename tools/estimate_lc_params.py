@@ -156,7 +156,11 @@ def estimate_lc_params(ztfname):
 
         # Get gaia calibrators
         if output_folder:
-            gaia_cal_df = io.GaiaCalibrators.fetch_data(rcids, fields).drop(labels=['ps1_id', 'sdssdr13_id'], axis=1)
+            try:
+                gaia_cal_df = io.GaiaCalibrators.fetch_data(rcids, fields).drop(labels=['ps1_id', 'sdssdr13_id'], axis=1)
+            except e:
+                print(e)
+                return
             gaia_cal_df.reset_index(inplace=True)
             gaia_cal_df.set_index('Source', inplace=True)
             gaia_cal_df.rename(columns={'level_1': 'field', 'level_0': 'rcid'}, inplace=True)
