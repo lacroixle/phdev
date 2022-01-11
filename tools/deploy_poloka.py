@@ -107,7 +107,6 @@ def stats(folder, logger):
     warnings.filterwarnings('ignore',category=pd.io.pytables.PerformanceWarning)
 
     with pd.HDFStore(folder.joinpath("lists.hdf5"), mode='w') as hdfstore:
-
         # From make_catalog
         _extract_from_list("se", hdfstore)
 
@@ -142,7 +141,6 @@ def stats(folder, logger):
 
 def stats_reduce(cwd, ztfname, filtercode):
     # Seeing histogram
-
     folders = [folder for folder in cwd.glob("*") if folder.is_dir()]
 
     seseeings = []
@@ -159,6 +157,22 @@ def stats_reduce(cwd, ztfname, filtercode):
     plt.savefig(cwd.joinpath("{}-{}_seseeing_dist.png".format(ztfname, filtercode)), dpi=300)
     plt.close()
 
+    with open(cwd.joinpath("{}-{}_failures.txt".format(ztfname, filtercode)), 'w') as f:
+        # Failure rates
+        def _failure_rate(listname, func):
+            success_count = 0
+            for folder in folders:
+                if folder.joinpath("{}.list".format(listname)).exists():
+                    success_count += 1
+
+            f.writelines(["For {}:\n".format(func),
+                          " Success={}/{}\n".format(success_count, len(folders)),
+                          " Rate={}\n\n".format(float(success_count)/len(folders))])
+
+        _failure_rate("se", 'make_catalog')
+        _failure_rate("standalone_stars", 'mkcat2')
+        _failure_rate("psfstars", 'makepsf')
+
 poloka_fct.append({'map': stats, 'reduce': stats_reduce})
 
 
@@ -174,7 +188,7 @@ def launch(folder, fct):
         logger.info("Running {}".format(fct.__name__))
 
     try:
-        result = fct['map'](folder, logger)
+        result = fct(folder, logger)
     except Exception as e:
         print("")
         print("In folder {}".format(folder))
@@ -221,7 +235,7 @@ print("Found {} quadrant folders".format(len(folders)))
 if not args.no_map:
 
     map_start = time.perf_counter()
-    results = Parallel(n_jobs=args.n_jobs)(delayed(launch)(folder, poloka_fct[args.func]) for folder in folders)
+    results = Parallel(n_jobs=args.n_jobs)(delayed(launch)(folder, poloka_fct[args.func]['map']) for folder in folders)
     print("")
     print("Time elapsed={}".format(time.perf_counter() - map_start))
 
