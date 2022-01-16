@@ -163,13 +163,13 @@ def estimate_lc_params(ztfname):
         if output_folder:
             try:
                 gaia_cal_df = io.GaiaCalibrators.fetch_data(rcids, fields).drop(labels=['ps1_id', 'sdssdr13_id'], axis=1)
-            except e:
+            except Exception as e:
                 print(e)
-                return
-
-            gaia_cal_df.reset_index(inplace=True)
-            gaia_cal_df.set_index('Source', inplace=True)
-            gaia_cal_df.rename(columns={'level_1': 'field', 'level_0': 'rcid'}, inplace=True)
+                gaia_cal_df = pd.DataFrame()
+            else:
+                gaia_cal_df.reset_index(inplace=True)
+                gaia_cal_df.set_index('Source', inplace=True)
+                gaia_cal_df.rename(columns={'level_1': 'field', 'level_0': 'rcid'}, inplace=True)
 
         sn_info = {}
         sn_info['ztfname'] = ztfname
