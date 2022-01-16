@@ -25,7 +25,7 @@ zfilter_plot_color = dict(zip(zfilters, ['blue', 'red', 'orange']))
 argparser = argparse.ArgumentParser(description="Lightcurve estimation tools.")
 argparser.add_argument("--output", type=pathlib.Path, help="Output folder", required=True)
 argparser.add_argument('-j', dest='n_jobs', type=int, default=1, help="Number of jobs to launch.")
-argparser.add_argument('--ztfname', type=str, nargs='?', help="Process a specific SN 1a.")
+argparser.add_argument('--ztfname', type=pathlib.Path, nargs='?', help="Process a specific (or a list of) SN 1a.")
 argparser.add_argument('-v', type=int, dest='verbosity', default=0, help="Verbosity level.")
 argparser.add_argument('--cosmodr', type=pathlib.Path, help="Cosmo DR folder.")
 argparser.add_argument('--off-mul', dest='off_mul', type=int, default=3, help="Off SN 1a image statistics multiplier.")
@@ -59,11 +59,16 @@ coords_df = pd.read_csv(cosmo_dr_folder.joinpath("ztfdr2_coords.csv"), delimiter
 
 ztfnames = []
 if args.ztfname:
-    ztfnames = [args.ztfname]
-    n_jobs = 1
+    if args.ztfname.stem == str(args.ztfname):
+        ztfnames = [args.ztfname]
+        n_jobs = 1
+    else:
+        args.ztfname = args.ztfname.expanduser().resolve()
+        with open(args.ztfname, 'r') as f:
+            ztfnames = [ztfname[:-1] for ztfname in f.readlines()]
+
 else:
     ztf_files = lightcurve_folder.glob("*.csv")
-
     ztfnames = [ztf_file.stem.split("_")[0] for ztf_file in ztf_files]
 
 
@@ -161,6 +166,7 @@ def estimate_lc_params(ztfname):
             except e:
                 print(e)
                 return
+
             gaia_cal_df.reset_index(inplace=True)
             gaia_cal_df.set_index('Source', inplace=True)
             gaia_cal_df.rename(columns={'level_1': 'field', 'level_0': 'rcid'}, inplace=True)
@@ -314,7 +320,7 @@ def estimate_lc_params(ztfname):
 
 
 
-Parallel(n_jobs=n_jobs)(delayed(estimate_lc_params)(ztfname) for ztfname in ztfnames[45:])
+Parallel(n_jobs=n_jobs)(delayed(estimate_lc_params)(ztfname) for ztfname in ztfnames)
 
 if len(ztfnames) > 1:
     print("Discarded SN1a")

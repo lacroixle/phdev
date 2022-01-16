@@ -13,11 +13,15 @@ import pandas as pd
 from astropy.io import fits
 import matplotlib.pyplot as plt
 
+import dask
+from dask import delayed, compute, visualize
+from dask.distributed import Client, LocalCluster, progress
+
 import list_format
 
 
-filtercodes = ['zg', 'zr', 'zi']
-poloka_fct = []
+ztf_filtercodes = ['zg', 'zr', 'zi', 'all']
+poloka_func = []
 
 
 def run_and_log(cmd, logger=None):
@@ -28,28 +32,28 @@ def run_and_log(cmd, logger=None):
 
     return out.returncode
 
-poloka_fct.append({'map': run_and_log})
+poloka_func.append({'map': run_and_log})
 
 
 def make_catalog(folder, logger):
     run_and_log(["make_catalog", folder], logger)
     return folder.joinpath("se.list").exists()
 
-poloka_fct.append({'map': make_catalog})
+poloka_func.append({'map': make_catalog})
 
 
 def mkcat2(folder, logger):
     run_and_log(["mkcat2", folder], logger)
     return folder.joinpath("standalone_stars.list").exists()
 
-poloka_fct.append({'map': mkcat2})
+poloka_func.append({'map': mkcat2})
 
 
 def makepsf(folder, logger):
     run_and_log(["makepsf", folder], logger)
     return folder.joinpath("psfstars.list").exists()
 
-poloka_fct.append({'map': makepsf})
+poloka_func.append({'map': makepsf})
 
 
 def pipeline(folder, logger):
@@ -64,7 +68,7 @@ def pipeline(folder, logger):
 
     return True
 
-poloka_fct.append({'map': pipeline})
+poloka_func.append({'map': pipeline})
 
 
 files_to_keep = ["elixir.fits", "mask.fits", "calibrated.fits", ".dbstuff"]
@@ -84,7 +88,7 @@ def clean(folder, logger):
 
     return True
 
-poloka_fct.append({'map': clean})
+poloka_func.append({'map': clean})
 
 
 # Extract data from standalone stars and plot several distributions
@@ -139,23 +143,24 @@ def stats(folder, logger):
     return True
 
 
-def stats_reduce(cwd, ztfname, filtercode):
+def stats_reduce(results, cwd, ztfname, filtercode):
     # Seeing histogram
     folders = [folder for folder in cwd.glob("*") if folder.is_dir()]
 
     seseeings = []
     for folder in folders:
         hdfstore_path = folder.joinpath("lists.hdf5")
+
         if hdfstore_path.exists():
             with pd.HDFStore(hdfstore_path, mode='r') as hdfstore:
                 if '/calibrated' in hdfstore.keys():
                     calibrated_df = hdfstore.get('/calibrated')
                     seseeings.append(float(calibrated_df['seseeing']))
 
-    plt.hist(seseeings, bins=60, range=[0.5, 3], color='xkcd:dark grey', histtype='step')
-    plt.grid()
-    plt.savefig(cwd.joinpath("{}-{}_seseeing_dist.png".format(ztfname, filtercode)), dpi=300)
-    plt.close()
+    # plt.hist(seseeings, bins=60, range=[0.5, 3], color='xkcd:dark grey', histtype='step')
+    # plt.grid()
+    # plt.savefig(cwd.joinpath("{}-{}_seseeing_dist.png".format(ztfname, filtercode)), dpi=300)
+    # plt.close()
 
     with open(cwd.joinpath("{}-{}_failures.txt".format(ztfname, filtercode)), 'w') as f:
         # Failure rates
@@ -173,81 +178,104 @@ def stats_reduce(cwd, ztfname, filtercode):
         _failure_rate("standalone_stars", 'mkcat2')
         _failure_rate("psfstars", 'makepsf')
 
-poloka_fct.append({'map': stats, 'reduce': stats_reduce})
+    return sum(results)/len(results)
+
+poloka_func.append({'map': stats, 'reduce': stats_reduce})
 
 
-poloka_fct = dict(zip([fct['map'].__name__ for fct in poloka_fct], poloka_fct))
+poloka_func = dict(zip([func['map'].__name__ for func in poloka_func], poloka_func))
 
 
-def launch(folder, fct):
-    if fct.__name__ != 'clean':
-        logger = logging.getLogger(folder.name)
-        logger.addHandler(logging.FileHandler(folder.joinpath("output.log"), mode='a'))
+def launch(quadrant, wd, ztfname, filtercode, func):
+    curdir = wd.joinpath("{}/{}".format(ztfname, filtercode))
+    os.chdir(curdir)
+
+    logger = None
+    if func != 'clean':
+        logger = logging.getLogger(curdir.name)
+        logger.addHandler(logging.FileHandler(curdir.joinpath("output.log"), mode='a'))
         logger.setLevel(logging.INFO)
         logger.info(datetime.datetime.today())
-        logger.info("Running {}".format(fct.__name__))
+        logger.info("Current directory: {}".format(curdir))
+        logger.info("Running {}".format(func))
 
+    result = False
     try:
-        result = fct(folder, logger)
+        result = poloka_func[func]['map'](curdir.joinpath(quadrant), logger)
     except Exception as e:
         print("")
-        print("In folder {}".format(folder))
-        print(e.with_traceback)
+        print("In folder {}".format(curdir))
+        print(e)
 
-    if not args.dry_run:
-        if result:
-            print(".", end="", flush=True)
-        else:
-            print("x", end="", flush=True)
+    # if not args.dry_run:
+    #     if result:
+    #         print(".", end="", flush=True)
+    #     else:
+    #         print("x", end="", flush=True)
 
-    if fct.__name__ != 'clean':
+    if func != 'clean':
         logger.info("Done.")
 
     return result
 
 
-argparser = argparse.ArgumentParser(description="")
-argparser.add_argument('--ztfname', type=str, required=True)
-argparser.add_argument('-j', dest='n_jobs', type=int, default=1)
-argparser.add_argument('--wd', type=pathlib.Path, help="Working directory")
-argparser.add_argument('--filtercode', choices=filtercodes)
-argparser.add_argument('--func', type=str, choices=poloka_fct.keys(), default='pipeline')
-argparser.add_argument('--dry-run', dest='dry_run', action='store_true')
-argparser.add_argument('--no-map', dest='no_map', action='store_true')
-argparser.add_argument('--no-reduce', dest='no_reduce', action='store_true')
+if __name__ == '__main__':
+    argparser = argparse.ArgumentParser(description="")
+    argparser.add_argument('--ztfname', type=pathlib.Path, help="If provided, perform computation on one SN1a. If it points to a valid text file, will perform computation on all keys. If not provided, process the whole working directory.")
+    argparser.add_argument('-j', dest='n_jobs', type=int, default=1)
+    argparser.add_argument('--wd', type=pathlib.Path, help="Working directory")
+    argparser.add_argument('--filtercode', choices=ztf_filtercodes, default='all', help="Only perform computations on one or all filters.")
+    argparser.add_argument('--func', type=str, choices=poloka_func.keys(), default='pipeline')
+    argparser.add_argument('--dry-run', dest='dry_run', action='store_true')
+    argparser.add_argument('--no-map', dest='no_map', action='store_true')
+    argparser.add_argument('--no-reduce', dest='no_reduce', action='store_true')
 
-args = argparser.parse_args()
-args.wd = args.wd.expanduser().resolve()
+    args = argparser.parse_args()
+    args.wd = args.wd.expanduser().resolve()
 
-print("Running Poloka function {} on {}-{}".format(args.func, args.ztfname, args.filtercode))
+    if args.n_jobs == 1:
+        dask.config.set(scheduler='synchronous')
 
-# First check if there is quadrants associated with the selected filter
-if not args.wd.joinpath("{}/{}".format(args.ztfname, args.filtercode)).is_dir():
-    print("No quadrant for filter {}! Skipping.".format(args.filtercode))
-    exit()
+    localCluster = LocalCluster(n_workers=args.n_jobs, dashboard_address='localhost:8787')
+    client = Client(localCluster)
 
-cwd = args.wd.joinpath("{}/{}".format(args.ztfname, args.filtercode))
-os.chdir(cwd)
+    filtercodes = ztf_filtercodes[:3]
+    if args.filtercode != 'all':
+        filtercodes = [args.filtercode]
 
-folders = [folder for folder in list(cwd.glob("*")) if folder.is_dir()]
 
-print("Found {} quadrant folders".format(len(folders)))
-if not args.no_map:
+    ztfnames = None
+    if args.ztfname is not None:
+        if args.ztfname.stem == str(args.ztfname):
+            ztfnames = [str(args.ztfname)]
+        else:
+            args.ztfname = args.ztfname.expanduser().resolve()
+            if args.ztfname.is_file():
+                pass
+            else:
+                pass
 
-    map_start = time.perf_counter()
-    results = Parallel(n_jobs=args.n_jobs)(delayed(launch)(folder, poloka_fct[args.func]['map']) for folder in folders)
-    print("")
-    print("Time elapsed={}".format(time.perf_counter() - map_start))
+    jobs = []
+    quadrant_count = 0
+    for ztfname in ztfnames:
+        for filtercode in filtercodes:
+            print("Building job list for {}-{}... ".format(ztfname, filtercode), end="", flush=True)
+            quadrants = list(map(lambda x: x.stem, filter(lambda x: x.is_dir(), args.wd.joinpath("{}/{}".format(ztfname, filtercode)).glob("*"))))
+            quadrant_count += len(quadrants)
 
-    # Print quadrant that failed
-    if not all(results):
-        [print(folder) for folder, result in zip(folders, results) if not result]
-        print("")
+            results = [delayed(launch)(quadrant, args.wd, ztfname, filtercode, args.func) for quadrant in quadrants]
 
-if not args.no_reduce and 'reduce' in poloka_fct[args.func].keys():
-    print("Reducing")
-    reduce_start = time.perf_counter()
-    poloka_fct[args.func]['reduce'](cwd, args.ztfname, args.filtercode)
-    print("Time elapsed={}".format(time.perf_counter() - reduce_start))
+            if 'reduce' in poloka_func[args.func].keys():
+                results = [delayed(poloka_func[args.func]['reduce'])(results, args.wd, ztfname, filtercode)]
 
-print("")
+            print("Found {} quadrants.".format(len(quadrants)))
+            jobs.extend(results)
+
+
+    #visualize(jobs, filename="/home/llacroix/mygraph.png")
+    print("Running")
+    start_time = time.perf_counter()
+    progress(compute(jobs))
+    print("Done. Elapsed time={}".format(time.perf_counter() - start_time))
+
+    client.close()
