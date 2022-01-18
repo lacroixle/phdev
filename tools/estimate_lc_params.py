@@ -71,6 +71,8 @@ else:
     ztf_files = lightcurve_folder.glob("*.csv")
     ztfnames = [ztf_file.stem.split("_")[0] for ztf_file in ztf_files]
 
+ztfnames = list(map(str, ztfnames))
+
 
 # For some reason this sn does not exist in the SALT db
 blacklist = ["ZTF18aaajrso"]
@@ -96,7 +98,7 @@ def estimate_lc_params(ztfname):
         sql_lc_df = None
         def _sql_request():
             zquery = query.ZTFQuery()
-            zquery.load_metadata(radec=(redshift_df.loc[ztfname]['host_ra'], redshift_df.loc[ztfname]['host_dec']), sql_query="infobits < 33554432 and field <= 1895")
+            zquery.load_metadata(radec=(redshift_df.at[ztfname, 'host_ra'], redshift_df.at[ztfname, 'host_dec']), sql_query="infobits < 33554432 and field <= 1895")
             sql_lc_df = zquery.metatable
 
             if len(sql_lc_df) == 0:

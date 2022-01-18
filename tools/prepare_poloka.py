@@ -7,6 +7,7 @@ import shutil
 import pandas as pd
 import ztfimg.science
 import ztfquery.io
+import joblib
 
 sn_list_file = pathlib.Path(sys.argv[1])
 lc_dir = pathlib.Path(sys.argv[2])
@@ -14,6 +15,8 @@ poloka_dir = pathlib.Path(sys.argv[3])
 
 sn_df = pd.read_csv(sn_list_file, sep=",", comment="#")
 sn_df.set_index("ztfname", inplace=True)
+
+print("Found {} SNe 1a...".format(len(sn_df)), flush=True)
 
 copy_files = True
 
@@ -25,31 +28,38 @@ for sn in sn_df.index:
 
     def _create_subfolders(zfilter, hdfstore):
         print("In filter subfolder {}".format(zfilter))
-        #lc_df = pd.read_hdf(lc_dir.joinpath("{}.hd5".format(sn)), key='lc_{}'.format(zfilter))
+        poloka_dir.joinpath("{}/{}".format(sn, zfilter)).mkdir(exist_ok=True)
         lc_df = pd.read_hdf(hdfstore, key='lc_{}'.format(zfilter))
 
-        for sciimg_filename_fits in lc_df['ipac_file']:
-            print("Moving {}".format(sciimg_filename_fits))
+        def _create_subfolder(sciimg_filename):
             # Check files exist
-            sciimg_path = pathlib.Path(ztfquery.io.get_file(sciimg_filename_fits, downloadit=False, suffix='sciimg.fits'))
-            mskimg_path = pathlib.Path(ztfquery.io.get_file(sciimg_filename_fits, downloadit=False, suffix='mskimg.fits'))
-
+            sciimg_path = pathlib.Path(ztfquery.io.get_file(sciimg_filename, downloadit=False, suffix='sciimg.fits'))
+            mskimg_path = pathlib.Path(ztfquery.io.get_file(sciimg_filename, downloadit=False, suffix='mskimg.fits'))
             if not sciimg_path.exists() or not mskimg_path.exists():
-                print("Could not find files! (either sciimg or mskimg)")
-                continue
+                print("Fail: {}".format(sciimg_filename))
+                return
 
             # First create filter path
             poloka_dir.joinpath("{}/{}".format(sn, zfilter)).mkdir(exist_ok=True)
-            folder_name = sciimg_filename_fits[:37]
+            folder_name = sciimg_filename[:37]
             folder_path = poloka_dir.joinpath("{}/{}/{}".format(sn, zfilter, folder_name))
 
             folder_path.mkdir(exist_ok=True)
             folder_path.joinpath(".dbstuff").touch()
 
             # Copy files
+            elixir_symlink = folder_path.joinpath("elixir.fits")
+            if elixir_symlink.exists():
+                elixir_symlink.unlink()
+
             folder_path.joinpath("elixir.fits").symlink_to(sciimg_path)
             shutil.copy2(sciimg_path, folder_path.joinpath("calibrated.fits"))
             shutil.copy2(mskimg_path, folder_path.joinpath("mask.fits"))
+
+            print("Success: {}".format(sciimg_filename))
+
+        #for sciimg_filename_fits in lc_df['ipac_file']:
+        joblib.Parallel(n_jobs=int(sys.argv[4]))(joblib.delayed(_create_subfolder)(sciimg_filename) for sciimg_filename in lc_df['ipac_file'])
 
 
     with pd.HDFStore(lc_dir.joinpath("{}.hd5".format(sn)), mode='r') as hdfstore:

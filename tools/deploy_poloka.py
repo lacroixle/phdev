@@ -7,6 +7,7 @@ import logging
 import datetime
 import os
 import time
+import sys
 
 from joblib import Parallel, delayed
 import pandas as pd
@@ -15,7 +16,8 @@ import matplotlib.pyplot as plt
 
 import dask
 from dask import delayed, compute, visualize
-from dask.distributed import Client, LocalCluster, progress
+from dask.distributed import Client, LocalCluster, wait
+from dask_jobqueue import SLURMCluster
 
 import list_format
 
@@ -187,6 +189,8 @@ poloka_func = dict(zip([func['map'].__name__ for func in poloka_func], poloka_fu
 
 
 def launch(quadrant, wd, ztfname, filtercode, func):
+    import sys
+    print(sys.path)
     curdir = wd.joinpath("{}/{}".format(ztfname, filtercode))
     os.chdir(curdir)
 
@@ -207,11 +211,11 @@ def launch(quadrant, wd, ztfname, filtercode, func):
         print("In folder {}".format(curdir))
         print(e)
 
-    # if not args.dry_run:
-    #     if result:
-    #         print(".", end="", flush=True)
-    #     else:
-    #         print("x", end="", flush=True)
+    if not args.dry_run:
+        if result:
+            print(".", end="", flush=True)
+        else:
+            print("x", end="", flush=True)
 
     if func != 'clean':
         logger.info("Done.")
@@ -229,15 +233,11 @@ if __name__ == '__main__':
     argparser.add_argument('--dry-run', dest='dry_run', action='store_true')
     argparser.add_argument('--no-map', dest='no_map', action='store_true')
     argparser.add_argument('--no-reduce', dest='no_reduce', action='store_true')
+    argparser.add_argument('--cluster', action='store_true')
+    argparser.add_argument('--use-scratch', action='store_true')
 
     args = argparser.parse_args()
     args.wd = args.wd.expanduser().resolve()
-
-    if args.n_jobs == 1:
-        dask.config.set(scheduler='synchronous')
-
-    localCluster = LocalCluster(n_workers=args.n_jobs, dashboard_address='localhost:8787')
-    client = Client(localCluster)
 
     filtercodes = ztf_filtercodes[:3]
     if args.filtercode != 'all':
@@ -250,10 +250,33 @@ if __name__ == '__main__':
             ztfnames = [str(args.ztfname)]
         else:
             args.ztfname = args.ztfname.expanduser().resolve()
-            if args.ztfname.is_file():
-                pass
+            if args.ztfname.exists():
+                with open(args.ztfname, 'r') as f:
+                    ztfnames = [ztfname[:-1] for ztfname in f.readlines()]
             else:
                 pass
+
+
+    if args.cluster:
+        cluster = SLURMCluster(cores=4,
+                               processes=4,
+                               memory="8GB",
+                               project="ztf",
+                               walltime="12:00:00",
+                               queue="htc",
+                               job_extra=["-L sps"])
+        cluster.scale(jobs=100)
+        client = Client(cluster)
+        print(client.dashboard_link)
+        #client.wait_for_workers(3)
+    else:
+        localCluster = LocalCluster(n_workers=args.n_jobs, dashboard_address='localhost:8787')
+        client = Client(localCluster)
+        print("Local cluster!")
+        print(client.dashboard_link)
+
+    if args.n_jobs == 1:
+        dask.config.set(scheduler='synchronous')
 
     jobs = []
     quadrant_count = 0
@@ -275,7 +298,8 @@ if __name__ == '__main__':
     #visualize(jobs, filename="/home/llacroix/mygraph.png")
     print("Running")
     start_time = time.perf_counter()
-    progress(compute(jobs))
+    fjobs = client.compute(jobs)
+    wait(fjobs)
     print("Done. Elapsed time={}".format(time.perf_counter() - start_time))
 
     client.close()
