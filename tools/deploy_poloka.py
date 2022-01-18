@@ -7,17 +7,19 @@ import logging
 import datetime
 import os
 import time
+import shutil
 import sys
 
 from joblib import Parallel, delayed
 import pandas as pd
 from astropy.io import fits
 import matplotlib.pyplot as plt
-
 import dask
 from dask import delayed, compute, visualize
 from dask.distributed import Client, LocalCluster, wait
 from dask_jobqueue import SLURMCluster
+import ztfquery.io
+
 
 import list_format
 
@@ -38,6 +40,10 @@ poloka_func.append({'map': run_and_log})
 
 
 def make_catalog(folder, logger):
+    if args.retrieve_calibrated:
+        sciimg_path = ztfquery.io.get_file(folder.name + "_sciimg.fits", downloadit=False)
+        shutil.copy2(sciimg_path, folder.joinpath("calibrated.fits"))
+
     run_and_log(["make_catalog", folder], logger)
     return folder.joinpath("se.list").exists()
 
@@ -191,12 +197,12 @@ poloka_func = dict(zip([func['map'].__name__ for func in poloka_func], poloka_fu
 def launch(quadrant, wd, ztfname, filtercode, func, scratch=None):
     quadrant_dir = wd.joinpath("{}/{}/{}".format(ztfname, filtercode, quadrant))
 
-    if scratch:
+    if scratch and func != 'clean':
         quadrant_scratch = scratch.joinpath(quadrant)
         quadrant_scratch.mkdir(exist_ok=True)
         files = list(quadrant_dir.glob("*"))
 
-        [shuti.copy2(f, quadrant_scratch) for f in files]
+        [shutil.copy2(f, quadrant_scratch) for f in files]
         quadrant_dir = quadrant_scratch
 
     logger = None
@@ -213,7 +219,7 @@ def launch(quadrant, wd, ztfname, filtercode, func, scratch=None):
         result = poloka_func[func]['map'](quadrant_dir, logger)
     except Exception as e:
         print("")
-        print("In folder {}".format(curdir))
+        print("In folder {}".format(quadrant_dir))
         print(e)
 
     # if not args.dry_run:
@@ -226,9 +232,9 @@ def launch(quadrant, wd, ztfname, filtercode, func, scratch=None):
     if func != 'clean':
         logger.info("Done.")
 
-    if scratch:
+    if scratch and func != 'clean':
         files = list(quadrant_dir.glob("*"))
-        [shutil.copy2(f, wd.joinpath("{}/{}/{}".format(ztfname, filtercode, quadrant)))]
+        [shutil.copy2(f, wd.joinpath("{}/{}/{}".format(ztfname, filtercode, quadrant))) for f in files]
         [f.unlink() for f in files]
         quadrant_dir.rmdir()
 
@@ -247,6 +253,7 @@ if __name__ == '__main__':
     argparser.add_argument('--no-reduce', dest='no_reduce', action='store_true')
     argparser.add_argument('--cluster', action='store_true')
     argparser.add_argument('--scratch', type=pathlib.Path)
+    argparser.add_argument('--retrieve-calibrated', dest='retrieve_calibrated', action='store_true')
 
     args = argparser.parse_args()
     args.wd = args.wd.expanduser().resolve()
@@ -268,11 +275,21 @@ if __name__ == '__main__':
             else:
                 pass
 
+    if args.scratch:
+        args.scratch.mkdir(exist_ok=True, parents=True)
+
+        import signal
+        import atexit
+        def delete_scratch_at_exit(scratch_dir):
+            shutil.rmtree(scratch_dir)
+
+        atexit.register(delete_scratch_at_exit, scratch_dir=args.scratch)
+
 
     if args.cluster:
         cluster = SLURMCluster(cores=4,
                                processes=4,
-                               memory="8GB",
+                               memory="16GB",
                                project="ztf",
                                walltime="12:00:00",
                                queue="htc",
@@ -282,13 +299,13 @@ if __name__ == '__main__':
         print(client.dashboard_link)
         #client.wait_for_workers(3)
     else:
-        localCluster = LocalCluster(n_workers=args.n_jobs, dashboard_address='localhost:8787')
-        client = Client(localCluster)
-        print("Local cluster!")
-        print(client.dashboard_link)
+        if args.n_jobs == 1:
+            dask.config.set(scheduler='synchronous')
 
-    if args.n_jobs == 1:
-        dask.config.set(scheduler='synchronous')
+        localCluster = LocalCluster(n_workers=args.n_jobs, dashboard_address='localhost:8787', threads_per_worker=1)
+        client = Client(localCluster)
+        print("Dask dashboard at: {}".format(client.dashboard_link))
+
 
     jobs = []
     quadrant_count = 0
@@ -298,7 +315,7 @@ if __name__ == '__main__':
             quadrants = list(map(lambda x: x.stem, filter(lambda x: x.is_dir(), args.wd.joinpath("{}/{}".format(ztfname, filtercode)).glob("*"))))
             quadrant_count += len(quadrants)
 
-            results = [delayed(launch)(quadrant, args.wd, ztfname, filtercode, args.func) for quadrant in quadrants]
+            results = [delayed(launch)(quadrant, args.wd, ztfname, filtercode, args.func, args.scratch) for quadrant in quadrants]
 
             if 'reduce' in poloka_func[args.func].keys():
                 results = [delayed(poloka_func[args.func]['reduce'])(results, args.wd, ztfname, filtercode)]
