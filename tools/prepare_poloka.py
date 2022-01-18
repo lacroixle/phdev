@@ -47,14 +47,22 @@ for sn in sn_df.index:
             folder_path.mkdir(exist_ok=True)
             folder_path.joinpath(".dbstuff").touch()
 
-            # Copy files
-            elixir_symlink = folder_path.joinpath("elixir.fits")
-            if elixir_symlink.exists():
-                elixir_symlink.unlink()
+            def _create_symlink(path, symlink_to):
+                if path.exists():
+                    path.unlink()
 
-            folder_path.joinpath("elixir.fits").symlink_to(sciimg_path)
-            shutil.copy2(sciimg_path, folder_path.joinpath("calibrated.fits"))
-            shutil.copy2(mskimg_path, folder_path.joinpath("mask.fits"))
+                path.symlink_to(symlink_to)
+
+            _create_symlink(folder_path.joinpath("elixir.fits"), sciimg_path)
+            _create_symlink(folder_path.joinpath("mask.fits"), mskimg_path)
+            # Copy files
+            # elixir_symlink = folder_path.joinpath("elixir.fits")
+            # if elixir_symlink.exists():
+            #     elixir_symlink.unlink()
+
+            # folder_path.joinpath("elixir.fits").symlink_to(sciimg_path)
+            #shutil.copy2(sciimg_path, folder_path.joinpath("calibrated.fits"))
+            #shutil.copy2(mskimg_path, folder_path.joinpath("mask.fits"))
 
             print("Success: {}".format(sciimg_filename))
 
