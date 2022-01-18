@@ -62,7 +62,8 @@ for sn in sn_df.index:
         joblib.Parallel(n_jobs=int(sys.argv[4]))(joblib.delayed(_create_subfolder)(sciimg_filename) for sciimg_filename in lc_df['ipac_file'])
 
 
-    with pd.HDFStore(lc_dir.joinpath("{}.hd5".format(sn)), mode='r') as hdfstore:
-        for zfilter in zfilters:
-            if '/lc_{}'.format(zfilter) in hdfstore.keys():
-                _create_subfolders(zfilter, hdfstore)
+    if lc_dir.joinpath("{}.hd5".format(sn)).exists():
+        with pd.HDFStore(lc_dir.joinpath("{}.hd5".format(sn)), mode='r') as hdfstore:
+            for zfilter in zfilters:
+                if '/lc_{}'.format(zfilter) in hdfstore.keys():
+                    _create_subfolders(zfilter, hdfstore)

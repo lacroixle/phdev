@@ -188,37 +188,49 @@ poloka_func.append({'map': stats, 'reduce': stats_reduce})
 poloka_func = dict(zip([func['map'].__name__ for func in poloka_func], poloka_func))
 
 
-def launch(quadrant, wd, ztfname, filtercode, func):
-    import sys
-    print(sys.path)
-    curdir = wd.joinpath("{}/{}".format(ztfname, filtercode))
-    os.chdir(curdir)
+def launch(quadrant, wd, ztfname, filtercode, func, scratch=None):
+    quadrant_dir = wd.joinpath("{}/{}/{}".format(ztfname, filtercode, quadrant))
+
+    if scratch:
+        quadrant_scratch = scratch.joinpath(quadrant)
+        quadrant_scratch.mkdir(exist_ok=True)
+        files = list(quadrant_dir.glob("*"))
+
+        [shuti.copy2(f, quadrant_scratch) for f in files]
+        quadrant_dir = quadrant_scratch
 
     logger = None
     if func != 'clean':
-        logger = logging.getLogger(curdir.name)
-        logger.addHandler(logging.FileHandler(curdir.joinpath("output.log"), mode='a'))
+        logger = logging.getLogger(quadrant)
+        logger.addHandler(logging.FileHandler(quadrant_dir.joinpath("output.log"), mode='a'))
         logger.setLevel(logging.INFO)
         logger.info(datetime.datetime.today())
-        logger.info("Current directory: {}".format(curdir))
+        logger.info("Current directory: {}".format(quadrant_dir))
         logger.info("Running {}".format(func))
 
     result = False
     try:
-        result = poloka_func[func]['map'](curdir.joinpath(quadrant), logger)
+        result = poloka_func[func]['map'](quadrant_dir, logger)
     except Exception as e:
         print("")
         print("In folder {}".format(curdir))
         print(e)
 
-    if not args.dry_run:
-        if result:
-            print(".", end="", flush=True)
-        else:
-            print("x", end="", flush=True)
+    # if not args.dry_run:
+    #     if result:
+    #         print(".", end="", flush=True)
+    #     else:
+    #         print("x", end="", flush=True)
+    #
 
     if func != 'clean':
         logger.info("Done.")
+
+    if scratch:
+        files = list(quadrant_dir.glob("*"))
+        [shutil.copy2(f, wd.joinpath("{}/{}/{}".format(ztfname, filtercode, quadrant)))]
+        [f.unlink() for f in files]
+        quadrant_dir.rmdir()
 
     return result
 
@@ -234,7 +246,7 @@ if __name__ == '__main__':
     argparser.add_argument('--no-map', dest='no_map', action='store_true')
     argparser.add_argument('--no-reduce', dest='no_reduce', action='store_true')
     argparser.add_argument('--cluster', action='store_true')
-    argparser.add_argument('--use-scratch', action='store_true')
+    argparser.add_argument('--scratch', type=pathlib.Path)
 
     args = argparser.parse_args()
     args.wd = args.wd.expanduser().resolve()
