@@ -1,0 +1,1309 @@
+#!/usr/bin/env python 
+
+"""
+"""
+
+import os
+import os.path as op
+import sys
+
+from builtins import Exception
+import re
+import glob
+import argparse
+import pickle
+import pathlib
+
+import logging
+logging.basicConfig(format='%(asctime)s %(levelname)s %(message)s',
+                    level=logging.INFO)
+
+import numpy as np
+from scipy import sparse
+from scipy.stats import norm
+from sksparse import cholmod
+from numpy.polynomial.polynomial import polyvander2d
+
+import matplotlib
+matplotlib.use('Agg')
+#import matplotlib.pyplot as plt
+import pylab as pl 
+pl.interactive(0)
+from matplotlib import gridspec 
+
+from astropy.io import fits
+import saunerie.fitparameters as fp
+from saunerie.plottools import binplot
+from saunerie import lsqfit
+from saunerie.robuststat import mad
+from croaks import NTuple, DataProxy, match, rec_stack
+import pyloka
+import imageproc.composable_functions as compfuncs
+
+from lcutils import LcFile
+
+
+class AstromCatError(Exception): pass
+
+
+def ij_lt_deg(deg):
+    i = np.arange(deg+1)
+    iy,ix = np.meshgrid(i,i)
+    idx = (ix+iy)<=deg
+    return idx.flatten()
+
+
+def polyfit2d(x, y, f, deg):
+    """Fit a 2D polynomial on experimental values. 
+    
+    Given points (x,y) and corresponding measurements (f) fit the 2D
+    polynomial of degree deg=(degx, degy). 
+
+    .. note: the numpy polynomials and polyvander do not truncate 
+             the monomial (x^i y^i) degrees to ensure i+j<=deg
+             In this routine, we enforce that.
+    
+    Args:
+        x,y (ndarrays of floats): positions on the plane 
+        f (ndarray of float): measurements
+        deg (tuple): degree of the polynomial to fit
+            deg = (x-degree, y-degree)
+       
+    Returns:
+        the least-square solution, reshaped so that it is 
+        directly usable by polyval2d        
+    """        
+    x = np.asarray(x)
+    y = np.asarray(y)
+    f = np.asarray(f)
+    deg = np.asarray(deg)
+    J = polyvander2d(x, y, [deg,deg])
+    
+    # get rid of the monomials > deg
+    idx = ij_lt_deg(deg)
+    J = J[:,idx]
+    J = J.reshape(-1, J.shape[-1])
+    f = f.reshape((J.shape[0],))
+    c = np.linalg.lstsq(J,f,rcond=None)[0]
+    
+    ret = np.zeros((deg+1)**2)
+    ret[idx] = c
+    return ret.reshape((deg+1,deg+1))
+
+
+def _select_measurements(d, verbose=False):
+    """
+    measurement selection (useless if we start from psfstars)
+    """
+    idx = (d['apnb7'] == 0) & (d['apnc7'] == 0) & (d['gflag'] == 0)
+    sxx  = np.sqrt(d['gmxx'])
+    syy  = np.sqrt(d['gmyy'])
+    idx &= (sxx >= 1.)
+    idx &= (sxx <= 20.) 
+    idx &= (syy >= 1.)
+    idx &= (syy <= 20.)
+    if verbose:
+        logging.info('_select_measurements: %d -> %d' % (len(idx), idx.sum()))
+    return d[idx]    
+
+
+class AstromModel(object):
+    
+    def __init__(self, astromcats, degree=3, mjdref=None, **kwargs):
+        """
+        constructor
+        """
+        self.xscale = 1. / 3072.
+        self.yscale = 1. / 3080.
+        self.astromcats = astromcats
+        self.dp = dp = astromcats.dp
+        
+        self.nexpccd = len(dp.expccd_set)
+        self.nstars = ns = len(astromcats.clusters)
+        self.degree = degree
+        self.mjdref = mjdref if mjdref is not None else dp.mjd.mean()
+        self.ref_to_curr = compfuncs.BiPol2D(deg=degree, key='expccd', n=self.nexpccd)
+        self.params = fp.FitParameters(self.ref_to_curr.get_struct() + 
+                                       [('xref', ns), ('yref', ns), ('pmxref', ns), ('pmyref', ns)])
+        self.init_pars()
+        
+    def __call__(self, x, p, jac=False):
+        """
+        """
+        # update internal parameters
+        self.params.free = p
+        
+        # star positions on the reference
+        starindex = self.dp.starindex
+        
+        # total number of measurements
+        # output shapes will be [2*N], [2*N,n_free_pars]
+        N = len(starindex)
+        n = len(self.params.free)
+        
+        # star positions 
+        x = self.params['xref'].full[starindex]
+        y = self.params['yref'].full[starindex]
+        # accounting for proper motion
+        dt = self.dp.mjd - self.mjdref
+        dx = self.params['pmxref'].full[starindex] * dt
+        dy = self.params['pmyref'].full[starindex] * dt
+        xx = self.xscale * (x+dx)
+        yy = self.yscale * (y+dy)
+        
+        if jac is False:
+            return self.ref_to_curr.stack(np.array([xx,yy]),
+                                                   p=self.params,
+                                                   expccd=self.dp.expccd_index)
+        else:
+            # transfo, transfo derivatives, dtransfo/dpars
+            xy, D, (i, j, vals) = self.ref_to_curr.derivatives(np.array([xx,yy]),
+                                                               p=self.params,
+                                                               expccd=self.dp.expccd_index)
+            ii = [np.hstack([i,i+N])]
+            jj = [np.tile(j,2).ravel()]
+            vv = [np.hstack(vals).ravel()]
+        
+            # derivatives wrt star positions
+            k = np.arange(N) ; k = np.hstack([k,k+N])
+            dFdx = D[:,0,:].flatten() * self.xscale
+            ii.append(k)
+            jj.append(np.tile([self.params['xref'].indexof(starindex)],2).ravel())
+            vv.append(dFdx.ravel())
+        
+            dFdy = D[:,1,:].flatten() * self.yscale
+            ii.append(k)
+            jj.append(np.tile([self.params['yref'].indexof(starindex)],2).ravel())
+            vv.append(dFdy.ravel())
+
+            # derivatives wrt star proper motions
+            DT = np.hstack([dt,dt])
+            dFdpmx = D[:,0,:].flatten() * self.xscale * DT
+            ii.append(k)
+            jj.append(np.tile([self.params['pmxref'].indexof(starindex)],2).ravel())
+            vv.append(dFdpmx.ravel())
+                
+            dFdpmy = D[:,1,:].flatten() * self.yscale * DT
+            ii.append(k)
+            jj.append(np.tile([self.params['pmyref'].indexof(starindex)],2).ravel())
+            vv.append(dFdpmy.ravel())
+        
+            # stack everybody: x's above, then the y's
+            ii = np.hstack(ii)
+            jj = np.hstack(jj)
+            vv = np.hstack(vv)
+            ok = jj>=0
+        
+            return xy.flatten(), sparse.coo_matrix((vv[ok], (ii[ok], jj[ok])), shape=(2*N,n)) # .tocsc()
+            
+    def init_pars(self):
+        """
+        initialize the fit parameters with what we know already 
+        about them (quite a lot, in fact)
+        """
+        cat = self.astromcats
+        dp = self.dp
+        
+        # the xy positions on the reference 
+        self.params['xref'].full[:] = cat.clusters['xref']
+        self.params['yref'].full[:] = cat.clusters['yref']
+        
+        # no proper motions at initialization
+        self.params['pmxref'].full[:] = 0.
+        self.params['pmyref'].full[:] = 0.
+        
+        # the ref->ref transformation should be the identity
+        expccd_ref_index = dp.expccd_map[cat.expccd_ref]
+        for cn in self.ref_to_curr.coeffnames:
+            self.params[cn].fix(expccd_ref_index, 0.)
+        self.params['alphax'].fix(expccd_ref_index, 1. / self.xscale)
+        self.params['betay'].fix(expccd_ref_index, 1. / self.yscale)
+
+
+class PhotomModel():
+    """
+    """
+    def __init__(self, astromcats):
+        self.astromcats = astromcats
+        self.dp = astromcats.dp
+        self.nexpccd = len(self.dp.expccd_set)
+        self.nstars = len(self.astromcats.clusters)
+        self.params = self.init_pars()
+        
+    def __call__(self, x, p, jac=False):
+        """
+        evaluate the model (and its jacobian)
+        """
+        self.params.free = p
+        
+        starindex = self.dp.starindex
+        N = len(starindex)
+        n = len(self.params.free)
+        
+        fluxes = self.params['flux'].full[starindex]
+        alpha = self.params['alpha'].full[self.dp.expccd_index]
+        
+        v = alpha * fluxes
+        
+        if jac:
+            ii = np.tile(np.arange(N), 2)
+            jj = np.hstack((self.params['flux'].indexof(starindex), 
+                            self.params['alpha'].indexof(self.dp.expccd_index)))
+            vv = np.hstack((self.params['alpha'].full[self.dp.expccd_index], 
+                            self.params['flux'].full[starindex]))
+
+            ok = jj>=0
+            J = sparse.coo_matrix((vv[ok], (ii[ok],jj[ok])), shape=(N,n))
+            return v, J
+            
+        return v
+
+    def hess(self, x, wres):
+        N = len(self.dp.nt)
+        n = len(self.params.free)        
+        return sparse.coo_matrix(([0.], ([0], [0])), shape=(n,n))
+    
+    def init_pars(self):
+        """
+        """
+        p = fp.FitParameters([('alpha', self.nexpccd), ('flux', self.nstars)])
+        
+        cat = self.astromcats
+        dp = self.dp 
+        refzp = self.astromcats.refzp
+        
+        # average flux scale 
+        zp = np.bincount(dp.expccd_index, weights=dp.zp)
+        nn = np.bincount(dp.expccd_index)
+        zp /= nn
+        
+        # average fluxes aligned on the reference
+        aligned_fluxes = dp.flux * 10**(-0.4*dp.zp) / 10**(-0.4 * refzp)
+        average_aligned_flux = np.bincount(cat.starindex, weights=aligned_fluxes)
+        nn = np.bincount(cat.starindex)
+        
+        p['alpha'].full[:] = 10**(-0.4*refzp) / 10**(-0.4*zp)
+        p['flux'].full[:] = average_aligned_flux / nn
+        
+        return p
+
+
+def fit_transformations(model, cat):
+    model.params.fix('xref')
+    model.params.fix('yref')
+    model.params.fix('pmxref')
+    model.params.fix('pmyref')
+        
+    p = model.params.free.copy()
+    v, J = model(None, p, jac=1)
+    H = J.T * J
+    B = J.T * np.hstack((cat.dp.x, cat.dp.y))
+    fact = cholmod.cholesky(H)
+    p = fact(B)
+    model.params.free = p
+    return p
+
+
+def residuals(model, cat, p=None):
+    meas_xy = np.vstack((cat.dp.x, cat.dp.y)).T
+    if p is not None:
+        v, J = model(None, p=p, jac=1)
+    else:
+        v, J = model(None, p=model.params.free, jac=1)
+    model_xy = v.reshape(2,-1).T
+    
+    return meas_xy, model_xy, meas_xy - model_xy
+
+
+def fit_transformations_and_star_positions(model, cat, p=None, verbose=True, error_pedestal=5.E-3/0.187):
+    """
+    """
+    logging.info('release positions of non-fixed stars')
+    model.params.release('xref')
+    model.params.release('yref')
+    tofix = np.where(cat.clusters['fixed_star'])[0]
+    model.params['xref'].fix(tofix)
+    model.params['yref'].fix(tofix)
+    logging.info('we have: %d anchors' % len(tofix))
+    
+    # warning: what we call weights here are 1/sigma
+    w = np.sqrt(np.hstack([cat.dp.sx, cat.dp.sy])**2 + error_pedestal**2)
+    cat.dp.add_field('w', 1./w)
+    chi2 = lsqfit.Chi2(model, None, np.hstack([cat.dp.x, cat.dp.y]), w=1/w)
+    if p is None:
+        p = model.params.free.copy()
+    logging.info('initial CHI2: %f' % chi2(p))
+    
+    s = chi2.minimize(p, algorithm='gauss_newton_homebrew', 
+                      fallback=None, maxiter=100, verbose=verbose)
+    logging.info('CHI2: %f' % chi2(s))
+    
+    return s
+
+
+def fit_all(model, cat, p=None, verbose=True, error_pedestal=5.E-3/0.187):
+    """
+    """    
+    logging.info('release positions of non-fixed stars')
+    model.params.release('xref')
+    model.params.release('yref')
+    tofix = np.where(cat.clusters['fixed_star'])[0]
+    model.params['xref'].fix(tofix)
+    model.params['yref'].fix(tofix)
+
+    logging.info('release proper motions of non-fixed stars')
+    model.params.release('pmxref')
+    model.params.release('pmyref')
+    c = np.bincount(cat.starindex, minlength=len(cat.clusters))
+    tofix = np.where(cat.clusters['fixed_star'] | (c<3))[0]
+    model.params['pmxref'].fix(tofix)
+    model.params['pmyref'].fix(tofix)    
+    logging.info('%d stars fixed anyways' % len(tofix))
+    
+    # warning: what we call weights here are 1/sigma
+    w = np.sqrt(np.hstack([cat.dp.sx, cat.dp.sy])**2 + error_pedestal**2)
+    cat.dp.add_field('w', 1./w)
+    chi2 = lsqfit.Chi2(model, None, np.hstack([cat.dp.x, cat.dp.y]), w=1./w)
+    if p is None:
+        p = model.params.free.copy()
+    logging.info('initial CHI2: %f' % chi2(p))
+    
+    s = chi2.minimize(p, algorithm='gauss_newton_homebrew', 
+                      fallback=None, maxiter=100, verbose=verbose)
+    logging.info('CHI2: %f' % chi2(s))
+    
+    e = chi2.get_diag_cov(p=s)
+    param_errors = model.params.copy()
+    param_errors.full[:] = 0.
+    param_errors.free = np.sqrt(e)
+    
+    return s, param_errors
+
+
+class RobustMinimizer():
+    """
+    """
+    
+    def __init__(self, model, y, x=None, weights=None, verbose=1):
+        """
+        """
+        self.model = model
+        self.x = x
+        self.y  = y
+        self.w = weights
+        self.verbose = verbose
+        self._chi2 = lsqfit.Chi2(model, x, y, w=weights)
+        N = len(self.y)
+        self.bads = np.zeros(N).astype(bool)
+        self.suppress = None
+        self.restore = None
+
+    def minimize(self, p0, algorithm='newton_homebrew',  bads=None, **kwargs):
+        """
+        """
+        # restore the initial bads 
+        if bads is None:
+            self.bads = np.zeros(len(self.y)).astype(bool)
+        else:
+            self.bads = bads
+            
+        # first minimization
+        p = self._chi2.minimize(p0, goods=(~self.bads), algorithm=algorithm, **kwargs)
+        
+        niter = 1
+        while self.flag_outliers(p, **kwargs):
+            logging.info('nbads/ntot=%d/%d' % (self.bads.sum(), len(self.bads)))
+
+
+            pp = self._chi2.minimize(p, goods=(~self.bads), algorithm=algorithm, **kwargs)
+            niter += 1
+            logging.info('dp=%g chi2=%g' % (np.sum(np.abs(pp-p)), self._chi2(pp, goods=~self.bads)))
+            p[:] = pp
+            
+        if self.verbose:
+            logging.info('converged after %d iterations %d/%d outliers removed' % (niter, self.bads.sum(), len(self.bads)))
+
+        self.params = self.model.params.copy()
+        self.params.free = p
+        self.eparams = self.model.params.copy()
+        self.eparams.free = np.sqrt(self.get_diag_cov(p))
+            
+        return p
+
+    def check_local_param(self, p, local_param):
+        """
+        """
+        v, J = self.model(self.x, p, jac=True)
+        local_cols = slice(self.model.params[local_param].indexof(0), 
+                           self.model.params[local_param].indexof(-1))
+        J = J.tocsc()[~self.bads, local_cols]
+        return J.sum(axis=0)        
+
+    def suppress_one_at_a_time(self, r, p, local_param):
+        """
+        For each paramter, suppress only the worst outlier
+        
+        """
+        if self.suppress.sum() == 0:
+            return self.suppress 
+            
+        v, J = self.model(self.x, p, jac=1)
+        local_cols = slice(self.model.params[local_param].indexof(0), 
+                           self.model.params[local_param].indexof(-1))
+        J = J.tocsc()[self.suppress, local_cols].tocoo()
+        J.data = r[self.suppress][J.row]
+        
+        # the line number of the largest outlier
+        i_max = np.array(J.argmax(axis=0)).squeeze()
+        # it may also be that the corresponding column is empty
+        v_max = np.array(J.max(axis=0).todense()).squeeze()
+        # the outliers we need to remove 
+        to_remove = i_max[i_max>0 | ((i_max==0) & (v_max>0.))]
+        
+        suppress_one = np.zeros_like(self.suppress[self.suppress])
+        suppress_one[to_remove] = True
+        n_before = self.suppress.sum()
+        self.suppress[self.suppress] = suppress_one
+        n_after = self.suppress.sum()
+        logging.info('to suppress: %d -> %d' % (n_before, n_after))
+            
+    def flag_outliers(self, p, nsig=5, local_param=None):
+        """flag the outliers that deviate from the mean chi2 by at least
+        nsig. The standard deviation of the residuals is the square root of the chi2 
+        divided by the number of degrees of freedom. 
+        
+        Args:
+           p (array of floats): current solution (free parameters)
+           nsig (int or float): cut in sigma
+           local_param (array of ints): parameters 
+
+        Returns:
+           None
+
+        .. note: modifies self.bads, self.suppress, self.restore
+        """
+        r = self._chi2.get_res(p)
+        r *= r
+        if self.bads is not None:
+            chi2 = self._chi2(p, goods=~self.bads)
+            nmeas = (~self.bads).sum()
+        else:
+            chi2 = self._chi2(p)
+            nmeas = len(r)
+        
+        n_free_pars = len(p)
+        ndof = nmeas - n_free_pars
+        
+        # identify the outliers 
+        bads = r > (nsig**2 * chi2 / ndof)
+        
+        # now, who should I actually suppress & restore ?
+        self.suppress = bads & ~self.bads
+        self.restore = ~bads & self.bads
+        
+        # here, I should add the local params rejection
+        if local_param is not None:
+            self.suppress_one_at_a_time(r, p, local_param)
+                
+        n_suppressed = self.suppress.sum()
+        n_restored = self.restore.sum()
+        
+        if n_suppressed == 0:
+            self.suppress = None
+        else:
+            self.bads[self.suppress] = True
+                
+        if n_restored == 0:
+            self.restore = None
+        else:
+            self.bads[self.restore] = False
+                
+        # update the chi2
+        new_chi2 = self._chi2(p, goods=~self.bads)
+        
+        if self.verbose > 0:
+            logging.info('suppressed %d outliers' % n_suppressed)
+            logging.info('restored %d outliers' % n_restored)
+            logging.info('chi2: %g -> %g' % (chi2, new_chi2))
+        
+        return n_restored>0 or n_suppressed>0
+                
+    def get_res(self, p=None, x=None):
+        """
+        how do we deal with the bads ?
+        """
+        if p is None:
+            pp = self.model.params.free
+        else:
+            pp = p
+        r = self.model(x, p=pp)
+        r -= self.y
+        return r
+        
+    def get_wres(self, x=None):
+        """
+        how do we deal with the bads ?
+        """
+        r = self.model(x, p=self.params.free)
+        r -= self.y
+        return self.weights * r
+
+    def get_cov(self):
+        return self._chi2.get_cov(self.params.free, goods=~self.bads)
+
+    def get_block_cov(self):
+        pass
+
+    def get_diag_cov(self, p):
+        return self._chi2.get_diag_cov(p, goods=~self.bads)
+
+    def ndof(self):
+        nmeas = (~self.bads).sum()
+        npars = len(self.params.free)
+        return nmeas - npars
+
+    def chi2(self, p=None):
+        if p:
+            return self._chi2(p, goods=~self.bads)
+        return self._chi2(self.params.free, goods=~self.bads)
+
+
+def fit_photometric_ratios(cat, error_pedestal=0.001, p0=None):
+    model = PhotomModel(cat)
+    
+    dp = cat.dp 
+    
+    logging.info('photometric fit')
+    print('photometric fit')
+    model.params.release()
+    tofix = dp.expccd_map[cat.expccd_ref]
+    logging.info('fixing scale of reference exposure: [%d -> %d]' % (cat.expccd_ref, tofix))
+    print('fixing scale of reference exposure: [%d -> %d]' % (cat.expccd_ref, tofix))
+    model.params['alpha'].fix(tofix)
+    w = 1. / np.sqrt(dp.eflux **2 + (error_pedestal * dp.flux) ** 2)
+    
+    # minimizer 
+    minimizer = RobustMinimizer(model, dp.flux, weights=w, x=cat)
+    p = p0 if p0 is not None else model.params.free.copy()
+    s = minimizer.minimize(p, algorithm='newton_homebrew', local_param='flux')
+    
+    # identify the variable stars 
+    r = minimizer._chi2.get_res(s) ** 2
+    snm = np.bincount(cat.starindex)
+    schi2 = np.bincount(cat.starindex, weights=r) / snm
+    schi2_cut = np.median(schi2[schi2>0]) + 5 * mad(schi2[schi2>0])
+    vstars = schi2 > schi2_cut
+    vstars_id = np.where(vstars)
+    logging.info('identified %d VARIABLE stars' % vstars.sum())
+    
+    # fix the variable stars, and redo the fit
+    logging.info('fixing: %r' % vstars_id)
+    model.params['flux'].fix(vstars_id, 0.)
+    
+    # 
+    bads = np.in1d(cat.starindex, vstars_id)
+    p = model.params.free
+    s = minimizer.minimize(p, algorithm='newton_homebrew', local_param='flux', bads=bads)
+        
+    return minimizer
+
+
+def plot_photometric_fit_results(minimizer, cat, outdir=None):
+    dp = cat.dp 
+    # photometric ratios
+    fig = pl.figure()
+    err = minimizer.eparams['alpha'].full.copy() ; err[err>0.99] = 0.
+    # this is not the most orthodox way to get the mjd 
+    # but I couldn't find a better one...
+    n = np.bincount(dp.expccd_index)
+    mjd = np.bincount(dp.expccd_index, weights=dp.mjd) / n
+    pl.errorbar(mjd, minimizer.params['alpha'].full, 
+                yerr=err, ls='', color='k', marker='.')
+    idx = (err == 0.)
+    pl.errorbar(mjd[idx], minimizer.params['alpha'].full[idx], 
+                yerr=err[idx], ls='', color='r', marker='.')
+    pl.ylabel('photometric coefficient')
+    _savefig(fig, outdir, 'photometric_ratios.png')
+    
+    # photometric residuals
+    fig = pl.figure()
+    r = minimizer._chi2.get_res(minimizer.params.free)
+    bads = minimizer.bads
+    #    pl.errorbar(cat.starindex[~bads], r[~bads], yerr=1./minimizer.w[~bads], color='k', ls='', marker='.')
+    #    pl.errorbar(cat.starindex[bads], r[bads], yerr=1./minimizer.w[bads], color='r', ls='', marker='.')
+    pl.plot(cat.starindex[~bads], r[~bads], color='k', ls='', marker='.')
+    #    pl.plot(cat.starindex[bads], r[bads], color='r', ls='', marker='.')
+    pl.xlabel('star index')
+    pl.ylabel('flux residuals (weighted)')
+    _savefig(fig, outdir, 'photom_fit_residuals.png')
+
+
+def dump_photometric_fit_results(minimizer, cat, outdir=None, astrometry_pars=None):
+    # photometric ratios
+    alpha = minimizer.params['alpha'].full
+    ealpha = minimizer.eparams['alpha'].full
+    expid = np.floor(cat.dp.expccd_set / 1000).astype(int)
+    ccd = np.floor(cat.dp.expccd_set % 1000).astype(int)
+    nt = np.rec.fromarrays((expid, ccd, cat.dp.expccd_set, alpha, ealpha), names=['expid', 'ccd', 'expccd', 'alpha', 'ealpha'])
+    nt = nt.view(NTuple)
+    nt.keys['CHI2'] = minimizer.chi2()
+    nt.keys['NDOF'] = minimizer.ndof()
+    nt.keys['RCHI2'] = nt.keys['CHI2'] / nt.keys['NDOF']
+    #nt.totxt(outdir + os.sep + 'photom_ratios.ntuple')
+    nt.totxt(outdir.joinpath("photom_ratios.ntuple"))
+    
+    # star fluxes (in the reference frame)
+    flux = minimizer.params['flux'].full
+    eflux = minimizer.eparams['flux'].full
+    sindex = np.arange(0, cat.dp.starindex.max()+1)
+
+    # star chi2
+    r = minimizer._chi2.get_res(p=minimizer.params.free) ** 2
+    snm = np.bincount(cat.starindex[~minimizer.bads])
+    snm[snm == 0.] = 1.
+    schi2 = np.bincount(cat.starindex[~minimizer.bads], weights=r[~minimizer.bads])
+    schi2 /= snm
+    # star position on the reference
+    ns = len(minimizer.params['flux'].full)
+    xref, yref = np.zeros(ns), np.zeros(ns)
+    if astrometry_pars:
+        xref[:] = astrometry_pars['xref'].full
+        yref[:] = astrometry_pars['yref'].full
+    nt = np.rec.fromarrays((sindex, xref, yref, flux, eflux, schi2), names=['istar', 'xref', 'yref', 'flux', 'eflux', 'star_chi2'])
+    nt = nt.view(NTuple)
+    #nt.totxt(outdir + os.sep + 'recalibrated_star_fluxes.ntuple')
+    nt.totxt(outdir.joinpath("recalibrated_star_fluxes.ntuple"))
+
+
+class AstromCats():
+    """
+    """
+    
+    meas_extcols_dtype = np.dtype([(f, float) for f in ['era', 'edec', 'refstar', 'refra', 'refdec', 'refera', 'refedec', 'refccd', 'star', 'refmeas']])
+    clusters_extcols_dtype=np.dtype([(f, float) for f in ['refccd', 'gra', 'gdec', 'gra_error', 'gdec_error', 'gpmra', 'gpmdec', 'gparallax', 
+                                                          'gpmra_error', 'gpmdec_error', 'gg', 'gbp', 'grp', 'gg_error', 'gbp_error', 'grp_error', 
+                                                          'xref', 'yref']] + [('fixed_star', 'u8')])
+    
+    def __init__(self, lcfile, data=None, catalog_name='psfstars.list', gaia_catalog=None, compress=True, min_nmeas=25, min_exptime=100, 
+                 lcfile_specifies_sn_radec=False):
+        """
+        """
+        self.xscale = 1. / 3072.
+        self.yscale = 1. / 3080.
+        self.catalog_name = catalog_name
+        self.compress = compress
+        self.min_nmeas = min_nmeas # minimum number of measurements per ccd
+        self.min_exptime = min_exptime        
+        self.lcfile = lcfile
+        
+        if data is None:
+            data = self.load()
+            # todo: check that data and lcfile coincide
+            
+        data = self.clean_data(data, min_nmeas=min_nmeas, min_exptime=min_exptime)
+        self.data, self.clusters, self.starindex = self.build_clusters(data)
+        if gaia_catalog is not None:
+            self.associate_gaia(gaia_catalog)
+        self.dp = self.build_proxy(self.data)
+        
+        if lcfile_specifies_sn_radec:
+            try:
+                ra, dec = self.lcfile.ra, self.lcfile.dec
+                xsn, ysn = pyloka.radec2pix(lcfile.phoref + os.sep + 'calibrated.fz', [ra], [dec])
+                self.xsn, self.ysn = xsn[0], ysn[0]
+            except:
+                logging.error('unable to get SN x,y position')
+        else:
+            self.xsn, self.ysn = self.lcfile.ra, self.lcfile.dec
+        
+    def load_from_dbimage(self, dbim, reference_dbim, assume_zp_is_correct=False):
+        """
+        """
+        logging.info('processing: %s' % dbim)
+        # now, all calibrated exposures are saved in float
+        # loading from dbimages is still always a pain
+        try:
+            calibrated_fn = dbim + os.sep + 'calibrated.fz'
+            if op.isfile(calibrated_fn):
+                header = fits.open(calibrated_fn)[0].header
+            else:
+                calibrated_fn = dbim + os.sep + 'calibrated.fits'
+                if op.isfile(calibrated_fn):
+                    header = fits.open(calibrated_fn)[0].header
+        except Exception as e:
+            logging.error('unable to process: %s' % op.basename(dbim))
+            logging.error(sys.exc_info())
+            logging.error(e)
+            return None
+
+        d = NTuple.fromtxt(dbim + os.sep + self.catalog_name)
+        #ra,dec=pyloka.pix2radec(calibrated_fn.encode('utf8'), d['x'], d['y'])
+        ra,dec=pyloka.pix2radec(calibrated_fn, d['x'], d['y'])
+        #ref_calibrated_fn = reference_dbim + os.sep + 'calibrated.fz'
+        ref_calibrated_fn = reference_dbim + os.sep + 'calibrated.fits'
+        xref,yref = pyloka.radec2pix(ref_calibrated_fn, ra, dec)
+
+        N = len(d)
+        o = np.ones(N)
+        
+        if self.catalog_name == 'psfstars.list':
+            keys = (['x', 'y','sx','sy', 'rhoxy',
+                     'flux', 'eflux', 'fluxmax', 'psfchi2',
+                     'ra', 'dec', 'xref', 'yref'],
+                    #['airmass','exptime','det-id','mjd','gfseeing'], # read directly from the header
+                    ['airmass','exptime', 'rcid', 'obsmjd','gfseeing'], # read directly from the header
+                    ['expid', 'filter', 'zp', 'dzp']) # additional fields
+        else:
+            keys = (['x', 'y','sx','sy', 
+                     'apfl7', 'eapfl7', 'apnb7', 'apnc7', 'apfc7', 'apfo7', 'rad7',
+                     'gmxx', 'gmyy', 'gmxy', 'gflag', 'ra', 'dec', 'xref', 'yref'],
+                    ['airmass','exptime','det-id','mjd','gfseeing'], # read directly from the header
+                    ['expid', 'filter', 'zp', 'dzp']) # additional fields
+            
+        from_starlist = [d[k] for k in keys[0][:-4]]
+        from_starlist.extend([ra, dec])
+        from_starlist.extend([xref, yref])
+        
+        from_header = [o * header[k] for k in keys[1]]
+        #        from_header.append(o * _strip_exp_id(header['exp-id']))
+        #        from_header.append(np.array(N * [header['filter01']], dtype='|S15'))
+        #from_header.append(np.full(N, _strip_exp_id(header['exp-id'])))
+        from_header.append(np.full(N, header['expid']))
+        from_header.append(np.full(N, header['filter']))
+        if assume_zp_is_correct:
+            from_header.append(np.full(N, float(header['magzp'])))
+            from_header.append(np.full(N, float(header['magzpunc'])))
+        else:
+            from_header.append(np.full(N, 26.))
+            from_header.append(np.full(N, 0.05))
+            
+        # put the data together
+        data = from_starlist + from_header 
+        names = keys[0] + keys[1] + keys[2]
+        
+        # is it the reference exposure ?
+        if dbim == reference_dbim:
+            data.append(np.ones(N))
+            names.append('ref')
+            if assume_zp_is_correct:
+                self.refzp = header['ZP']
+            else:
+                self.refzp = 26.
+        else:
+            data.append(np.zeros(N))
+            names.append('ref')
+            
+        ret = np.rec.fromarrays(data, names=names)
+        if self.catalog_name == 'psfstars.list':
+            return ret
+            
+        return _select_measurements(ret, verbose=True)
+        
+    def load(self):
+        """
+        load all the data
+        """
+        data = []
+        for dbim in self.lcfile.images:
+            r = self.load_from_dbimage(dbim, reference_dbim=self.lcfile.phoref)
+            if r is not None:
+                data.append(r)
+        # phoref already loaded
+        #        data.append(self.load_from_dbimage(self.lcfile.phoref, reference_dbim=self.lcfile.phoref))
+        return np.hstack(data)        
+        
+    def clean_data(self, data, min_nmeas=25, min_exptime=100.):
+        """
+        """
+        dp =  DataProxy(data, x='x', y='y',
+                        #mjd='mjd', ccd='det-id', expid='expid',
+                        mjd='obsmjd', ccd='rcid', expid='expid',
+                        ref='ref')
+        
+        # a unique identifier for a ccdimage
+        dp.add_field('expccd', (dp.expid * 1000 + dp.ccd).astype(int))
+        dp.make_index('expccd')
+        c = np.bincount(dp.expccd_index)
+        
+        # for now, we remove the expccd's with less than min_nmeas measurements
+        not_enough_meas = np.where(c<min_nmeas)
+        logging.info('%d expccd with less than %d measurements' % (len(not_enough_meas), min_nmeas))
+        cut = np.in1d(dp.expccd_index, not_enough_meas)
+        n_before = len(dp.nt)
+        dp.compress(~cut)
+        logging.info('removing them from the fit: %d -> %d' % (n_before, len(dp.nt)))
+        
+        return dp.nt
+        
+        
+    def associate_gaia(self, gaia):
+        """
+        """
+        if not hasattr(self, 'clusters') or not hasattr(self, 'data'):
+            raise AstromCatError('no clusters yet')
+        
+        logging.info('associating with GAIA catalog')
+
+        # match with the gaia catalog 
+        i = match.match(gaia, self.clusters, project=True)
+        refstars = gaia[i[i>=0]]
+
+        # update the cluster data structure
+        # with the gaia information
+        for key in ['ra', 'dec', 'ra_error', 'dec_error',
+                    'pmra', 'pmdec', 'parallax', 'pmra_error', 'pmdec_error',
+                    'g', 'bp', 'rp', 'g_error', 'bp_error', 'rp_error']:
+            self.clusters['g' + key][i>=0] = refstars[key]
+
+        # Added threshold for fixed stars
+        pm_threshold = args.mu_max
+        fixed = (np.isnan(refstars['pmra']) & np.isnan(refstars['pmdec'])) | (np.sqrt(refstars['pmra']**2 + refstars['pmdec']**2) < pm_threshold)
+        self.clusters['fixed_star'][i>=0] = fixed
+
+        # I don't like having nan's in my data structures
+        idx = np.isnan(self.clusters['gpmra']) & np.isnan(self.clusters['gpmdec'])
+        self.clusters['gpmra'][idx] = 0.
+        self.clusters['gpmdec'][idx] = 0.
+        
+        # propagate association information into the measurements
+        self.data['refstar'] = self.clusters[self.starindex]['fixed_star']
+        self.data['refra'] = self.clusters[self.starindex]['gra']
+        self.data['refdec'] = self.clusters[self.starindex]['gdec']
+        self.data['refera'] = self.clusters[self.starindex]['gra_error']
+        self.data['refedec'] = self.clusters[self.starindex]['gdec_error']
+
+
+    def build_clusters(self, data, update_ref_coords=True):
+        """
+        """
+        logging.info('clustering measurements')
+        starindex, clusters = match.assoc(data)
+        starindex = starindex.astype(int)
+        N,n = len(data), len(clusters)
+        logging.info('%d clusters out of %d measurements' % (n, N))
+        
+        # average cluster positions on the sky
+        clusters['ra'] = np.bincount(starindex, data['ra']) / clusters['n']
+        clusters['dec'] = np.bincount(starindex, data['dec']) / clusters['n']
+        clusters = rec_stack(clusters, np.zeros(n, dtype=self.clusters_extcols_dtype))
+        data = rec_stack(data, np.zeros(N, dtype=self.meas_extcols_dtype))
+        data['star'] = starindex
+        
+        # get the cluster coordinates on the reference exposure (in pixels)
+        if update_ref_coords:
+            phoref_name = self.lcfile.phoref + os.sep + 'calibrated.fz'
+            if not op.isfile(phoref_name):
+                phoref_name = self.lcfile.phoref + os.sep + 'calibrated.fits'
+            xref, yref = pyloka.radec2pix(phoref_name,
+                                          clusters['ra'], clusters['dec'])
+            clusters['xref'], clusters['yref'] = xref, yref        
+            
+        return data, clusters, starindex
+
+    def build_proxy(self, data):
+        """
+        """
+        logging.info('building proxy ...')
+        if self.catalog_name == 'psfstars.list':
+            dp = DataProxy(data, x='x', y='y', sx='sx', sy='sy', rhoxy='rhoxy', ra='ra', dec='dec',
+                           flux='flux', eflux='eflux', fluxmax='fluxmax', psfchi2='psfchi2',
+                           airmass='airmass', exptime='exptime', gfseeing='gfseeing',
+                           filter='filter', mjd='obsmjd', ccd='rcid', expid='expid', xref='xref', yref='yref',
+                           star='star', ref='ref', zp='zp')
+        else:
+            dp = DataProxy(data, x='x', y='y', sx='sx', sy='sy', ra='ra', dec='dec', gmxx='gmxx', gmyy='gmyy', gmxy='gmxy',
+                           apfl7='apfl7', eapfl7='eapfl7', airmass='airmass', exptime='exptime', gfseeing='gfseeing',
+                           filter='filter', mjd='mjd', ccd='det-id', expid='expid', rad7='rad7', xref='xref', yref='yref', 
+                           star='star', ref='ref', zp='zp')
+
+        #        if compress:
+        #            check_exptime = dp.exptime >= self.min_exptime
+        #            dp.compress(check_exptime)
+
+        dp.add_field('expccd', (dp.expid * 1000 + dp.ccd).astype(int))
+        dp.make_index('expccd')
+
+        # let's determine and store the expccd of the reference
+        # exposure
+        #
+        i = np.unique(dp.expccd[dp.ref == 1])
+        if len(i) != 1:
+            raise AstromCatError('more than 1 reference exposure ?')
+        self.expccd_ref = i[0]
+
+        dp.add_field('starindex', self.starindex)
+        dp.make_index('mjd')
+        dp.make_index('expccd')
+        dp.make_index('ccd')        
+        
+        return dp
+
+
+def dump_proper_motion_catalog(model, cat, outdir, param_errors=None, covmat=None):
+    n = len(cat.clusters)
+    header = """@REFDATE %f
+# x : x position (pixels)
+# y : y position (pixels)
+# sx : x position r.m.s 
+# sy : y position r.m.s 
+# rhoxy : xy correlation 
+# flux : flux in image ADUs
+# pmx : proper motion along x (pixels/day)
+# pmy : proper motion along y (pixels/day)
+# format  BaseStar 3  PmStar 1
+# end 
+"""
+    #with open(outdir + os.sep + 'pmcatalog.list', 'w') as f:
+    with open(outdir.joinpath("pmcatalog.list"), 'w') as f:
+        f.write(header % model.mjdref)
+        for i in np.unique(cat.starindex):
+            xref = model.params['xref'].full[i]
+            yref = model.params['yref'].full[i]
+            l = "%15.12e %15.12e " % (xref, yref)
+            if param_errors is not None:
+                xref_err = param_errors['xref'].full[i]
+                yref_err = param_errors['yref'].full[i]
+                l += "%15.12e %15.12e 0. " % (xref_err, yref_err)
+            elif covmat is not None:
+                #                xref_err = param_errors['xref'].full[i]
+                #                yref_err = param_errors['yref'].full[i]
+                l += "%15.12e %15.12e %15.12e " % (0., 0., 0.)
+            else:
+                l += "%15.12e %15.12e %15.12e " % (0., 0., 0.)
+                
+            l += " 0. " # flux is here
+            
+            pmxref = model.params['pmxref'].full[i]
+            pmyref = model.params['pmyref'].full[i]
+            l += "%15.12e %15.12e  " % (pmxref, pmyref)
+            
+            l += '\n'            
+            f.write(l)
+
+
+def dump_polynomial_transfos(model, cat, outdir):
+    """
+    dump the fitted transformations (in the poloka format)
+    so that they can be understood by mklc
+    """
+    if not op.isdir(outdir):
+        os.makedirs(outdir)
+
+    for i,expccd in enumerate(cat.dp.expccd_set):
+        v = str(expccd)
+        expid, ccd = v[:-3], v[-3:]
+        #with open(outdir + os.sep + 'transfoTo' + expid + 'p' + ccd + '.dat', 'w') as f:
+        with open(outdir.joinpath("transfoTo{}p{}.dat".format(expid, ccd)), 'w') as f:
+            deg = model.degree
+            f.write("GtransfoPoly 1\ndegree %d\n" % deg)
+            
+            coeff_name = dict(list(zip(model.ref_to_curr.coeffs, [x for x in model.ref_to_curr.coeffnames if 'alpha' in x])))
+            for d in range(deg+1):
+                p,q = d,0
+                while p>=0:
+                    nm = coeff_name[(p,q)]
+                    scaled_par = model.params[nm].full[i] * model.xscale**p * model.yscale**q
+                    f.write(" %15.12E " % scaled_par)
+                    p -= 1
+                    q += 1
+            coeff_name = dict(list(zip(model.ref_to_curr.coeffs, [x for x in model.ref_to_curr.coeffnames if 'beta' in x])))
+            for d in range(deg+1):
+                p,q = d,0
+                while p>=0:
+                    nm = coeff_name[(p,q)]
+                    scaled_par = model.params[nm].full[i] * model.xscale**p * model.yscale**q
+                    f.write(" %15.12E " % scaled_par)
+                    p -= 1
+                    q += 1
+            f.write('\n')
+
+
+def _savefig(fig, outdir=None, fn=None):
+    if outdir is None or fn is None:
+        return 
+    if not op.isdir(outdir):
+        os.makedirs(outdir)
+    fig.savefig(outdir + os.sep + fn, bbox_inches='tight', dpi=200.)
+
+
+def plot_positions(model, cat, output=None, epars=None, min_nmeas=10, outdir=None):
+    """
+    """
+    fig = pl.figure()
+    xref = model.params['xref'].full
+    yref = model.params['yref'].full
+    
+    # fitted star positions
+    if epars is not None:
+        xref_err = cat.epars['xref'].full
+        yref_err = cat.epars['yref'].full
+        pl.errorbar(xref, yref, xerr=xref_err, yerr=yref_err, color='k', ls='', marker='.')
+    else:
+        pl.plot(xref, yref, 'k.')
+
+    # stars with more than min_nmeas_min measurements
+    ns = len(cat.clusters)
+    c = np.bincount(cat.starindex, minlength=ns)
+    idx = (c>=min_nmeas)
+    pl.plot(xref[idx], yref[idx], 'b.', label='> %d measurements' % min_nmeas)
+
+    # SN position
+    if hasattr(cat, 'xsn') and hasattr(cat, 'ysn'):
+        pl.plot(cat.xsn, cat.ysn, 'r+', label='SN [%6.3f %6.3f]' % (cat.xsn, cat.ysn))
+
+    pl.legend(loc='upper left')
+
+    pl.xlabel('xref [pixels]')
+    pl.ylabel('yref [pixels]')
+    r = cat.lcfile.phoref.split(os.sep)
+    pl.suptitle(r[-2] + os.sep + r[-1])
+    
+    _savefig(fig, outdir, 'positions.png')
+
+
+def plot_residual_hist(model, cat, nbins=100, min_flux=50000., range=(-0.5, 0.5), pulls=False, outdir=None):
+    """
+    """
+    fig = pl.figure(figsize=(8,8))
+    gs = gridspec.GridSpec(2,2,width_ratios=[3,1], height_ratios=[3,1])
+    x = np.linspace(range[0], range[1], 100)
+    bins = np.linspace(range[0], range[1], nbins)
+    
+    meas_xy, model_xy, res = residuals(model, cat)
+    rx, ry = res[:,0], res[:,1]
+    w = cat.dp.w.reshape(res.shape)
+    wx, wy = w[:,0], w[:,1]
+    if pulls and hasattr(cat.dp, 'w'):
+        rx *= wx
+        ry *= wy
+    
+    idx = cat.data['flux'] > min_flux
+    rx, ry = rx[idx], ry[idx]
+    
+    ax = pl.subplot(gs[0])
+    pl.plot(rx, ry, 'r,')
+    pl.ylabel('y residuals [pixels]')
+    pl.grid(1)
+    
+    ahy = pl.subplot(gs[1], sharey=ax)
+    pl.hist(ry, bins=bins, histtype='step', orientation='horizontal', density=True, color='k', range=range)
+    m, s = norm.fit(ry[(ry>range[0]) & (ry<range[1])])
+    pl.plot(norm.pdf(x, loc=m, scale=s), x, color='r', ls='-.', lw=1.5)
+    pl.setp(ahy.get_xticklabels(), visible=False)
+    pl.text(0.70, 0.3, r'$\sigma_y=%+5.2f$' % s, fontsize=16, 
+            transform=ahy.transAxes, rotation=-90)
+    pl.ylim(*range)
+
+    
+    ahx = pl.subplot(gs[2], sharex=ax)
+    pl.hist(rx, bins=bins, histtype='step', density=True, color='k', range=range)
+    pl.xlabel('x-residuals [pixels]')
+    m, s = norm.fit(rx[(rx>range[0]) & (rx<range[1])])
+    pl.plot(x, norm.pdf(x, loc=m, scale=s), color='r', ls='-.', lw=1.5)
+    pl.setp(ahx.get_yticklabels(), visible=False)
+    pl.text(0.7, 0.70, r'$\sigma_x=%+5.2f$' % s, fontsize=16, 
+            transform=ahx.transAxes)
+    pl.xlim(*range)
+
+    _savefig(fig, outdir, 'residuals_hist.png')
+
+
+def plot_residual_map(model, cat, min_flux=50000., outdir=None):
+    """
+    """
+    fig = pl.figure(figsize=(8,8))
+    meas_xy, model_xy, res = residuals(model, cat)
+    x = model.params['xref'].full[cat.starindex]
+    y = model.params['yref'].full[cat.starindex]
+    rx, ry = res[:,0], res[:,1]
+    
+    idx = cat.data['flux'] > min_flux
+    x, y = x[idx], y[idx]
+    rx, ry = rx[idx], ry[idx]
+    
+    pl.quiver(x, y, rx, ry)
+    pl.xlabel('xref')
+    pl.ylabel('yref')
+
+    _savefig(fig, outdir, 'residual_map.png')
+
+
+def plot_residual_vs_magnitude(model, cat, outdir=None):
+    meas_xy, model_xy, res = residuals(model, cat)
+    #res = np.sqrt(res[:, 0]**2 + res[:, 1]**2)
+    g = cat.clusters[cat.starindex]['gg']
+
+    # fig = pl.figure(figsize=(8,8))
+    # pl.plot(g, res, '.r')
+    # pl.grid()
+    # pl.xlabel('$g$ [mag]')
+    # pl.ylabel('residuals [mas]')
+    # pl.title('Residuals/magnitude relation')
+    # pl.axis(xmin=10., xmax=20., ymin=0., ymax=0.3)
+    # _savefig(fig, outdir, 'residual_magnitude.png')
+
+    # fig = pl.figure(figsize=(8., 8.))
+    # pl.xlabel("$g$ [mag]")
+    # pl.ylabel("residuals [pixel]")
+    # pl.grid()
+    # pl.axis(xmin=10., xmax=20., ymin=0., ymax=0.3)
+    # binplot(g, res, robust=True)
+    # _savefig(fig, outdir, 'astro_residual_magnitude.png')
+
+    fig, ax = pl.subplots(figsize=(16., 12.), nrows=2, ncols=2)
+    pl.subplot(2, 2, 1)
+    pl.xlabel("$g$ [mag]")
+    pl.ylabel("residuals $x$ [pixel]")
+    pl.grid()
+    pl.axis(xmin=10., xmax=20., ymin=-0.25, ymax=0.25)
+    xbinned_x, yplot_x, yerr_x = binplot(g, res[:, 0], nbins=15, robust=False, scale=False)
+
+    pl.subplot(2, 2, 2)
+    pl.xlabel("$g$ [mag]")
+    pl.ylabel("residuals $y$ [pixel]")
+    pl.grid()
+    pl.axis(xmin=10., xmax=20., ymin=-0.25, ymax=0.25)
+    xbinned_y, yplot_y, yerr_y = binplot(g, res[:, 1], nbins=15, robust=False, scale=False)
+
+    pl.subplot(2, 2, 3)
+    pl.xlabel("$g$ [mag]")
+    pl.ylabel("residuals $x$ [pixel]")
+    pl.grid()
+    pl.plot(xbinned_x, yerr_x)
+    pl.axis(xmin=10., xmax=20., ymin=0., ymax=0.07)
+
+    pl.subplot(2, 2, 4)
+    pl.xlabel("$g$ [mag]")
+    pl.ylabel("residuals $y$ [pixel]")
+    pl.grid()
+    pl.plot(xbinned_y, yerr_y)
+    pl.axis(xmin=10., xmax=20., ymin=0., ymax=0.07)
+
+    _savefig(fig, outdir, 'astro_residual_magnitude.png')
+
+
+def plot_proper_motion_map(model, cat, outdir=None):
+    """
+    """
+    fig = pl.figure(figsize=(8,8))
+    pl.title("Proper motion map")
+    x = model.params['xref'].full
+    y = model.params['yref'].full
+    pmx = model.params['pmxref'].full
+    pmy = model.params['pmyref'].full
+    idx = (np.abs(pmx)<1.) & (np.abs(pmy)<1.)
+
+    Q = pl.quiver(x[idx], y[idx], pmx[idx], pmy[idx])
+    pl.quiverkey(Q, 0.9, 0.9, 0.01, "1 [mas/year]", labelpos='E', coordinates='figure')
+    pl.xlabel('x [pixel]')
+    pl.ylabel('y [pixel]')
+
+    _savefig(fig, outdir, 'proper_motion_map.png')
+
+def plot_proper_motion_distribution(cat, outdir=None):
+    fig, ax = pl.subplots(figsize=(8., 8.))
+    ax.axis(xmin=0., xmax=100.)
+    pl.title("Distribution of proper motion of identified GAIA stars")
+    pl.grid()
+    pl.hist(np.sqrt(cat.clusters['gpmra']**2 + cat.clusters['gpmdec']**2), bins=50, range=[0., 100.], color='xkcd:dark grey', histtype='step')
+    pl.text(0.3, 0.8, "Anchor count={}".format(int(sum(cat.clusters['fixed_star']))), transform=ax.transAxes, size=20.)
+    pl.xlabel("$\mu$ [mas/year]")
+    pl.ylabel("Count")
+    pl.axvspan(0., args.mu_max, hatch='/', alpha=0.)
+    pl.axvline(args.mu_max, color='black')
+
+    _savefig(fig, outdir, 'proper_motion_distribution.png')
+
+def check_polynomial_io(model, cat, expid, ccd, fn=None):
+    x = np.arange(0., 3072., 10.)
+    y = np.arange(0., 3080., 10.)
+    x,y = np.meshgrid(x,y)
+    x,y = x.flatten(), y.flatten()
+    N = len(x)
+    
+    expccd = expid * 1000 + ccd
+    expccd_index = cat.dp.expccd_map[expccd]
+    k = expccd_index * np.ones(N).astype(int)
+    
+    vx, vy = model.ref_to_curr((x * model.xscale, y * model.yscale), p=model.params, expccd=k)
+    
+    r = np.rec.fromarrays((x, y, vx, vy), names=['x', 'y', 'vx', 'vy'])
+    
+    if fn is not None:
+        np.save(fn, r)
+    
+    return r
+
+
+def pmfit():
+    lc = LcFile(args.lcfile)
+    gaia = np.load(args.gaia)
+
+    cat = AstromCats(lc, catalog_name=args.catalog, gaia_catalog=gaia)
+    model = AstromModel(cat, degree=args.degree)
+
+    logging.info('fitting transformations...')
+    p_t = fit_transformations(model, cat)
+    logging.info('fitting transformations + star positions...')
+    p_ts = fit_transformations_and_star_positions(model, cat)
+    logging.info('fitting transformations + star positions + proper motions...')
+    p,e = fit_all(model, cat)
+
+    dump_polynomial_transfos(model, cat, outdir=args.outdir)
+    dump_proper_motion_catalog(model, cat, outdir=args.outdir, param_errors=e)
+
+    # photometric ratios
+    m = fit_photometric_ratios(cat, error_pedestal=args.flux_error_pedestal)
+    dump_photometric_fit_results(m, cat, astrometry_pars=model.params, outdir=args.outdir)
+
+    plot_photometric_fit_results(m, cat, outdir=args.plot_dir)
+
+    with open(args.outdir.joinpath("model.pickle"), 'wb') as f:
+        pickle.dump([cat, model], f)
+
+
+def plot():
+    with open(args.outdir.joinpath("model.pickle"), 'rb') as f:
+        cat, model = pickle.load(f)
+
+    plot_positions(model, cat, min_nmeas=10, outdir=args.plot_dir)
+    plot_residual_hist(model, cat, outdir=args.plot_dir)
+    plot_residual_map(model, cat, outdir=args.plot_dir)
+    plot_proper_motion_map(model, cat, outdir=args.plot_dir)
+    plot_residual_vs_magnitude(model, cat, outdir=args.plot_dir)
+    plot_proper_motion_distribution(cat, outdir=args.plot_dir)
+
+
+if (__name__ == "__main__"):
+    parser = argparse.ArgumentParser(description="relative astrometry for a given lcfile of stars")
+    parser.add_argument('-O', '--outdir', 
+                        help='output directory',
+                        type=pathlib.Path, default='out')
+    parser.add_argument('--plot-dir', 
+                        help='where to put control plots',
+                        type=str, default=None)
+    parser.add_argument('-i', '--input',
+                        help='input nutple (faster when we run repeatedly on a given SN)')
+    parser.add_argument('-d', '--degree', type=int,
+                        default=3,
+                        help='transformation degree')
+    parser.add_argument('-c', '--catalog', type=str, 
+                        default='psfstars.list',
+                        help='catalog to load (default: psfstars.list)')
+    parser.add_argument('--gaia', type=str,
+                        default='/sps/snls13/HSC/prod.2017-11/REFCATS/gaia_dr2_cosmos.npy',
+                        help='external gaia (DR2) catalog')
+    parser.add_argument('--flux_error_pedestal', type=float,
+                        default=0.002,
+                        help='(multiplicative) flux error pedestal')
+    parser.add_argument('lcfile', type=str, 
+                        help='light curve file')
+    parser.add_argument('--mu-max', type=float, default=5.)
+
+    args = parser.parse_args()
+
+    if args.plot_dir:
+        plot()
+    else:
+        print("Plotting...")
+        pmfit()

@@ -183,6 +183,8 @@ def estimate_lc_params(ztfname):
         sn_info['fieldid'] = list(set(sql_lc_df['field']))
         sn_info['t0mjd'] = t_0
         sn_info['peakmjd'] = t_0
+        sn_info['t_inf'] = t_inf
+        sn_info['t_sup'] = t_sup
         sn_info_df = pd.DataFrame([sn_info])
 
         # Compute the time interval covering the SN event with off acquisitions (ie, only the host galaxy)

@@ -8,6 +8,8 @@ import pandas as pd
 import ztfimg.science
 import ztfquery.io
 import joblib
+import numpy as np
+from astropy.io import fits
 
 sn_list_file = pathlib.Path(sys.argv[1])
 lc_dir = pathlib.Path(sys.argv[2])
@@ -54,17 +56,20 @@ for sn in sn_df.index:
                 path.symlink_to(symlink_to)
 
             _create_symlink(folder_path.joinpath("elixir.fits"), sciimg_path)
-            _create_symlink(folder_path.joinpath("mask.fits"), mskimg_path)
-            # Copy files
-            # elixir_symlink = folder_path.joinpath("elixir.fits")
-            # if elixir_symlink.exists():
-            #     elixir_symlink.unlink()
+            #_create_symlink(folder_path.joinpath("mask.fits"), mskimg_path)
 
-            # folder_path.joinpath("elixir.fits").symlink_to(sciimg_path)
-            #shutil.copy2(sciimg_path, folder_path.joinpath("calibrated.fits"))
-            #shutil.copy2(mskimg_path, folder_path.joinpath("mask.fits"))
+            # Dead mask
+            z = ztfimg.science.ScienceQuadrant.from_filename(sciimg_path)
 
-            print("Success: {}".format(sciimg_filename))
+            deads = np.array(z.get_mask(tracks=False, ghosts=False, spillage=False, spikes=False, dead=True,
+                                        nan=False, saturated=False, brightstarhalo=False, lowresponsivity=False,
+                                        highresponsivity=False, noisy=False, verbose=False), dtype=np.uint8)
+
+            mskhdu = fits.PrimaryHDU([deads])
+            mskhdu.writeto(folder_path.joinpath("deads.fits.gz"))
+
+            print("Success: {}, dead pixel count={}".format(sciimg_filename, np.sum(deads)))
+            #exit()
 
         #for sciimg_filename_fits in lc_df['ipac_file']:
         joblib.Parallel(n_jobs=int(sys.argv[4]))(joblib.delayed(_create_subfolder)(sciimg_filename) for sciimg_filename in lc_df['ipac_file'])

@@ -13,12 +13,15 @@ import sys
 from joblib import Parallel, delayed
 import pandas as pd
 from astropy.io import fits
+from astropy.wcs import WCS
+from astropy.coordinates import SkyCoord
 import matplotlib.pyplot as plt
 import dask
 from dask import delayed, compute, visualize
 from dask.distributed import Client, LocalCluster, wait
 from dask_jobqueue import SLURMCluster
 import ztfquery.io
+import numpy as np
 
 
 import list_format
@@ -191,7 +194,73 @@ def stats_reduce(results, cwd, ztfname, filtercode):
 poloka_func.append({'map': stats, 'reduce': stats_reduce})
 
 
-poloka_func = dict(zip([func['map'].__name__ for func in poloka_func], poloka_func))
+def smphot(results, cwd, ztfname, filtercode, logger):
+    quadrant_root = cwd.joinpath("{}/{}".format(ztfname, filtercode))
+    quadrant_folders = [folder for folder in quadrant_root.glob("*".format(ztfname, filtercode)) if folder.is_dir()]
+    quadrant_folders = list(filter(lambda x: x.joinpath("psfstars.list").exists(), quadrant_folders))
+
+    seeing = {}
+    for folder in quadrant_folders:
+        calibrated_file = folder.joinpath("calibrated.fits")
+        with fits.open(calibrated_file) as hdul:
+            seeing[folder] = hdul[0].header['seseeing']
+
+    seeing_df = pd.DataFrame.from_dict(seeing, orient='index')
+
+    idxmin = seeing_df.idxmin().values[0]
+    minseeing = seeing_df.at[idxmin, 0]
+
+    #seeing_df.drop(idxmin, inplace=True)
+
+    sn_parameters = pd.read_hdf(args.lc_folder.joinpath("{}.hd5".format(ztfname)), key='sn_info')
+
+    with fits.open(pathlib.Path(idxmin).joinpath("calibrated.fits")) as hdul:
+        w = WCS(hdul[0].header)
+
+    ra_px, dec_px = w.world_to_pixel(SkyCoord(ra=sn_parameters['sn_ra'], dec=sn_parameters['sn_dec'], unit='deg'))
+
+    driver_path = quadrant_root.joinpath("{}_driver_{}".format(ztfname, filtercode))
+    with open(driver_path, 'w') as f:
+        f.write("OBJECTS\n")
+        f.write("{} {} DATE_MIN={} DATE_MAX={} NAME={} TYPE=0 BAND={}\n".format(ra_px[0],
+                                                                                dec_px[0],
+                                                                                sn_parameters['t_inf'].values[0],
+                                                                                sn_parameters['t_sup'].values[0],
+                                                                                ztfname,
+                                                                                filtercode))
+        f.write("IMAGES\n")
+        for quadrant_folder in seeing_df.index:
+            f.write("{}\n".format(quadrant_folder))
+        f.write("PHOREF\n")
+        f.write("{}\n".format(idxmin))
+        f.write("PMLIST\n")
+
+
+    # Create GAIA catalog
+    gaia_cat = pd.read_hdf(args.lc_folder.joinpath("{}.hd5".format(ztfname)), key='gaia_cal')
+    gaia_cat.reset_index(drop=True, inplace=True)
+
+    gaia_cat = gaia_cat.assign(ra_error=pd.Series(np.full(len(gaia_cat), 1e-6)).values)
+    gaia_cat = gaia_cat.assign(dec_error=pd.Series(np.full(len(gaia_cat), 1e-6)).values)
+
+    gaia_cat = gaia_cat.rename(columns={'pmde': 'pmdec', 'plx': 'parallax', 'e_pmra': 'pmra_error', 'e_pmde': 'pmdec_error', 'gmag': 'g', 'bpmag': 'bp', 'rpmag': 'rp', 'e_gmag': 'g_error', 'e_bpmag': 'bperror', 'e_bpmag': 'bp_error', 'e_rpmag': 'rp_error'})
+
+    gaia_cat = gaia_cat[['ra', 'dec', 'ra_error', 'dec_error', 'pmra', 'pmdec', 'parallax', 'pmra_error', 'pmdec_error', 'g', 'bp', 'rp', 'g_error', 'bp_error', 'rp_error']]
+
+    np.save(args.wd.joinpath("{}/{}/gaia.npy".format(ztfname, filtercode)), gaia_cat.to_records(index=False))
+
+    # Launch pmfit.py
+    #run_and_log(["pmfit.py", quadrant_root.joinpath("{}_driver_{}".format(ztfname, filtercode)), "--gaia={}".format("gaia.npy"), "-O", "pmfit", "--plot-dir={}".format("pmfit_plot")], logger)
+
+    with open(driver_path, 'a') as f:
+        f.write(str(quadrant_root.joinpath("pmfit/pmcatalog.list")))
+
+    return True
+
+poloka_func.append({'reduce': smphot})
+
+
+poloka_func = dict(zip([list(func.values())[0].__name__ for func in poloka_func], poloka_func))
 
 
 def launch(quadrant, wd, ztfname, filtercode, func, scratch=None):
@@ -221,22 +290,15 @@ def launch(quadrant, wd, ztfname, filtercode, func, scratch=None):
         print("")
         print("In folder {}".format(quadrant_dir))
         print(e)
+    finally:
+        if scratch and func != 'clean':
+            files = list(quadrant_dir.glob("*"))
+            [shutil.copy2(f, wd.joinpath("{}/{}/{}".format(ztfname, filtercode, quadrant))) for f in files]
+            [f.unlink() for f in files]
+            quadrant_dir.rmdir()
 
-    # if not args.dry_run:
-    #     if result:
-    #         print(".", end="", flush=True)
-    #     else:
-    #         print("x", end="", flush=True)
-    #
-
-    if func != 'clean':
-        logger.info("Done.")
-
-    if scratch and func != 'clean':
-        files = list(quadrant_dir.glob("*"))
-        [shutil.copy2(f, wd.joinpath("{}/{}/{}".format(ztfname, filtercode, quadrant))) for f in files]
-        [f.unlink() for f in files]
-        quadrant_dir.rmdir()
+        if func != 'clean':
+            logger.info("Done.")
 
     return result
 
@@ -254,9 +316,20 @@ if __name__ == '__main__':
     argparser.add_argument('--cluster', action='store_true')
     argparser.add_argument('--scratch', type=pathlib.Path)
     argparser.add_argument('--retrieve-calibrated', dest='retrieve_calibrated', action='store_true')
+    argparser.add_argument('--cosmodr', type=pathlib.Path, help="Cosmo DR folder.")
+    argparser.add_argument('--lc-folder', dest='lc_folder', type=pathlib.Path)
 
     args = argparser.parse_args()
     args.wd = args.wd.expanduser().resolve()
+
+
+    if args.cosmodr:
+        cosmo_dr_folder = args.cosmodr
+    elif 'COSMO_DR_FOLDER' in os.environ.keys():
+        cosmo_dr_folder = pathlib.Path(os.environ.get("COSMO_DR_FOLDER"))
+    else:
+        print("Cosmo DR folder not set! Either set COSMO_DR_FOLDER environnement variable or use the --cosmodr parameter.")
+        exit(-1)
 
     filtercodes = ztf_filtercodes[:3]
     if args.filtercode != 'all':
@@ -312,18 +385,26 @@ if __name__ == '__main__':
     for ztfname in ztfnames:
         for filtercode in filtercodes:
             print("Building job list for {}-{}... ".format(ztfname, filtercode), end="", flush=True)
-            quadrants = list(map(lambda x: x.stem, filter(lambda x: x.is_dir(), args.wd.joinpath("{}/{}".format(ztfname, filtercode)).glob("*"))))
-            quadrant_count += len(quadrants)
+            results = None
 
-            results = [delayed(launch)(quadrant, args.wd, ztfname, filtercode, args.func, args.scratch) for quadrant in quadrants]
+            if 'map' in poloka_func[args.func].keys():
+                quadrants = list(map(lambda x: x.stem, filter(lambda x: x.is_dir(), args.wd.joinpath("{}/{}".format(ztfname, filtercode)).glob("*"))))
+                quadrant_count += len(quadrants)
+
+                results = [delayed(launch)(quadrant, args.wd, ztfname, filtercode, args.func, args.scratch) for quadrant in quadrants]
+                print("Found {} quadrants.".format(len(quadrants)))
 
             if 'reduce' in poloka_func[args.func].keys():
-                results = [delayed(poloka_func[args.func]['reduce'])(results, args.wd, ztfname, filtercode)]
+                logger = logging.getLogger("{}-{}".format(ztfname, filtercode))
+                logger.addHandler(logging.FileHandler(args.wd.joinpath("{}/{}/output.log".format(ztfname, filtercode)), mode='a'))
+                logger.setLevel(logging.INFO)
+                logger.info(datetime.datetime.today())
+                logger.info("Running reduction".format(args.func))
+                results = [delayed(poloka_func[args.func]['reduce'])(results, args.wd, ztfname, filtercode, logger)]
 
-            print("Found {} quadrants.".format(len(quadrants)))
             jobs.extend(results)
 
-
+    print("")
     #visualize(jobs, filename="/home/llacroix/mygraph.png")
     print("Running")
     start_time = time.perf_counter()
