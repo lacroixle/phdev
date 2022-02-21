@@ -9,6 +9,7 @@ import os
 import time
 import shutil
 import sys
+import socket
 
 from joblib import Parallel, delayed
 import pandas as pd
@@ -38,8 +39,6 @@ def run_and_log(cmd, logger=None):
         logger.error(out.stderr.decode('utf-8'))
 
     return out.returncode
-
-poloka_func.append({'map': run_and_log})
 
 
 def make_catalog(folder, logger):
@@ -266,14 +265,6 @@ poloka_func = dict(zip([list(func.values())[0].__name__ for func in poloka_func]
 def launch(quadrant, wd, ztfname, filtercode, func, scratch=None):
     quadrant_dir = wd.joinpath("{}/{}/{}".format(ztfname, filtercode, quadrant))
 
-    if scratch and func != 'clean':
-        quadrant_scratch = scratch.joinpath(quadrant)
-        quadrant_scratch.mkdir(exist_ok=True)
-        files = list(quadrant_dir.glob("*"))
-
-        [shutil.copy2(f, quadrant_scratch) for f in files]
-        quadrant_dir = quadrant_scratch
-
     logger = None
     if func != 'clean':
         logger = logging.getLogger(quadrant)
@@ -282,6 +273,20 @@ def launch(quadrant, wd, ztfname, filtercode, func, scratch=None):
         logger.info(datetime.datetime.today())
         logger.info("Current directory: {}".format(quadrant_dir))
         logger.info("Running {}".format(func))
+
+        logger.info("Quadrant directory: {}".format(quadrant_dir))
+
+        if scratch:
+            logger.info("Using scratch space {}".format(scratch))
+            logger.info(" Parent exists={}".format(scratch.parent.exists()))
+            quadrant_scratch = scratch.joinpath(quadrant)
+            quadrant_scratch.mkdir(exist_ok=True, parents=True)
+            logger.info("Successfully created quadrant working dir in scratch space")
+            files = list(quadrant_dir.glob("*"))
+
+            [shutil.copyfile(f, quadrant_scratch.joinpath(f.name)) for f in files]
+            quadrant_dir = quadrant_scratch
+            logger.info("Successfully copyed files from sps to scratchspace")
 
     result = False
     try:
@@ -297,8 +302,14 @@ def launch(quadrant, wd, ztfname, filtercode, func, scratch=None):
             [f.unlink() for f in files]
             quadrant_dir.rmdir()
 
-        if func != 'clean':
-            logger.info("Done.")
+    if func != 'clean':
+        logger.info("Done.")
+
+    if scratch and func != 'clean':
+        files = list(quadrant_dir.glob("*"))
+        [shutil.copyfile(f, wd.joinpath("{}/{}/{}/{}".format(ztfname, filtercode, quadrant, f.name))) for f in files]
+        [f.unlink() for f in files]
+        quadrant_dir.rmdir()
 
     return result
 
@@ -348,6 +359,7 @@ if __name__ == '__main__':
             else:
                 pass
 
+
     if args.scratch:
         args.scratch.mkdir(exist_ok=True, parents=True)
 
@@ -360,22 +372,23 @@ if __name__ == '__main__':
 
 
     if args.cluster:
-        cluster = SLURMCluster(cores=4,
-                               processes=4,
-                               memory="16GB",
+        cluster = SLURMCluster(cores=24,
+                               processes=24,
+                               memory="64GB",
                                project="ztf",
                                walltime="12:00:00",
                                queue="htc",
                                job_extra=["-L sps"])
-        cluster.scale(jobs=100)
+        cluster.scale(jobs=10)
         client = Client(cluster)
-        print(client.dashboard_link)
-        #client.wait_for_workers(3)
+        print(client.dashboard_link, flush=True)
+        print(socket.gethostname(), flush=True)
+        client.wait_for_workers(10)
     else:
         if args.n_jobs == 1:
             dask.config.set(scheduler='synchronous')
 
-        localCluster = LocalCluster(n_workers=args.n_jobs, dashboard_address='localhost:8787', threads_per_worker=1)
+        localCluster = LocalCluster(n_workers=args.n_jobs, dashboard_address='localhost:8787', threads_per_worker=1, nanny=False)
         client = Client(localCluster)
         print("Dask dashboard at: {}".format(client.dashboard_link))
 
