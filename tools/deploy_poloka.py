@@ -272,6 +272,10 @@ def smphot(results, cwd, ztfname, filtercode):
         f.write(str(quadrant_root.joinpath("pmfit/pmcatalog.list")))
 
     run_and_log(["pmfit", driver_path, "--gaia={}".format(gaia_path), "--outdir=pmfit"], logger=logger)
+
+
+    run_and_log(["pmfit", driver_path, "--gaia={}".format(gaia_path), "--outdir=pmfit", "--plot-dir=pmfit_plot"], logger=logger)
+
     return True
 
 

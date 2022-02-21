@@ -1121,6 +1121,33 @@ def plot_residual_map(model, cat, min_flux=50000., outdir=None):
     _savefig(fig, outdir, 'residual_map.png')
 
 
+def plot_proper_motion_gaia_residuals(model, cat, outdir=None):
+    pm_gaia_ra = cat.clusters['gpmra']
+    pm_gaia_dec = cat.clusters['gpmdec']
+    pm_ref_ra = 1.01e3*365.25*model.params['pmxref'].full
+    pm_ref_dec = 1.01e3*365.25*model.params['pmyref'].full
+    print(np.mean(pm_gaia_dec))
+    print(np.mean(pm_ref_dec))
+
+    fig, ax = pl.subplots(figsize=(16., 8.), nrows=2, ncols=2)
+
+    # for i in range(len(pm_gaia_ra)):
+    #     pl.plot([i, i], [pm_gaia_ra[i], pm_ref_ra[i]], color='black')
+    pl.title("Residuals for proper motion (vs Gaia)")
+
+    pl.subplot(1, 2, 1)
+    pl.hist(pm_gaia_ra - pm_ref_ra, bins=100, range=[-500, 500])
+    pl.xlabel("$\\mu_{\\mathrm{fitted}}-\\mu_{\\mathrm{gaia}}$ [mas]")
+    pl.ylabel("Count, $x$ axis")
+
+    pl.subplot(1, 2, 2)
+    pl.hist(pm_gaia_dec - pm_ref_dec, bins=100, range=[-500, 500])
+    pl.xlabel("$\\mu_{\\mathrm{fitted}}-\\mu_{\\mathrm{gaia}}$ [mas]")
+    pl.ylabel("Count, $y$ axis")
+
+
+    _savefig(fig, outdir, 'pm_gaia_residuals.png')
+
 def plot_residual_vs_magnitude(model, cat, outdir=None):
     meas_xy, model_xy, res = residuals(model, cat)
     #res = np.sqrt(res[:, 0]**2 + res[:, 1]**2)
@@ -1180,9 +1207,6 @@ def plot_residual_pull(model, cat, outdir=None):
 
     g = cat.clusters[cat.starindex]['gg']
     w = np.sqrt(np.vstack([cat.dp.sx, cat.dp.sy]).T**2 + args.flux_error_pedestal**2)
-    print(w.shape)
-    print(meas_xy.shape)
-    print(model_xy.shape)
     #w = 1. / np.sqrt(np.vstack([cat.dp.sx, cat.dp.sy]).T**2 + args.flux_error_pedestal**2)
 
     fig, ax = pl.subplots(figsize=(8., 8.), nrows=2, ncols=2)
@@ -1317,6 +1341,7 @@ def plot():
     plot_residual_vs_magnitude(model, cat, outdir=args.plot_dir)
     plot_proper_motion_distribution(cat, outdir=args.plot_dir)
     plot_residual_pull(model, cat, outdir=args.plot_dir)
+    plot_proper_motion_gaia_residuals(model, cat, outdir=args.plot_dir)
 
 
 if (__name__ == "__main__"):
