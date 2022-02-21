@@ -33,10 +33,17 @@ poloka_func = []
 
 
 def run_and_log(cmd, logger=None):
-    out = subprocess.run(cmd, capture_output=True)
     if logger:
-        logger.info(out.stdout.decode('utf-8'))
-        logger.error(out.stderr.decode('utf-8'))
+        logger.info("Running command: \"{}\"".format(" ".join([str(s) for s in cmd])))
+        start_time = time.perf_counter()
+
+    out = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, universal_newlines=True)
+
+    if logger:
+        logger.info("Done running command. Elapsed time={}".format(time.perf_counter() - start_time))
+        logger.info("Command stdout/stderr output:")
+        logger.info(out.stdout)
+        logger.info("=========================== output end ===========================")
 
     return out.returncode
 
@@ -193,11 +200,18 @@ def stats_reduce(results, cwd, ztfname, filtercode):
 poloka_func.append({'map': stats, 'reduce': stats_reduce})
 
 
-def smphot(results, cwd, ztfname, filtercode, logger):
+def smphot(results, cwd, ztfname, filtercode):
+    logger = logging.getLogger("{}-{}".format(ztfname, filtercode))
+    logger.addHandler(logging.FileHandler(args.wd.joinpath("{}/{}/output.log".format(ztfname, filtercode)), mode='a'))
+    logger.setLevel(logging.INFO)
+    logger.info(datetime.datetime.today())
+    logger.info("Running reduction {}".format(args.func))
+
     quadrant_root = cwd.joinpath("{}/{}".format(ztfname, filtercode))
     quadrant_folders = [folder for folder in quadrant_root.glob("*".format(ztfname, filtercode)) if folder.is_dir()]
     quadrant_folders = list(filter(lambda x: x.joinpath("psfstars.list").exists(), quadrant_folders))
 
+    logger.info("Determining best seeing quadrant...")
     seeing = {}
     for folder in quadrant_folders:
         calibrated_file = folder.joinpath("calibrated.fits")
@@ -209,7 +223,8 @@ def smphot(results, cwd, ztfname, filtercode, logger):
     idxmin = seeing_df.idxmin().values[0]
     minseeing = seeing_df.at[idxmin, 0]
 
-    #seeing_df.drop(idxmin, inplace=True)
+    logger.info("Best seeing quadrant: {}". format(idxmin))
+    logger.info("  with seeing={}".format(minseeing))
 
     sn_parameters = pd.read_hdf(args.lc_folder.joinpath("{}.hd5".format(ztfname)), key='sn_info')
 
@@ -219,6 +234,7 @@ def smphot(results, cwd, ztfname, filtercode, logger):
     ra_px, dec_px = w.world_to_pixel(SkyCoord(ra=sn_parameters['sn_ra'], dec=sn_parameters['sn_dec'], unit='deg'))
 
     driver_path = quadrant_root.joinpath("{}_driver_{}".format(ztfname, filtercode))
+    logger.info("Writing driver file at location {}".format(driver_path))
     with open(driver_path, 'w') as f:
         f.write("OBJECTS\n")
         f.write("{} {} DATE_MIN={} DATE_MAX={} NAME={} TYPE=0 BAND={}\n".format(ra_px[0],
@@ -235,6 +251,8 @@ def smphot(results, cwd, ztfname, filtercode, logger):
         f.write("PMLIST\n")
 
 
+
+    logger.info("Building Gaia catalog...")
     # Create GAIA catalog
     gaia_cat = pd.read_hdf(args.lc_folder.joinpath("{}.hd5".format(ztfname)), key='gaia_cal')
     gaia_cat.reset_index(drop=True, inplace=True)
@@ -246,15 +264,16 @@ def smphot(results, cwd, ztfname, filtercode, logger):
 
     gaia_cat = gaia_cat[['ra', 'dec', 'ra_error', 'dec_error', 'pmra', 'pmdec', 'parallax', 'pmra_error', 'pmdec_error', 'g', 'bp', 'rp', 'g_error', 'bp_error', 'rp_error']]
 
-    np.save(args.wd.joinpath("{}/{}/gaia.npy".format(ztfname, filtercode)), gaia_cat.to_records(index=False))
+    gaia_path = args.wd.joinpath("{}/{}/gaia.npy".format(ztfname, filtercode))
+    np.save(gaia_path, gaia_cat.to_records(index=False))
 
-    # Launch pmfit.py
-    #run_and_log(["pmfit.py", quadrant_root.joinpath("{}_driver_{}".format(ztfname, filtercode)), "--gaia={}".format("gaia.npy"), "-O", "pmfit", "--plot-dir={}".format("pmfit_plot")], logger)
 
     with open(driver_path, 'a') as f:
         f.write(str(quadrant_root.joinpath("pmfit/pmcatalog.list")))
 
+    run_and_log(["pmfit", driver_path, "--gaia={}".format(gaia_path), "--outdir=pmfit"], logger=logger)
     return True
+
 
 poloka_func.append({'reduce': smphot})
 
@@ -408,12 +427,7 @@ if __name__ == '__main__':
                 print("Found {} quadrants.".format(len(quadrants)))
 
             if 'reduce' in poloka_func[args.func].keys():
-                logger = logging.getLogger("{}-{}".format(ztfname, filtercode))
-                logger.addHandler(logging.FileHandler(args.wd.joinpath("{}/{}/output.log".format(ztfname, filtercode)), mode='a'))
-                logger.setLevel(logging.INFO)
-                logger.info(datetime.datetime.today())
-                logger.info("Running reduction".format(args.func))
-                results = [delayed(poloka_func[args.func]['reduce'])(results, args.wd, ztfname, filtercode, logger)]
+                results = [delayed(poloka_func[args.func]['reduce'])(results, args.wd, ztfname, filtercode)]
 
             jobs.extend(results)
 
