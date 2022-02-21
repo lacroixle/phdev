@@ -29,7 +29,8 @@ matplotlib.use('Agg')
 #import matplotlib.pyplot as plt
 import pylab as pl 
 pl.interactive(0)
-from matplotlib import gridspec 
+from matplotlib import gridspec
+from matplotlib.colors import Normalize
 
 from astropy.io import fits
 import saunerie.fitparameters as fp
@@ -150,7 +151,7 @@ class AstromModel(object):
         dy = self.params['pmyref'].full[starindex] * dt
         xx = self.xscale * (x+dx)
         yy = self.yscale * (y+dy)
-        
+
         if jac is False:
             return self.ref_to_curr.stack(np.array([xx,yy]),
                                                    p=self.params,
@@ -701,9 +702,12 @@ class AstromCats():
             # todo: check that data and lcfile coincide
             
         data = self.clean_data(data, min_nmeas=min_nmeas, min_exptime=min_exptime)
+
         self.data, self.clusters, self.starindex = self.build_clusters(data)
+
         if gaia_catalog is not None:
             self.associate_gaia(gaia_catalog)
+
         self.dp = self.build_proxy(self.data)
         
         if lcfile_specifies_sn_radec:
@@ -720,56 +724,49 @@ class AstromCats():
         """
         """
         logging.info('processing: %s' % dbim)
+
+        calibrated_fn = dbim.joinpath("calibrated")
+        if calibrated_fn.with_suffix(".fz").exists():
+            calibrated_fn = calibrated_fn.with_suffix(".fz")
+            header = fits.open(calibrated_fn.with_suffix(".fits"))[0].header
+        elif calibrated_fn.with_suffix(".fits").exists():
+            calibrated_fn = calibrated_fn.with_suffix(".fits")
+            header = fits.open(calibrated_fn.with_suffix(".fits"))[0].header
+        else:
+            logging.erro("Unable to process {}".format(dbim))
+            return None
         # now, all calibrated exposures are saved in float
         # loading from dbimages is still always a pain
         try:
-            calibrated_fn = dbim + os.sep + 'calibrated.fz'
-            if op.isfile(calibrated_fn):
-                header = fits.open(calibrated_fn)[0].header
-            else:
-                calibrated_fn = dbim + os.sep + 'calibrated.fits'
-                if op.isfile(calibrated_fn):
-                    header = fits.open(calibrated_fn)[0].header
+            header = fits.open(calibrated_fn)[0].header
         except Exception as e:
             logging.error('unable to process: %s' % op.basename(dbim))
             logging.error(sys.exc_info())
             logging.error(e)
             return None
 
-        d = NTuple.fromtxt(dbim + os.sep + self.catalog_name)
-        #ra,dec=pyloka.pix2radec(calibrated_fn.encode('utf8'), d['x'], d['y'])
-        ra,dec=pyloka.pix2radec(calibrated_fn, d['x'], d['y'])
-        #ref_calibrated_fn = reference_dbim + os.sep + 'calibrated.fz'
-        ref_calibrated_fn = reference_dbim + os.sep + 'calibrated.fits'
-        xref,yref = pyloka.radec2pix(ref_calibrated_fn, ra, dec)
+        # Load data from current exposure
+        catalog_data = NTuple.fromtxt(dbim.joinpath(self.catalog_name))
 
-        N = len(d)
-        o = np.ones(N)
-        
-        if self.catalog_name == 'psfstars.list':
-            keys = (['x', 'y','sx','sy', 'rhoxy',
-                     'flux', 'eflux', 'fluxmax', 'psfchi2',
-                     'ra', 'dec', 'xref', 'yref'],
-                    #['airmass','exptime','det-id','mjd','gfseeing'], # read directly from the header
-                    ['airmass','exptime', 'rcid', 'obsmjd','gfseeing'], # read directly from the header
-                    ['expid', 'filter', 'zp', 'dzp']) # additional fields
-        else:
-            keys = (['x', 'y','sx','sy', 
-                     'apfl7', 'eapfl7', 'apnb7', 'apnc7', 'apfc7', 'apfo7', 'rad7',
-                     'gmxx', 'gmyy', 'gmxy', 'gflag', 'ra', 'dec', 'xref', 'yref'],
-                    ['airmass','exptime','det-id','mjd','gfseeing'], # read directly from the header
-                    ['expid', 'filter', 'zp', 'dzp']) # additional fields
-            
-        from_starlist = [d[k] for k in keys[0][:-4]]
+        # Convert pixel position from catalog objects into ra/dec space using the current exposure WCS
+        ra, dec=pyloka.pix2radec(str(calibrated_fn), catalog_data['x'], catalog_data['y'])
+
+        # Convert ra/dec from catalog objects into ra/dec in the reference exposure space
+        xref, yref = pyloka.radec2pix(str(reference_dbim.joinpath("calibrated.fits")), ra, dec)
+
+        keys = (['x', 'y','sx','sy', 'rhoxy', 'flux', 'eflux', 'fluxmax', 'psfchi2', 'ra', 'dec', 'xref', 'yref'],
+                ['airmass','exptime', 'rcid', 'obsmjd','gfseeing', 'expid', 'filter'], # read directly from the header
+                ['zp', 'dzp']) # additional fields
+
+        # Select data from the exposure catalog
+        from_starlist = [catalog_data[key] for key in keys[0][:-4]]
         from_starlist.extend([ra, dec])
         from_starlist.extend([xref, yref])
         
-        from_header = [o * header[k] for k in keys[1]]
-        #        from_header.append(o * _strip_exp_id(header['exp-id']))
-        #        from_header.append(np.array(N * [header['filter01']], dtype='|S15'))
-        #from_header.append(np.full(N, _strip_exp_id(header['exp-id'])))
-        from_header.append(np.full(N, header['expid']))
-        from_header.append(np.full(N, header['filter']))
+        # Select data from the exposure fits header
+        N = len(catalog_data)
+        from_header = [np.full(N, header[key]) for key in keys[1]]
+
         if assume_zp_is_correct:
             from_header.append(np.full(N, float(header['magzp'])))
             from_header.append(np.full(N, float(header['magzpunc'])))
@@ -777,46 +774,42 @@ class AstromCats():
             from_header.append(np.full(N, 26.))
             from_header.append(np.full(N, 0.05))
             
-        # put the data together
+        # Concatenate data together
         data = from_starlist + from_header 
         names = keys[0] + keys[1] + keys[2]
         
-        # is it the reference exposure ?
+        # Is it the reference exposure ?
         if dbim == reference_dbim:
             data.append(np.ones(N))
             names.append('ref')
+
             if assume_zp_is_correct:
                 self.refzp = header['ZP']
             else:
                 self.refzp = 26.
+
         else:
             data.append(np.zeros(N))
             names.append('ref')
-            
-        ret = np.rec.fromarrays(data, names=names)
-        if self.catalog_name == 'psfstars.list':
-            return ret
-            
-        return _select_measurements(ret, verbose=True)
-        
+
+        return np.rec.fromarrays(data, names=names)
+
     def load(self):
         """
-        load all the data
+        Load all relevant data from each exposure listed in the driver file
         """
         data = []
         for dbim in self.lcfile.images:
-            r = self.load_from_dbimage(dbim, reference_dbim=self.lcfile.phoref)
+            r = self.load_from_dbimage(pathlib.Path(dbim), reference_dbim=pathlib.Path(self.lcfile.phoref))
             if r is not None:
                 data.append(r)
-        # phoref already loaded
-        #        data.append(self.load_from_dbimage(self.lcfile.phoref, reference_dbim=self.lcfile.phoref))
-        return np.hstack(data)        
+
+        return np.hstack(data)
         
     def clean_data(self, data, min_nmeas=25, min_exptime=100.):
         """
         """
         dp =  DataProxy(data, x='x', y='y',
-                        #mjd='mjd', ccd='det-id', expid='expid',
                         mjd='obsmjd', ccd='rcid', expid='expid',
                         ref='ref')
         
@@ -824,7 +817,7 @@ class AstromCats():
         dp.add_field('expccd', (dp.expid * 1000 + dp.ccd).astype(int))
         dp.make_index('expccd')
         c = np.bincount(dp.expccd_index)
-        
+
         # for now, we remove the expccd's with less than min_nmeas measurements
         not_enough_meas = np.where(c<min_nmeas)
         logging.info('%d expccd with less than %d measurements' % (len(not_enough_meas), min_nmeas))
@@ -1090,7 +1083,7 @@ def plot_residual_hist(model, cat, nbins=100, min_flux=50000., range=(-0.5, 0.5)
     m, s = norm.fit(ry[(ry>range[0]) & (ry<range[1])])
     pl.plot(norm.pdf(x, loc=m, scale=s), x, color='r', ls='-.', lw=1.5)
     pl.setp(ahy.get_xticklabels(), visible=False)
-    pl.text(0.70, 0.3, r'$\sigma_y=%+5.2f$' % s, fontsize=16, 
+    pl.text(0.70, 0.3, r'$\sigma_y=%+5.4f$' % s, fontsize=16,
             transform=ahy.transAxes, rotation=-90)
     pl.ylim(*range)
 
@@ -1101,7 +1094,7 @@ def plot_residual_hist(model, cat, nbins=100, min_flux=50000., range=(-0.5, 0.5)
     m, s = norm.fit(rx[(rx>range[0]) & (rx<range[1])])
     pl.plot(x, norm.pdf(x, loc=m, scale=s), color='r', ls='-.', lw=1.5)
     pl.setp(ahx.get_yticklabels(), visible=False)
-    pl.text(0.7, 0.70, r'$\sigma_x=%+5.2f$' % s, fontsize=16, 
+    pl.text(0.7, 0.70, r'$\sigma_x=%+5.4f$' % s, fontsize=16,
             transform=ahx.transAxes)
     pl.xlim(*range)
 
@@ -1181,22 +1174,73 @@ def plot_residual_vs_magnitude(model, cat, outdir=None):
 
     _savefig(fig, outdir, 'astro_residual_magnitude.png')
 
+def plot_residual_pull(model, cat, outdir=None):
+    meas_xy, model_xy, res = residuals(model, cat)
+
+
+    g = cat.clusters[cat.starindex]['gg']
+    w = np.sqrt(np.vstack([cat.dp.sx, cat.dp.sy]).T**2 + args.flux_error_pedestal**2)
+    print(w.shape)
+    print(meas_xy.shape)
+    print(model_xy.shape)
+    #w = 1. / np.sqrt(np.vstack([cat.dp.sx, cat.dp.sy]).T**2 + args.flux_error_pedestal**2)
+
+    fig, ax = pl.subplots(figsize=(8., 8.), nrows=2, ncols=2)
+    pl.subplot(2, 2, 1)
+    xbinned_x, yplot_x, yerr_x = binplot(g, model_xy[:, 0]/w[:, 0], nbins=15, robust=False, scale=False)
+    #pl.hist(res[:, 0]/w[:, 0], bins=100)
+
+    pl.subplot(2, 2, 2)
+    xbinned_y, yplot_y, yerr_y = binplot(g, model_xy[:, 1]/w[:, 1], nbins=15, robust=False, scale=False)
+    #pl.hist(res[:, 1]/w[:, 1], bins=100)
+
+    pl.subplot(2, 2, 3)
+    pl.xlabel("$g$ [mag]")
+    pl.ylabel("residuals $x$ [pixel]")
+    pl.grid()
+    pl.plot(xbinned_x, yerr_x)
+    pl.axis(xmin=10., xmax=20.)
+
+    pl.subplot(2, 2, 4)
+    pl.xlabel("$g$ [mag]")
+    pl.ylabel("residuals $y$ [pixel]")
+    pl.grid()
+    pl.plot(xbinned_y, yerr_y)
+    pl.axis(xmin=10., xmax=20.)
+
+    _savefig(fig, outdir, 'residual_pull.png')
+
 
 def plot_proper_motion_map(model, cat, outdir=None):
     """
     """
-    fig = pl.figure(figsize=(8,8))
-    pl.title("Proper motion map")
+    pmx = 365.25*model.params['pmxref'].full
+    pmy = 365.25*model.params['pmyref'].full
+
+    fig=pl.figure(figsize=(8., 8.))
+    pl.title("Proper motion cloud")
+    pl.plot(pmx, pmy, ".")
+    pl.axis('equal')
+    _savefig(fig, outdir, 'proper_motion_cloud.png')
+
     x = model.params['xref'].full
     y = model.params['yref'].full
-    pmx = model.params['pmxref'].full
-    pmy = model.params['pmyref'].full
-    idx = (np.abs(pmx)<1.) & (np.abs(pmy)<1.)
+    idx = [True]*len(x)
+    #idx = (np.abs(pmx)<1.) & (np.abs(pmy)<1.)
 
-    Q = pl.quiver(x[idx], y[idx], pmx[idx], pmy[idx])
-    pl.quiverkey(Q, 0.9, 0.9, 0.01, "1 [mas/year]", labelpos='E', coordinates='figure')
-    pl.xlabel('x [pixel]')
-    pl.ylabel('y [pixel]')
+    fig=pl.figure(figsize=(8., 8.))
+    pl.hist(pmx, 100, range=[-0.5, 0.5], histtype='step')
+    _savefig(fig, outdir, 'ref_proper_motion_distribution.png')
+
+    fig = pl.figure(figsize=(9,8))
+    pl.title("Proper motion map")
+    Q = pl.quiver(x[idx], y[idx], pmx[idx], pmy[idx], np.hypot(pmx, pmy), cmap='plasma', norm=Normalize(vmin=0., vmax=0.5, clip=True))
+    Q.set_cmap('plasma')
+    cbar = pl.colorbar(Q)
+    cbar.set_label("pixel/year")
+    #pl.quiverkey(Q, 0.7, 0.9, 1e-3, "1 [mas/year]", labelpos='E', coordinates='figure')
+    pl.xlabel('$x$ [pixel]')
+    pl.ylabel('$y$ [pixel]')
 
     _savefig(fig, outdir, 'proper_motion_map.png')
 
@@ -1272,6 +1316,7 @@ def plot():
     plot_proper_motion_map(model, cat, outdir=args.plot_dir)
     plot_residual_vs_magnitude(model, cat, outdir=args.plot_dir)
     plot_proper_motion_distribution(cat, outdir=args.plot_dir)
+    plot_residual_pull(model, cat, outdir=args.plot_dir)
 
 
 if (__name__ == "__main__"):
@@ -1293,7 +1338,7 @@ if (__name__ == "__main__"):
     parser.add_argument('--gaia', type=str,
                         default='/sps/snls13/HSC/prod.2017-11/REFCATS/gaia_dr2_cosmos.npy',
                         help='external gaia (DR2) catalog')
-    parser.add_argument('--flux_error_pedestal', type=float,
+    parser.add_argument('--flux-error-pedestal', type=float,
                         default=0.002,
                         help='(multiplicative) flux error pedestal')
     parser.add_argument('lcfile', type=str, 
