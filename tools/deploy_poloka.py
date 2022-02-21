@@ -328,12 +328,6 @@ def launch(quadrant, wd, ztfname, filtercode, func, scratch=None):
     if func != 'clean':
         logger.info("Done.")
 
-    if scratch and func != 'clean':
-        files = list(quadrant_dir.glob("*"))
-        [shutil.copyfile(f, wd.joinpath("{}/{}/{}/{}".format(ztfname, filtercode, quadrant, f.name))) for f in files]
-        [f.unlink() for f in files]
-        quadrant_dir.rmdir()
-
     return result
 
 
