@@ -66,7 +66,7 @@ for sn in sn_df.index:
                                         highresponsivity=False, noisy=False, verbose=False), dtype=np.uint8)
 
             mskhdu = fits.PrimaryHDU([deads])
-            mskhdu.writeto(folder_path.joinpath("deads.fits.gz"))
+            mskhdu.writeto(folder_path.joinpath("deads.fits.gz"), overwrite=True)
 
             print("Success: {}, dead pixel count={}".format(sciimg_filename, np.sum(deads)))
             #exit()
