@@ -278,10 +278,9 @@ def smphot(results, cwd, ztfname, filtercode):
     with open(driver_path, 'a') as f:
         f.write(str(quadrant_root.joinpath("pmfit/pmcatalog.list")))
 
-    run_and_log(["pmfit", driver_path, "--gaia={}".format(gaia_path), "--outdir=pmfit"], logger=logger)
+    run_and_log(["pmfit", driver_path, "--gaia={}".format(gaia_path), "--outdir={}".format(quadrant_root.joinpath("pmfit"))], logger=logger)
 
-
-    run_and_log(["pmfit", driver_path, "--gaia={}".format(gaia_path), "--outdir=pmfit", "--plot-dir=pmfit_plot"], logger=logger)
+    run_and_log(["pmfit", driver_path, "--gaia={}".format(gaia_path), "--outdir={}".format(quadrant_root.joinpath("pmfit")), "--plot-dir={}".format(quadrant_root.joinpath("pmfit_plot"))], logger=logger)
 
     return True
 
