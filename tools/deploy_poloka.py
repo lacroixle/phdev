@@ -10,6 +10,7 @@ import time
 import shutil
 import sys
 import socket
+import copy
 
 from joblib import Parallel, delayed
 import pandas as pd
@@ -50,6 +51,7 @@ def run_and_log(cmd, logger=None):
 
 def make_catalog(folder, logger):
     if args.retrieve_calibrated:
+        logger.info("Retrieving calibrated.fits...")
         sciimg_path = ztfquery.io.get_file(folder.name + "_sciimg.fits", downloadit=False)
         shutil.copy2(sciimg_path, folder.joinpath("calibrated.fits"))
 
@@ -88,7 +90,7 @@ def pipeline(folder, logger):
 poloka_func.append({'map': pipeline})
 
 
-files_to_keep = ["elixir.fits", "mask.fits", "calibrated.fits", ".dbstuff"]
+files_to_keep = ["elixir.fits", "mask.fits", "deads.fits", ".dbstuff"]
 def clean(folder, logger):
     # calibrated.fits header gets modified, it might be problematic at some point (or not)
     if args.dry_run:
@@ -105,7 +107,12 @@ def clean(folder, logger):
 
     return True
 
-poloka_func.append({'map': clean})
+
+def clean_reduce(results, cwd, ztfname, filtercode):
+    pass
+
+
+poloka_func.append({'map': clean, 'reduce': clean_reduce})
 
 
 # Extract data from standalone stars and plot several distributions
@@ -284,14 +291,14 @@ poloka_func.append({'reduce': smphot})
 
 poloka_func = dict(zip([list(func.values())[0].__name__ for func in poloka_func], poloka_func))
 
-
-def launch(quadrant, wd, ztfname, filtercode, func, scratch=None):
+scratch_files_to_ignore = ["output.log"]
+def map_op(quadrant, wd, ztfname, filtercode, func, scratch=None):
     quadrant_dir = wd.joinpath("{}/{}/{}".format(ztfname, filtercode, quadrant))
 
     logger = None
     if func != 'clean':
         logger = logging.getLogger(quadrant)
-        logger.addHandler(logging.FileHandler(quadrant_dir.joinpath("output.log"), mode='a'))
+        logger.addHandler(logging.FileHandler(str(quadrant_dir.joinpath("output.log")), mode='a'))
         logger.setLevel(logging.INFO)
         logger.info(datetime.datetime.today())
         logger.info("Current directory: {}".format(quadrant_dir))
@@ -307,7 +314,7 @@ def launch(quadrant, wd, ztfname, filtercode, func, scratch=None):
             logger.info("Successfully created quadrant working dir in scratch space")
             files = list(quadrant_dir.glob("*"))
 
-            [shutil.copyfile(f, quadrant_scratch.joinpath(f.name)) for f in files]
+            [shutil.copyfile(f, quadrant_scratch.joinpath(f.name)) for f in files if f.name not in scratch_files_to_ignore]
             quadrant_dir = quadrant_scratch
             logger.info("Successfully copyed files from sps to scratchspace")
 
@@ -315,11 +322,12 @@ def launch(quadrant, wd, ztfname, filtercode, func, scratch=None):
     try:
         result = poloka_func[func]['map'](quadrant_dir, logger)
     except Exception as e:
-        print("")
-        print("In folder {}".format(quadrant_dir))
-        print(e)
+        logger.error("")
+        logger.error("In folder {}".format(quadrant_dir))
+        logger.error(e)
     finally:
         if scratch and func != 'clean':
+            logger.info("Erasing quadrant data from scratchspace")
             files = list(quadrant_dir.glob("*"))
             [shutil.copy2(f, wd.joinpath("{}/{}/{}".format(ztfname, filtercode, quadrant))) for f in files]
             [f.unlink() for f in files]
@@ -418,10 +426,10 @@ if __name__ == '__main__':
             results = None
 
             if 'map' in poloka_func[args.func].keys():
-                quadrants = list(map(lambda x: x.stem, filter(lambda x: x.is_dir(), args.wd.joinpath("{}/{}".format(ztfname, filtercode)).glob("*"))))
+                quadrants = list(map(lambda x: x.stem, filter(lambda x: x.is_dir(), args.wd.joinpath("{}/{}".format(ztfname, filtercode)).glob("ztf*"))))
                 quadrant_count += len(quadrants)
 
-                results = [delayed(launch)(quadrant, args.wd, ztfname, filtercode, args.func, args.scratch) for quadrant in quadrants]
+                results = [delayed(map_op)(quadrant, args.wd, ztfname, filtercode, args.func, args.scratch) for quadrant in quadrants]
                 print("Found {} quadrants.".format(len(quadrants)))
 
             if 'reduce' in poloka_func[args.func].keys():
