@@ -233,13 +233,16 @@ def smphot(results, cwd, ztfname, filtercode):
     logger.info("Best seeing quadrant: {}". format(idxmin))
     logger.info("  with seeing={}".format(minseeing))
 
+    logger.info("Reading SN1a parameters")
     sn_parameters = pd.read_hdf(args.lc_folder.joinpath("{}.hd5".format(ztfname)), key='sn_info')
 
+    logger.info("Reading reference WCS")
     with fits.open(pathlib.Path(idxmin).joinpath("calibrated.fits")) as hdul:
         w = WCS(hdul[0].header)
 
     ra_px, dec_px = w.world_to_pixel(SkyCoord(ra=sn_parameters['sn_ra'], dec=sn_parameters['sn_dec'], unit='deg'))
 
+    logger.info("Writing driver file")
     driver_path = quadrant_root.joinpath("{}_driver_{}".format(ztfname, filtercode))
     logger.info("Writing driver file at location {}".format(driver_path))
     with open(driver_path, 'w') as f:
@@ -259,7 +262,7 @@ def smphot(results, cwd, ztfname, filtercode):
 
 
 
-    logger.info("Building Gaia catalog...")
+    logger.info("Building Gaia catalog")
     # Create GAIA catalog
     gaia_cat = pd.read_hdf(args.lc_folder.joinpath("{}.hd5".format(ztfname)), key='gaia_cal')
     gaia_cat.reset_index(drop=True, inplace=True)
@@ -278,8 +281,10 @@ def smphot(results, cwd, ztfname, filtercode):
     with open(driver_path, 'a') as f:
         f.write(str(quadrant_root.joinpath("pmfit/pmcatalog.list")))
 
+    logger.info("Running pmfit")
     run_and_log(["pmfit", driver_path, "--gaia={}".format(gaia_path), "--outdir={}".format(quadrant_root.joinpath("pmfit"))], logger=logger)
 
+    logger.info("Running pmfit plots")
     run_and_log(["pmfit", driver_path, "--gaia={}".format(gaia_path), "--outdir={}".format(quadrant_root.joinpath("pmfit")), "--plot-dir={}".format(quadrant_root.joinpath("pmfit_plot"))], logger=logger)
 
     return True
@@ -351,20 +356,11 @@ if __name__ == '__main__':
     argparser.add_argument('--cluster', action='store_true')
     argparser.add_argument('--scratch', type=pathlib.Path)
     argparser.add_argument('--retrieve-calibrated', dest='retrieve_calibrated', action='store_true')
-    argparser.add_argument('--cosmodr', type=pathlib.Path, help="Cosmo DR folder.")
     argparser.add_argument('--lc-folder', dest='lc_folder', type=pathlib.Path)
 
     args = argparser.parse_args()
     args.wd = args.wd.expanduser().resolve()
 
-
-    if args.cosmodr:
-        cosmo_dr_folder = args.cosmodr
-    elif 'COSMO_DR_FOLDER' in os.environ.keys():
-        cosmo_dr_folder = pathlib.Path(os.environ.get("COSMO_DR_FOLDER"))
-    else:
-        print("Cosmo DR folder not set! Either set COSMO_DR_FOLDER environnement variable or use the --cosmodr parameter.")
-        exit(-1)
 
     filtercodes = ztf_filtercodes[:3]
     if args.filtercode != 'all':
