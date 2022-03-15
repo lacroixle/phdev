@@ -755,7 +755,8 @@ class AstromCats():
         xref, yref = pyloka.radec2pix(str(reference_dbim.joinpath("calibrated.fits")), ra, dec)
 
         keys = (['x', 'y','sx','sy', 'rhoxy', 'flux', 'eflux', 'fluxmax', 'psfchi2', 'ra', 'dec', 'xref', 'yref'],
-                ['airmass','exptime', 'rcid', 'obsmjd','gfseeing', 'expid', 'filter'], # read directly from the header
+                #['airmass','exptime', 'rcid', 'obsmjd','gfseeing', 'expid', 'filter'], # read directly from the header
+                ['airmass','exptime', 'dbrcid', 'obsmjd','gfseeing', 'dbexpid', 'filter'], # read directly from the header
                 ['zp', 'dzp']) # additional fields
 
         # Select data from the exposure catalog
@@ -810,7 +811,8 @@ class AstromCats():
         """
         """
         dp =  DataProxy(data, x='x', y='y',
-                        mjd='obsmjd', ccd='rcid', expid='expid',
+                        #mjd='obsmjd', ccd='rcid', expid='expid',
+                        mjd='obsmjd', ccd='dbrcid', expid='dbexpid',
                         ref='ref')
         
         # a unique identifier for a ccdimage
@@ -901,7 +903,8 @@ class AstromCats():
             dp = DataProxy(data, x='x', y='y', sx='sx', sy='sy', rhoxy='rhoxy', ra='ra', dec='dec',
                            flux='flux', eflux='eflux', fluxmax='fluxmax', psfchi2='psfchi2',
                            airmass='airmass', exptime='exptime', gfseeing='gfseeing',
-                           filter='filter', mjd='obsmjd', ccd='rcid', expid='expid', xref='xref', yref='yref',
+                           #filter='filter', mjd='obsmjd', ccd='rcid', expid='expid', xref='xref', yref='yref',
+                           filter='filter', mjd='obsmjd', ccd='dbrcid', expid='dbexpid', xref='xref', yref='yref',
                            star='star', ref='ref', zp='zp')
         else:
             dp = DataProxy(data, x='x', y='y', sx='sx', sy='sy', ra='ra', dec='dec', gmxx='gmxx', gmyy='gmyy', gmxy='gmxy',
@@ -1126,8 +1129,6 @@ def plot_proper_motion_gaia_residuals(model, cat, outdir=None):
     pm_gaia_dec = cat.clusters['gpmdec']
     pm_ref_ra = 1.01e3*365.25*model.params['pmxref'].full
     pm_ref_dec = 1.01e3*365.25*model.params['pmyref'].full
-    print(np.mean(pm_gaia_dec))
-    print(np.mean(pm_ref_dec))
 
     fig, ax = pl.subplots(figsize=(16., 8.), nrows=2, ncols=2)
 

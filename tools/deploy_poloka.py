@@ -19,9 +19,9 @@ from astropy.wcs import WCS
 from astropy.coordinates import SkyCoord
 import matplotlib.pyplot as plt
 import dask
-from dask import delayed, compute, visualize
+from dask import delayed, compute
 from dask.distributed import Client, LocalCluster, wait
-from dask_jobqueue import SLURMCluster
+from dask_jobqueue import SLURMCluster, SGECluster
 import ztfquery.io
 import numpy as np
 
@@ -53,9 +53,10 @@ def make_catalog(folder, logger):
     if args.retrieve_calibrated:
         logger.info("Retrieving calibrated.fits...")
         sciimg_path = ztfquery.io.get_file(folder.name + "_sciimg.fits", downloadit=False)
-        shutil.copy2(sciimg_path, folder.joinpath("calibrated.fits"))
+        shutil.copyfile(sciimg_path, folder.joinpath("calibrated.fits"))
 
-    run_and_log(["make_catalog", folder], logger)
+    run_and_log(["make_catalog", folder, "-O"], logger)
+
     return folder.joinpath("se.list").exists()
 
 poloka_func.append({'map': make_catalog})
@@ -90,7 +91,8 @@ def pipeline(folder, logger):
 poloka_func.append({'map': pipeline})
 
 
-files_to_keep = ["elixir.fits", "mask.fits", "deads.fits", ".dbstuff"]
+#files_to_keep = ["elixir.fits", "mask.fits", "deads.fits.gz", ".dbstuff"]
+files_to_keep = ["elixir.fits", "deads.fits.gz", ".dbstuff"]
 def clean(folder, logger):
     # calibrated.fits header gets modified, it might be problematic at some point (or not)
     if args.dry_run:
@@ -109,7 +111,11 @@ def clean(folder, logger):
 
 
 def clean_reduce(results, cwd, ztfname, filtercode):
-    pass
+    folder = cwd.joinpath("{}/{}".format(ztfname, filtercode))
+    folder.joinpath("output.log").unlink(missing_ok=True)
+    folder.joinpath("results.csv").unlink(missing_ok=True)
+    shutil.rmtree(folder.joinpath("pmfit"))
+    shutil.rmtree(folder.joinpath("pmfit_plot"))
 
 
 poloka_func.append({'map': clean, 'reduce': clean_reduce})
@@ -207,22 +213,19 @@ def stats_reduce(results, cwd, ztfname, filtercode):
 poloka_func.append({'map': stats, 'reduce': stats_reduce})
 
 
-def smphot(results, cwd, ztfname, filtercode):
-    logger = logging.getLogger("{}-{}".format(ztfname, filtercode))
-    logger.addHandler(logging.FileHandler(args.wd.joinpath("{}/{}/output.log".format(ztfname, filtercode)), mode='a'))
-    logger.setLevel(logging.INFO)
-    logger.info(datetime.datetime.today())
-    logger.info("Running reduction {}".format(args.func))
-
+def smphot(cwd, ztfname, filtercode, logger):
     quadrant_root = cwd.joinpath("{}/{}".format(ztfname, filtercode))
     quadrant_folders = [folder for folder in quadrant_root.glob("*".format(ztfname, filtercode)) if folder.is_dir()]
     quadrant_folders = list(filter(lambda x: x.joinpath("psfstars.list").exists(), quadrant_folders))
 
     logger.info("Determining best seeing quadrant...")
+    #logger.info(args.wd.joinpath("{}/{}".format(ztfname, filtercode)))
     seeing = {}
+
     for folder in quadrant_folders:
         calibrated_file = folder.joinpath("calibrated.fits")
         with fits.open(calibrated_file) as hdul:
+            logger.info(calibrated_file)
             seeing[folder] = hdul[0].header['seseeing']
 
     seeing_df = pd.DataFrame.from_dict(seeing, orient='index')
@@ -297,6 +300,7 @@ poloka_func = dict(zip([list(func.values())[0].__name__ for func in poloka_func]
 
 scratch_files_to_ignore = ["output.log"]
 def map_op(quadrant, wd, ztfname, filtercode, func, scratch=None):
+    start_time = time.perf_counter()
     quadrant_dir = wd.joinpath("{}/{}/{}".format(ztfname, filtercode, quadrant))
 
     logger = None
@@ -340,7 +344,35 @@ def map_op(quadrant, wd, ztfname, filtercode, func, scratch=None):
     if func != 'clean':
         logger.info("Done.")
 
-    return result
+    return result, time.perf_counter(), start_time
+
+
+def reduce_op(results, cwd, ztfname, filtercode, func, save_stats):
+    folder = args.wd.joinpath("{}/{}".format(ztfname, filtercode))
+
+    # If we want to agregate run statistics on the previous map operation
+    if save_stats and results is not None and any(results) and func != 'clean':
+        results_df = pd.DataFrame([result for result in results if result is not None], columns=['result', 'time_end', 'time_start'])
+        results_df.to_csv(folder.joinpath("results.csv"), index=False)
+
+    if not 'reduce' in poloka_func[func].keys():
+        return
+
+    logger = logging.getLogger("{}-{}".format(ztfname, filtercode))
+    logger.addHandler(logging.FileHandler(folder.joinpath("output.log"), mode='a'))
+    logger.setLevel(logging.INFO)
+    logger.info(datetime.datetime.today())
+    logger.info("Running reduction {}".format(args.func))
+
+    start_timer = time.perf_counter()
+    try:
+        result = poloka_func[func]['reduce'](cwd, ztfname, filtercode, logger)
+    except Exception as e:
+        logger.error("")
+        logger.error("In SN {}-{}".format(ztfname, filtercode))
+        logger.error(e)
+    finally:
+        pass
 
 
 if __name__ == '__main__':
@@ -357,6 +389,7 @@ if __name__ == '__main__':
     argparser.add_argument('--scratch', type=pathlib.Path)
     argparser.add_argument('--retrieve-calibrated', dest='retrieve_calibrated', action='store_true')
     argparser.add_argument('--lc-folder', dest='lc_folder', type=pathlib.Path)
+    argparser.add_argument('--log-results', action='store_true', default=True)
 
     args = argparser.parse_args()
     args.wd = args.wd.expanduser().resolve()
@@ -379,6 +412,7 @@ if __name__ == '__main__':
             else:
                 pass
 
+    print("Found {} SN1a".format(len(ztfnames)))
 
     if args.scratch:
         args.scratch.mkdir(exist_ok=True, parents=True)
@@ -392,18 +426,27 @@ if __name__ == '__main__':
 
 
     if args.cluster:
-        cluster = SLURMCluster(cores=24,
-                               processes=24,
-                               memory="64GB",
-                               project="ztf",
-                               walltime="12:00:00",
-                               queue="htc",
-                               job_extra=["-L sps"])
-        cluster.scale(jobs=10)
+        # cluster = SLURMCluster(cores=12,
+        #                        processes=12,
+        #                        memory="32GB",
+        #                        project="ztf",
+        #                        walltime="12:00:00",
+        #                        queue="htc",
+        #                        job_extra=["-L sps"])
+
+        cluster = SGECluster(cores=10,
+                             processes=10,
+                             queue="long",
+                             memory="24GB",
+                             #project="ztf",
+                             walltime="12:00:00",
+                             job_extra=["-l sps=1"])
+
+        cluster.scale(jobs=60)
         client = Client(cluster)
         print(client.dashboard_link, flush=True)
         print(socket.gethostname(), flush=True)
-        client.wait_for_workers(10)
+        client.wait_for_workers(1)
     else:
         if args.n_jobs == 1:
             dask.config.set(scheduler='synchronous')
@@ -418,22 +461,31 @@ if __name__ == '__main__':
     for ztfname in ztfnames:
         for filtercode in filtercodes:
             print("Building job list for {}-{}... ".format(ztfname, filtercode), end="", flush=True)
+
+            quadrants_folder = args.wd.joinpath("{}/{}".format(ztfname, filtercode))
+            if not quadrants_folder.exists():
+                print("No quadrant found.")
+                continue
+
             results = None
 
-            if 'map' in poloka_func[args.func].keys():
-                quadrants = list(map(lambda x: x.stem, filter(lambda x: x.is_dir(), args.wd.joinpath("{}/{}".format(ztfname, filtercode)).glob("ztf*"))))
+            if 'map' in poloka_func[args.func].keys() and not args.no_map:
+                quadrants = list(map(lambda x: x.stem, filter(lambda x: x.is_dir(), quadrants_folder.glob("ztf*"))))
                 quadrant_count += len(quadrants)
 
                 results = [delayed(map_op)(quadrant, args.wd, ztfname, filtercode, args.func, args.scratch) for quadrant in quadrants]
-                print("Found {} quadrants.".format(len(quadrants)))
+                print("Found {} quadrants. ".format(len(quadrants)), end="", flush=True)
 
-            if 'reduce' in poloka_func[args.func].keys():
-                results = [delayed(poloka_func[args.func]['reduce'])(results, args.wd, ztfname, filtercode)]
+            if ('reduce' in poloka_func[args.func].keys() or args.log_results) and not args.no_reduce:
+                results = [delayed(reduce_op)(results, args.wd, ztfname, filtercode, args.func, True)]
+                print("Found reduction.", end="", flush=True)
 
-            jobs.extend(results)
+            print("")
+
+            if results:
+                jobs.extend(results)
 
     print("")
-    #visualize(jobs, filename="/home/llacroix/mygraph.png")
     print("Running")
     start_time = time.perf_counter()
     fjobs = client.compute(jobs)
