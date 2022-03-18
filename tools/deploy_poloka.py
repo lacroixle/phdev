@@ -11,6 +11,7 @@ import shutil
 import sys
 import socket
 import copy
+import traceback
 
 from joblib import Parallel, delayed
 import pandas as pd
@@ -20,7 +21,7 @@ from astropy.coordinates import SkyCoord
 import matplotlib.pyplot as plt
 import dask
 from dask import delayed, compute
-from dask.distributed import Client, LocalCluster, wait
+from dask.distributed import Client, LocalCluster, wait, get_worker
 from dask_jobqueue import SLURMCluster, SGECluster
 import ztfquery.io
 import numpy as np
@@ -63,14 +64,14 @@ poloka_func.append({'map': make_catalog})
 
 
 def mkcat2(folder, logger):
-    run_and_log(["mkcat2", folder], logger)
+    run_and_log(["mkcat2", folder, "-o"], logger)
     return folder.joinpath("standalone_stars.list").exists()
 
 poloka_func.append({'map': mkcat2})
 
 
 def makepsf(folder, logger):
-    run_and_log(["makepsf", folder], logger)
+    run_and_log(["makepsf", folder, "-f"], logger)
     return folder.joinpath("psfstars.list").exists()
 
 poloka_func.append({'map': makepsf})
@@ -110,10 +111,11 @@ def clean(folder, logger):
     return True
 
 
-def clean_reduce(results, cwd, ztfname, filtercode):
-    folder = cwd.joinpath("{}/{}".format(ztfname, filtercode))
-    folder.joinpath("output.log").unlink(missing_ok=True)
-    folder.joinpath("results.csv").unlink(missing_ok=True)
+def clean_reduce(folder, ztfname, filtercode, logger):
+    # Delete all files
+    files_to_delete = list(filter(lambda f: f.is_file(), list(folder.glob("*"))))
+    [f.unlink() for f in files_to_delete]
+
     shutil.rmtree(folder.joinpath("pmfit"))
     shutil.rmtree(folder.joinpath("pmfit_plot"))
 
@@ -173,10 +175,11 @@ def stats(folder, logger):
     return True
 
 
-def stats_reduce(results, cwd, ztfname, filtercode):
+def stats_reduce(cwd, ztfname, filtercode, logger):
     # Seeing histogram
     folders = [folder for folder in cwd.glob("*") if folder.is_dir()]
 
+    logger.info("Plotting fitted seeing histogram")
     seseeings = []
     for folder in folders:
         hdfstore_path = folder.joinpath("lists.hdf5")
@@ -187,10 +190,10 @@ def stats_reduce(results, cwd, ztfname, filtercode):
                     calibrated_df = hdfstore.get('/calibrated')
                     seseeings.append(float(calibrated_df['seseeing']))
 
-    # plt.hist(seseeings, bins=60, range=[0.5, 3], color='xkcd:dark grey', histtype='step')
-    # plt.grid()
-    # plt.savefig(cwd.joinpath("{}-{}_seseeing_dist.png".format(ztfname, filtercode)), dpi=300)
-    # plt.close()
+    plt.hist(seseeings, bins=int(len(seseeings)/4), range=[0.5, 3], color='xkcd:dark grey', histtype='step')
+    plt.grid()
+    plt.savefig(cwd.joinpath("{}-{}_seseeing_dist.png".format(ztfname, filtercode)), dpi=300)
+    plt.close()
 
     with open(cwd.joinpath("{}-{}_failures.txt".format(ztfname, filtercode)), 'w') as f:
         # Failure rates
@@ -208,25 +211,37 @@ def stats_reduce(results, cwd, ztfname, filtercode):
         _failure_rate("standalone_stars", 'mkcat2')
         _failure_rate("psfstars", 'makepsf')
 
-    return sum(results)/len(results)
+    logger.info("Plotting computing time histograms")
+    # Plot results_*.csv histogram
+    results = list(cwd.glob("results_*.csv"))
+    for result in results:
+        func = str(result.stem).split("_")[1]
+        result_df = pd.read_csv(result)
+        computation_times = (result_df['time_end'] - result_df['time_start']).to_numpy()
+        plt.hist(computation_times, bins=int(len(result_df)/4), histtype='step')
+        plt.xlabel("Computation time (s)")
+        plt.ylabel("Count")
+        plt.title("Computation time for {}".format(result))
+        plt.grid()
+        plt.savefig(cwd.joinpath("{}-{}_{}_compute_time_dist.png".format(ztfname, filtercode, func)), dpi=300)
+        plt.close()
+
 
 poloka_func.append({'map': stats, 'reduce': stats_reduce})
 
 
 def smphot(cwd, ztfname, filtercode, logger):
-    quadrant_root = cwd.joinpath("{}/{}".format(ztfname, filtercode))
-    quadrant_folders = [folder for folder in quadrant_root.glob("*".format(ztfname, filtercode)) if folder.is_dir()]
+    quadrant_folders = [folder for folder in cwd.glob("ztf_*".format(ztfname, filtercode)) if folder.is_dir()]
     quadrant_folders = list(filter(lambda x: x.joinpath("psfstars.list").exists(), quadrant_folders))
 
     logger.info("Determining best seeing quadrant...")
-    #logger.info(args.wd.joinpath("{}/{}".format(ztfname, filtercode)))
     seeing = {}
 
-    for folder in quadrant_folders:
-        calibrated_file = folder.joinpath("calibrated.fits")
+    for quadrant in quadrant_folders:
+        calibrated_file = quadrant.joinpath("calibrated.fits")
         with fits.open(calibrated_file) as hdul:
             logger.info(calibrated_file)
-            seeing[folder] = hdul[0].header['seseeing']
+            seeing[quadrant] = hdul[0].header['seseeing']
 
     seeing_df = pd.DataFrame.from_dict(seeing, orient='index')
 
@@ -246,7 +261,7 @@ def smphot(cwd, ztfname, filtercode, logger):
     ra_px, dec_px = w.world_to_pixel(SkyCoord(ra=sn_parameters['sn_ra'], dec=sn_parameters['sn_dec'], unit='deg'))
 
     logger.info("Writing driver file")
-    driver_path = quadrant_root.joinpath("{}_driver_{}".format(ztfname, filtercode))
+    driver_path = cwd.joinpath("{}_driver_{}".format(ztfname, filtercode))
     logger.info("Writing driver file at location {}".format(driver_path))
     with open(driver_path, 'w') as f:
         f.write("OBJECTS\n")
@@ -262,11 +277,11 @@ def smphot(cwd, ztfname, filtercode, logger):
         f.write("PHOREF\n")
         f.write("{}\n".format(idxmin))
         f.write("PMLIST\n")
+        f.write(str(cwd.joinpath("pmfit/pmcatalog.list")))
 
-
-
-    logger.info("Building Gaia catalog")
     # Create GAIA catalog
+    logger.info("Building Gaia catalog")
+
     gaia_cat = pd.read_hdf(args.lc_folder.joinpath("{}.hd5".format(ztfname)), key='gaia_cal')
     gaia_cat.reset_index(drop=True, inplace=True)
 
@@ -274,21 +289,16 @@ def smphot(cwd, ztfname, filtercode, logger):
     gaia_cat = gaia_cat.assign(dec_error=pd.Series(np.full(len(gaia_cat), 1e-6)).values)
 
     gaia_cat = gaia_cat.rename(columns={'pmde': 'pmdec', 'plx': 'parallax', 'e_pmra': 'pmra_error', 'e_pmde': 'pmdec_error', 'gmag': 'g', 'bpmag': 'bp', 'rpmag': 'rp', 'e_gmag': 'g_error', 'e_bpmag': 'bperror', 'e_bpmag': 'bp_error', 'e_rpmag': 'rp_error'})
-
     gaia_cat = gaia_cat[['ra', 'dec', 'ra_error', 'dec_error', 'pmra', 'pmdec', 'parallax', 'pmra_error', 'pmdec_error', 'g', 'bp', 'rp', 'g_error', 'bp_error', 'rp_error']]
 
     gaia_path = args.wd.joinpath("{}/{}/gaia.npy".format(ztfname, filtercode))
     np.save(gaia_path, gaia_cat.to_records(index=False))
 
-
-    with open(driver_path, 'a') as f:
-        f.write(str(quadrant_root.joinpath("pmfit/pmcatalog.list")))
-
     logger.info("Running pmfit")
-    run_and_log(["pmfit", driver_path, "--gaia={}".format(gaia_path), "--outdir={}".format(quadrant_root.joinpath("pmfit"))], logger=logger)
+    run_and_log(["pmfit", driver_path, "--gaia={}".format(gaia_path), "--outdir={}".format(cwd.joinpath("pmfit"))], logger=logger)
 
     logger.info("Running pmfit plots")
-    run_and_log(["pmfit", driver_path, "--gaia={}".format(gaia_path), "--outdir={}".format(quadrant_root.joinpath("pmfit")), "--plot-dir={}".format(quadrant_root.joinpath("pmfit_plot"))], logger=logger)
+    run_and_log(["pmfit", driver_path, "--gaia={}".format(gaia_path), "--outdir={}".format(cwd.joinpath("pmfit")), "--plot-dir={}".format(cwd.joinpath("pmfit_plot"))], logger=logger)
 
     return True
 
@@ -332,7 +342,7 @@ def map_op(quadrant, wd, ztfname, filtercode, func, scratch=None):
     except Exception as e:
         logger.error("")
         logger.error("In folder {}".format(quadrant_dir))
-        logger.error(e)
+        logger.error(traceback.format_exc())
     finally:
         if scratch and func != 'clean':
             logger.info("Erasing quadrant data from scratchspace")
@@ -344,7 +354,7 @@ def map_op(quadrant, wd, ztfname, filtercode, func, scratch=None):
     if func != 'clean':
         logger.info("Done.")
 
-    return result, time.perf_counter(), start_time
+    return result, time.perf_counter(), start_time, get_worker().id
 
 
 def reduce_op(results, cwd, ztfname, filtercode, func, save_stats):
@@ -352,8 +362,8 @@ def reduce_op(results, cwd, ztfname, filtercode, func, save_stats):
 
     # If we want to agregate run statistics on the previous map operation
     if save_stats and results is not None and any(results) and func != 'clean':
-        results_df = pd.DataFrame([result for result in results if result is not None], columns=['result', 'time_end', 'time_start'])
-        results_df.to_csv(folder.joinpath("results.csv"), index=False)
+        results_df = pd.DataFrame([result for result in results if result is not None], columns=['result', 'time_end', 'time_start', 'worker_id'])
+        results_df.to_csv(folder.joinpath("results_{}.csv".format(func)), index=False)
 
     if not 'reduce' in poloka_func[func].keys():
         return
@@ -366,11 +376,11 @@ def reduce_op(results, cwd, ztfname, filtercode, func, save_stats):
 
     start_timer = time.perf_counter()
     try:
-        result = poloka_func[func]['reduce'](cwd, ztfname, filtercode, logger)
+        result = poloka_func[func]['reduce'](folder, ztfname, filtercode, logger)
     except Exception as e:
         logger.error("")
         logger.error("In SN {}-{}".format(ztfname, filtercode))
-        logger.error(e)
+        logger.error(traceback.format_exc())
     finally:
         pass
 
@@ -434,15 +444,15 @@ if __name__ == '__main__':
         #                        queue="htc",
         #                        job_extra=["-L sps"])
 
-        cluster = SGECluster(cores=10,
-                             processes=10,
+        cluster = SGECluster(cores=5,
+                             processes=5,
                              queue="long",
                              memory="24GB",
                              #project="ztf",
                              walltime="12:00:00",
                              job_extra=["-l sps=1"])
 
-        cluster.scale(jobs=60)
+        cluster.scale(jobs=20)
         client = Client(cluster)
         print(client.dashboard_link, flush=True)
         print(socket.gethostname(), flush=True)

@@ -11,20 +11,22 @@ import joblib
 import numpy as np
 from astropy.io import fits
 
+
 sn_list_file = pathlib.Path(sys.argv[1])
 lc_dir = pathlib.Path(sys.argv[2])
 poloka_dir = pathlib.Path(sys.argv[3])
 
-sn_df = pd.read_csv(sn_list_file, sep=",", comment="#")
-sn_df.set_index("ztfname", inplace=True)
 
-print("Found {} SNe 1a...".format(len(sn_df)), flush=True)
+sn_list = []
+with open(sn_list_file, 'r') as f:
+    sn_list = [sn[:-1] for sn in f.readlines()]
 
-copy_files = True
+print("Found {} SNe 1a...".format(len(sn_list)), flush=True)
 
 zfilters = ['zg', 'zr', 'zi']
 
-for sn in sn_df.index:
+#for sn in sn_df.index:
+for sn in sn_list:
     print("In SN {}".format(sn))
     poloka_dir.joinpath("{}".format(sn)).mkdir(exist_ok=True)
 
@@ -39,6 +41,13 @@ for sn in sn_df.index:
             mskimg_path = pathlib.Path(ztfquery.io.get_file(sciimg_filename, downloadit=False, suffix='mskimg.fits'))
             if not sciimg_path.exists() or not mskimg_path.exists():
                 print("Fail: {}".format(sciimg_filename))
+                return
+
+            # Dead mask
+            try:
+                z = ztfimg.science.ScienceQuadrant.from_filename(sciimg_path)
+            except:
+                print("Fail: {}".format(sciimg_path))
                 return
 
             # First create filter path
@@ -58,8 +67,6 @@ for sn in sn_df.index:
             _create_symlink(folder_path.joinpath("elixir.fits"), sciimg_path)
             #_create_symlink(folder_path.joinpath("mask.fits"), mskimg_path)
 
-            # Dead mask
-            z = ztfimg.science.ScienceQuadrant.from_filename(sciimg_path)
 
             deads = np.array(z.get_mask(tracks=False, ghosts=False, spillage=False, spikes=False, dead=True,
                                         nan=False, saturated=False, brightstarhalo=False, lowresponsivity=False,
