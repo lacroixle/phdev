@@ -578,8 +578,8 @@ def fit_photometric_ratios(cat, error_pedestal=0.001, p0=None):
     print('photometric fit')
     model.params.release()
     tofix = dp.expccd_map[cat.expccd_ref]
-    logging.info('fixing scale of reference exposure: [%d -> %d]' % (cat.expccd_ref, tofix))
-    print('fixing scale of reference exposure: [%d -> %d]' % (cat.expccd_ref, tofix))
+    logging.info("fixing scale of reference exposure: [{} -> {}]".format(cat.expccd_ref, tofix))
+    print("fixing scale of reference exposure: [{} -> {}]".format(cat.expccd_ref, tofix))
     model.params['alpha'].fix(tofix)
     w = 1. / np.sqrt(dp.eflux **2 + (error_pedestal * dp.flux) ** 2)
     
@@ -643,9 +643,10 @@ def dump_photometric_fit_results(minimizer, cat, outdir=None, astrometry_pars=No
     # photometric ratios
     alpha = minimizer.params['alpha'].full
     ealpha = minimizer.eparams['alpha'].full
-    expid = np.floor(cat.dp.expccd_set / 1000).astype(int)
-    ccd = np.floor(cat.dp.expccd_set % 1000).astype(int)
-    nt = np.rec.fromarrays((expid, ccd, cat.dp.expccd_set, alpha, ealpha), names=['expid', 'ccd', 'expccd', 'alpha', 'ealpha'])
+    #expid = np.floor(cat.dp.expccd_set / 1000).astype(int)
+    #ccd = np.floor(cat.dp.expccd_set % 1000).astype(int)
+    #nt = np.rec.fromarrays((expid, ccd, cat.dp.expccd_set, alpha, ealpha), names=['expid', 'ccd', 'expccd', 'alpha', 'ealpha'])
+    nt = np.rec.fromarrays((cat.dp.expccd_set, alpha, ealpha), names=['expccd', 'alpha', 'ealpha'])
     nt = nt.view(NTuple)
     nt.keys['CHI2'] = minimizer.chi2()
     nt.keys['NDOF'] = minimizer.ndof()
@@ -755,8 +756,8 @@ class AstromCats():
         xref, yref = pyloka.radec2pix(str(reference_dbim.joinpath("calibrated.fits")), ra, dec)
 
         keys = (['x', 'y','sx','sy', 'rhoxy', 'flux', 'eflux', 'fluxmax', 'psfchi2', 'ra', 'dec', 'xref', 'yref'],
-                ['airmass','exptime', 'dbrcid', 'obsmjd','gfseeing', 'dbexpid', 'filter', 'filename'], # read directly from the header
-                ['zp', 'dzp']) # additional fields
+                ['airmass','exptime', 'dbrcid', 'obsmjd','gfseeing', 'dbexpid', 'filter'], # read directly from the header
+                ['zp', 'dzp', 'dbimg']) # additional fields
 
         # Select data from the exposure catalog
         from_starlist = [catalog_data[key] for key in keys[0][:-4]]
@@ -773,11 +774,13 @@ class AstromCats():
         else:
             from_header.append(np.full(N, 26.))
             from_header.append(np.full(N, 0.05))
+
+        from_header.append(np.full(N, str(dbim.stem)))
             
         # Concatenate data together
         data = from_starlist + from_header 
         names = keys[0] + keys[1] + keys[2]
-        
+
         # Is it the reference exposure ?
         if dbim == reference_dbim:
             data.append(np.ones(N))
@@ -812,10 +815,10 @@ class AstromCats():
         dp =  DataProxy(data, x='x', y='y',
                         #mjd='obsmjd', ccd='rcid', expid='expid',
                         mjd='obsmjd', ccd='dbrcid', expid='dbexpid',
-                        ref='ref')
+                        ref='ref', dbimg='dbimg')
         
         # a unique identifier for a ccdimage
-        dp.add_field('expccd', (dp.expid * 1000 + dp.ccd).astype(int))
+        dp.add_field('expccd', dp.dbimg)
         dp.make_index('expccd')
         c = np.bincount(dp.expccd_index)
 
@@ -904,18 +907,18 @@ class AstromCats():
                            airmass='airmass', exptime='exptime', gfseeing='gfseeing',
                            #filter='filter', mjd='obsmjd', ccd='rcid', expid='expid', xref='xref', yref='yref',
                            filter='filter', mjd='obsmjd', ccd='dbrcid', expid='dbexpid', xref='xref', yref='yref',
-                           star='star', ref='ref', zp='zp', filename='filename')
+                           star='star', ref='ref', zp='zp', dbimg='dbimg')
         else:
             dp = DataProxy(data, x='x', y='y', sx='sx', sy='sy', ra='ra', dec='dec', gmxx='gmxx', gmyy='gmyy', gmxy='gmxy',
                            apfl7='apfl7', eapfl7='eapfl7', airmass='airmass', exptime='exptime', gfseeing='gfseeing',
                            filter='filter', mjd='mjd', ccd='det-id', expid='expid', rad7='rad7', xref='xref', yref='yref', 
-                           star='star', ref='ref', zp='zp', filename='filename')
+                           star='star', ref='ref', zp='zp', dbimg='dbimage')
 
         #        if compress:
         #            check_exptime = dp.exptime >= self.min_exptime
         #            dp.compress(check_exptime)
 
-        dp.add_field('expccd', (dp.expid * 1000 + dp.ccd).astype(int))
+        dp.add_field('expccd', dp.dbimg)
         dp.make_index('expccd')
 
         # let's determine and store the expccd of the reference
@@ -923,7 +926,7 @@ class AstromCats():
         #
         i = np.unique(dp.expccd[dp.ref == 1])
         if len(i) != 1:
-            raise AstromCatError('more than 1 reference exposure ?')
+            raise AstromCatError("More than 1 reference exposure? ({} actually)".format(len(i)))
         self.expccd_ref = i[0]
 
         dp.add_field('starindex', self.starindex)
@@ -984,8 +987,8 @@ def dump_polynomial_transfos(model, cat, outdir):
     if not op.isdir(outdir):
         os.makedirs(outdir)
 
-    for i,expccd in enumerate(cat.dp.filename_set):
-        v = expccd.split["."][0]
+    for i,expccd in enumerate(cat.dp.expccd_set):
+        v = expccd
         #with open(outdir + os.sep + 'transfoTo' + expid + 'p' + ccd + '.dat', 'w') as f:
         with open(outdir.joinpath("transfoTo{}.dat".format(v)), 'w') as f:
             deg = model.degree
