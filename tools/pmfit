@@ -755,8 +755,7 @@ class AstromCats():
         xref, yref = pyloka.radec2pix(str(reference_dbim.joinpath("calibrated.fits")), ra, dec)
 
         keys = (['x', 'y','sx','sy', 'rhoxy', 'flux', 'eflux', 'fluxmax', 'psfchi2', 'ra', 'dec', 'xref', 'yref'],
-                #['airmass','exptime', 'rcid', 'obsmjd','gfseeing', 'expid', 'filter'], # read directly from the header
-                ['airmass','exptime', 'dbrcid', 'obsmjd','gfseeing', 'dbexpid', 'filter'], # read directly from the header
+                ['airmass','exptime', 'dbrcid', 'obsmjd','gfseeing', 'dbexpid', 'filter', 'filename'], # read directly from the header
                 ['zp', 'dzp']) # additional fields
 
         # Select data from the exposure catalog
@@ -905,12 +904,12 @@ class AstromCats():
                            airmass='airmass', exptime='exptime', gfseeing='gfseeing',
                            #filter='filter', mjd='obsmjd', ccd='rcid', expid='expid', xref='xref', yref='yref',
                            filter='filter', mjd='obsmjd', ccd='dbrcid', expid='dbexpid', xref='xref', yref='yref',
-                           star='star', ref='ref', zp='zp')
+                           star='star', ref='ref', zp='zp', filename='filename')
         else:
             dp = DataProxy(data, x='x', y='y', sx='sx', sy='sy', ra='ra', dec='dec', gmxx='gmxx', gmyy='gmyy', gmxy='gmxy',
                            apfl7='apfl7', eapfl7='eapfl7', airmass='airmass', exptime='exptime', gfseeing='gfseeing',
                            filter='filter', mjd='mjd', ccd='det-id', expid='expid', rad7='rad7', xref='xref', yref='yref', 
-                           star='star', ref='ref', zp='zp')
+                           star='star', ref='ref', zp='zp', filename='filename')
 
         #        if compress:
         #            check_exptime = dp.exptime >= self.min_exptime
@@ -985,11 +984,10 @@ def dump_polynomial_transfos(model, cat, outdir):
     if not op.isdir(outdir):
         os.makedirs(outdir)
 
-    for i,expccd in enumerate(cat.dp.expccd_set):
-        v = str(expccd)
-        expid, ccd = v[:-3], v[-3:]
+    for i,expccd in enumerate(cat.dp.filename_set):
+        v = expccd.split["."][0]
         #with open(outdir + os.sep + 'transfoTo' + expid + 'p' + ccd + '.dat', 'w') as f:
-        with open(outdir.joinpath("transfoTo{}p{}.dat".format(expid, ccd)), 'w') as f:
+        with open(outdir.joinpath("transfoTo{}.dat".format(v)), 'w') as f:
             deg = model.degree
             f.write("GtransfoPoly 1\ndegree %d\n" % deg)
             
@@ -1282,26 +1280,6 @@ def plot_proper_motion_distribution(cat, outdir=None):
     pl.axvline(args.mu_max, color='black')
 
     _savefig(fig, outdir, 'proper_motion_distribution.png')
-
-def check_polynomial_io(model, cat, expid, ccd, fn=None):
-    x = np.arange(0., 3072., 10.)
-    y = np.arange(0., 3080., 10.)
-    x,y = np.meshgrid(x,y)
-    x,y = x.flatten(), y.flatten()
-    N = len(x)
-    
-    expccd = expid * 1000 + ccd
-    expccd_index = cat.dp.expccd_map[expccd]
-    k = expccd_index * np.ones(N).astype(int)
-    
-    vx, vy = model.ref_to_curr((x * model.xscale, y * model.yscale), p=model.params, expccd=k)
-    
-    r = np.rec.fromarrays((x, y, vx, vy), names=['x', 'y', 'vx', 'vy'])
-    
-    if fn is not None:
-        np.save(fn, r)
-    
-    return r
 
 
 def pmfit():
