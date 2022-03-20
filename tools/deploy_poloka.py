@@ -295,10 +295,10 @@ def smphot(cwd, ztfname, filtercode, logger):
     np.save(gaia_path, gaia_cat.to_records(index=False))
 
     logger.info("Running pmfit")
-    run_and_log(["pmfit", driver_path, "--gaia={}".format(gaia_path), "--outdir={}".format(cwd.joinpath("pmfit"))], logger=logger)
+    run_and_log(["pmfit", driver_path, "--gaia={}".format(gaia_path), "--outdir={}".format(cwd.joinpath("pmfit")), "--plot-dir={}".format(cwd.joinpath("pmfit_plot"))], logger=logger)
 
     logger.info("Running pmfit plots")
-    run_and_log(["pmfit", driver_path, "--gaia={}".format(gaia_path), "--outdir={}".format(cwd.joinpath("pmfit")), "--plot-dir={}".format(cwd.joinpath("pmfit_plot"))], logger=logger)
+    run_and_log(["pmfit", driver_path, "--gaia={}".format(gaia_path), "--outdir={}".format(cwd.joinpath("pmfit")), "--plot-dir={}".format(cwd.joinpath("pmfit_plot")), '--plot'], logger=logger)
 
     return True
 
