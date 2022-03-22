@@ -192,6 +192,8 @@ def stats_reduce(cwd, ztfname, filtercode, logger):
 
     plt.hist(seseeings, bins=int(len(seseeings)/4), range=[0.5, 3], color='xkcd:dark grey', histtype='step')
     plt.grid()
+    plt.xlabel("Seeing")
+    plt.ylabel("Count")
     plt.savefig(cwd.joinpath("{}-{}_seseeing_dist.png".format(ztfname, filtercode)), dpi=300)
     plt.close()
 
