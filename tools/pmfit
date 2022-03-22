@@ -1351,10 +1351,11 @@ if (__name__ == "__main__"):
     parser.add_argument('lcfile', type=str, 
                         help='light curve file')
     parser.add_argument('--mu-max', type=float, default=5.)
+    parser.add_argument('--plot', action='store_true')
 
     args = parser.parse_args()
 
-    if args.plot_dir:
+    if args.plot:
         plot()
     else:
         print("Plotting...")

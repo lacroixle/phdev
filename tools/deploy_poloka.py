@@ -51,12 +51,19 @@ def run_and_log(cmd, logger=None):
 
 
 def make_catalog(folder, logger):
-    if args.retrieve_calibrated:
-        logger.info("Retrieving calibrated.fits...")
-        sciimg_path = ztfquery.io.get_file(folder.name + "_sciimg.fits", downloadit=False)
-        shutil.copyfile(sciimg_path, folder.joinpath("calibrated.fits"))
+    logger.info("Retrieving calibrated.fits...")
+    sciimg_path = ztfquery.io.get_file(folder.name + "_sciimg.fits", downloadit=False)
+    shutil.copyfile(sciimg_path, folder.joinpath("calibrated.fits"))
 
     run_and_log(["make_catalog", folder, "-O"], logger)
+
+    logger.info("Adding fake satur.fits.gz file")
+    if folder.joinpath("calibrated.fits").exists():
+        with fits.open(folder.joinpath('calibrated.fits')) as f:
+            d = f[0].data.astype(int)
+            d[:, :] = 0
+            p = fits.PrimaryHDU(header=f[0].header, data=d)
+            p.writeto(folder.joinpath('satur.fits.gz'))
 
     return folder.joinpath("se.list").exists()
 
@@ -297,10 +304,13 @@ def smphot(cwd, ztfname, filtercode, logger):
     np.save(gaia_path, gaia_cat.to_records(index=False))
 
     logger.info("Running pmfit")
-    run_and_log(["pmfit", driver_path, "--gaia={}".format(gaia_path), "--outdir={}".format(cwd.joinpath("pmfit"))], logger=logger)
+    run_and_log(["pmfit", driver_path, "--gaia={}".format(gaia_path), "--outdir={}".format(cwd.joinpath("pmfit")), "--plot-dir={}".format(cwd.joinpath("pmfit_plot"))], logger=logger)
 
     logger.info("Running pmfit plots")
-    run_and_log(["pmfit", driver_path, "--gaia={}".format(gaia_path), "--outdir={}".format(cwd.joinpath("pmfit")), "--plot-dir={}".format(cwd.joinpath("pmfit_plot"))], logger=logger)
+    run_and_log(["pmfit", driver_path, "--gaia={}".format(gaia_path), "--outdir={}".format(cwd.joinpath("pmfit")), "--plot-dir={}".format(cwd.joinpath("pmfit_plot")), '--plot'], logger=logger)
+
+    logger.info("Running scene modeling")
+    run_and_log(["mklc", "-t", cwd])
 
     return True
 
@@ -399,7 +409,6 @@ if __name__ == '__main__':
     argparser.add_argument('--no-reduce', dest='no_reduce', action='store_true')
     argparser.add_argument('--cluster', action='store_true')
     argparser.add_argument('--scratch', type=pathlib.Path)
-    argparser.add_argument('--retrieve-calibrated', dest='retrieve_calibrated', action='store_true')
     argparser.add_argument('--lc-folder', dest='lc_folder', type=pathlib.Path)
     argparser.add_argument('--log-results', action='store_true', default=True)
 
