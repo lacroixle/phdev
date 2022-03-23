@@ -648,10 +648,11 @@ def dump_photometric_fit_results(minimizer, cat, outdir=None, astrometry_pars=No
     #nt = np.rec.fromarrays((expid, ccd, cat.dp.expccd_set, alpha, ealpha), names=['expid', 'ccd', 'expccd', 'alpha', 'ealpha'])
     nt = np.rec.fromarrays((cat.dp.expccd_set, alpha, ealpha), names=['expccd', 'alpha', 'ealpha'])
     nt = nt.view(NTuple)
+    idx = np.where(cat.dp.ref == 1)
     nt.keys['CHI2'] = minimizer.chi2()
     nt.keys['NDOF'] = minimizer.ndof()
     nt.keys['RCHI2'] = nt.keys['CHI2'] / nt.keys['NDOF']
-    #nt.totxt(outdir + os.sep + 'photom_ratios.ntuple')
+    nt.keys['REF'] = pathlib.Path(cat.lcfile.phoref).stem
     nt.totxt(outdir.joinpath("photom_ratios.ntuple"))
     
     # star fluxes (in the reference frame)

@@ -55,15 +55,15 @@ def make_catalog(folder, logger):
     sciimg_path = ztfquery.io.get_file(folder.name + "_sciimg.fits", downloadit=False)
     shutil.copyfile(sciimg_path, folder.joinpath("calibrated.fits"))
 
-    run_and_log(["make_catalog", folder, "-O"], logger)
+    run_and_log(["make_catalog", folder, "-O", "-S"], logger)
 
-    logger.info("Adding fake satur.fits.gz file")
-    if folder.joinpath("calibrated.fits").exists():
-        with fits.open(folder.joinpath('calibrated.fits')) as f:
-            d = f[0].data.astype(int)
-            d[:, :] = 0
-            p = fits.PrimaryHDU(header=f[0].header, data=d)
-            p.writeto(folder.joinpath('satur.fits.gz'))
+    # logger.info("Adding fake satur.fits.gz file")
+    # if folder.joinpath("calibrated.fits").exists():
+    #     with fits.open(folder.joinpath('calibrated.fits')) as f:
+    #         d = f[0].data.astype(int)
+    #         d[:, :] = 0
+    #         p = fits.PrimaryHDU(header=f[0].header, data=d)
+    #         p.writeto(folder.joinpath('satur.fits.gz'))
 
     return folder.joinpath("se.list").exists()
 
