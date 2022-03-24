@@ -249,7 +249,6 @@ def smphot(cwd, ztfname, filtercode, logger):
     for quadrant in quadrant_folders:
         calibrated_file = quadrant.joinpath("calibrated.fits")
         with fits.open(calibrated_file) as hdul:
-            logger.info(calibrated_file)
             seeing[quadrant] = hdul[0].header['seseeing']
 
     seeing_df = pd.DataFrame.from_dict(seeing, orient='index')
@@ -310,7 +309,9 @@ def smphot(cwd, ztfname, filtercode, logger):
     run_and_log(["pmfit", driver_path, "--gaia={}".format(gaia_path), "--outdir={}".format(cwd.joinpath("pmfit")), "--plot-dir={}".format(cwd.joinpath("pmfit_plot")), '--plot'], logger=logger)
 
     logger.info("Running scene modeling")
-    run_and_log(["mklc", "-t", cwd])
+    smphot_output = cwd.joinpath("smphot_output")
+    smphot_output.mkdir(exist_ok=True)
+    run_and_log(["mklc", "-v", "-t", cwd.joinpath("pmfit"), "-O", smphot_output, driver_path], logger=logger)
 
     return True
 
