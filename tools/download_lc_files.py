@@ -41,7 +41,7 @@ def download_lc(hdfstore, filter_key):
     estimated_filesize = len(lc_df)*(sciimg_size+mskimg_size)/1000
     global total_estimated_filesize
     total_estimated_filesize = total_estimated_filesize + estimated_filesize
-    print("Downloading filter r ({} quadrants)".format(len(lc_df)))
+    print("Downloading filter {} ({} quadrants)".format(filterkey, len(lc_df)))
     print("Estimated size to download=~{} GB".format(estimated_filesize))
 
     def _download_lc(lc_filename):

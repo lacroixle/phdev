@@ -18,6 +18,7 @@ import pandas as pd
 from astropy.io import fits
 from astropy.wcs import WCS
 from astropy.coordinates import SkyCoord
+import matplotlib
 import matplotlib.pyplot as plt
 import dask
 from dask import delayed, compute
@@ -29,6 +30,7 @@ import numpy as np
 
 import list_format
 
+matplotlib.use('Agg')
 
 ztf_filtercodes = ['zg', 'zr', 'zi', 'all']
 poloka_func = []
@@ -323,11 +325,16 @@ def smphot_plot(cwd, ztfname, filtercode, logger):
     run_and_log(["pmfit", driver_path, "--gaia={}".format(gaia_path), "--outdir={}".format(cwd.joinpath("pmfit")), "--plot-dir={}".format(cwd.joinpath("pmfit_plot")), '--plot'], logger=logger)
 
     logger.info("Running smphot plots")
-    _, sn_flux_df = list_format.read_list(cwd.joinpath("smphot_output/lightcurve_sn.dat"))
+    with open(cwd.joinpath("smphot_output/lightcurve_sn.dat"), 'r') as f:
+        _, sn_flux_df = list_format.read_list(f)
 
     plt.errorbar(sn_flux_df['mjd'], sn_flux_df['flux'], yerr=sn_flux_df['varflux'], fmt='.k')
+    #plt.plot(sn_flux_df['mjd'], sn_flux_df['flux'], fmt='.k')
+    plt.xlabel("MJD")
+    plt.ylabel("Flux")
     plt.grid()
     plt.savefig(cwd.joinpath("{}-{}_smphot_lightcurve.png".format(ztfname, filtercode)), dpi=300)
+    plt.close()
 
     return True
 

@@ -46,6 +46,6 @@ def read_list(f):
 
         line = f.readline()
 
-    df = pd.read_csv(f, sep=" ", names=columns, index_col=False)
+    df = pd.read_csv(f, sep=" ", names=columns, index_col=False, skipinitialspace=True)
 
     return global_params, df
