@@ -305,19 +305,33 @@ def smphot(cwd, ztfname, filtercode, logger):
     logger.info("Running pmfit")
     run_and_log(["pmfit", driver_path, "--gaia={}".format(gaia_path), "--outdir={}".format(cwd.joinpath("pmfit")), "--plot-dir={}".format(cwd.joinpath("pmfit_plot"))], logger=logger)
 
-    logger.info("Running pmfit plots")
-    run_and_log(["pmfit", driver_path, "--gaia={}".format(gaia_path), "--outdir={}".format(cwd.joinpath("pmfit")), "--plot-dir={}".format(cwd.joinpath("pmfit_plot")), '--plot'], logger=logger)
-
     logger.info("Running scene modeling")
     smphot_output = cwd.joinpath("smphot_output")
     smphot_output.mkdir(exist_ok=True)
-    run_and_log(["mklc", "-v", "-t", cwd.joinpath("pmfit"), "-O", smphot_output, driver_path], logger=logger)
+    run_and_log(["mklc", "-t", cwd.joinpath("pmfit"), "-O", smphot_output, driver_path], logger=logger)
 
     return True
 
 
 poloka_func.append({'reduce': smphot})
 
+
+def smphot_plot(cwd, ztfname, filtercode, logger):
+    logger.info("Running pmfit plots")
+    driver_path = cwd.joinpath("{}_driver_{}".format(ztfname, filtercode))
+    gaia_path = args.wd.joinpath("{}/{}/gaia.npy".format(ztfname, filtercode))
+    run_and_log(["pmfit", driver_path, "--gaia={}".format(gaia_path), "--outdir={}".format(cwd.joinpath("pmfit")), "--plot-dir={}".format(cwd.joinpath("pmfit_plot")), '--plot'], logger=logger)
+
+    logger.info("Running smphot plots")
+    _, sn_flux_df = list_format.read_list(cwd.joinpath("smphot_output/lightcurve_sn.dat"))
+
+    plt.errorbar(sn_flux_df['mjd'], sn_flux_df['flux'], yerr=sn_flux_df['varflux'], fmt='.k')
+    plt.grid()
+    plt.savefig(cwd.joinpath("{}-{}_smphot_lightcurve.png".format(ztfname, filtercode)), dpi=300)
+
+    return True
+
+poloka_func.append({'reduce': smphot_plot})
 
 poloka_func = dict(zip([list(func.values())[0].__name__ for func in poloka_func], poloka_func))
 
@@ -459,12 +473,12 @@ if __name__ == '__main__':
         cluster = SGECluster(cores=5,
                              processes=5,
                              queue="long",
-                             memory="24GB",
+                             memory="20GB",
                              #project="ztf",
                              walltime="12:00:00",
                              job_extra=["-l sps=1"])
 
-        cluster.scale(jobs=20)
+        cluster.scale(jobs=120)
         client = Client(cluster)
         print(client.dashboard_link, flush=True)
         print(socket.gethostname(), flush=True)
@@ -480,6 +494,7 @@ if __name__ == '__main__':
 
     jobs = []
     quadrant_count = 0
+    reduction_count = 0
     for ztfname in ztfnames:
         for filtercode in filtercodes:
             print("Building job list for {}-{}... ".format(ztfname, filtercode), end="", flush=True)
@@ -500,6 +515,7 @@ if __name__ == '__main__':
 
             if ('reduce' in poloka_func[args.func].keys() or args.log_results) and not args.no_reduce:
                 results = [delayed(reduce_op)(results, args.wd, ztfname, filtercode, args.func, True)]
+                reduction_count += 1
                 print("Found reduction.", end="", flush=True)
 
             print("")
@@ -508,7 +524,12 @@ if __name__ == '__main__':
                 jobs.extend(results)
 
     print("")
-    print("Running")
+    print("Running. ", end="")
+    if quadrant_count > 0:
+        print(" Processing {} quadrants.".format(quadrant_count))
+    if reduction_count > 0:
+        print(" Processing {} reductions.".format(reduction_count))
+
     start_time = time.perf_counter()
     fjobs = client.compute(jobs)
     wait(fjobs)
