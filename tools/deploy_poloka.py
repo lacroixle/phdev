@@ -329,9 +329,9 @@ def smphot_plot(cwd, ztfname, filtercode, logger):
         _, sn_flux_df = list_format.read_list(f)
 
     plt.errorbar(sn_flux_df['mjd'], sn_flux_df['flux'], yerr=sn_flux_df['varflux'], fmt='.k')
-    #plt.plot(sn_flux_df['mjd'], sn_flux_df['flux'], fmt='.k')
     plt.xlabel("MJD")
     plt.ylabel("Flux")
+    plt.title("Calibrated lightcurve - {} - {}".format(ztfname, filtercode))
     plt.grid()
     plt.savefig(cwd.joinpath("{}-{}_smphot_lightcurve.png".format(ztfname, filtercode)), dpi=300)
     plt.close()
