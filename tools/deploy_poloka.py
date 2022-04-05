@@ -323,7 +323,7 @@ def smphot(cwd, ztfname, filtercode, logger):
     logger.info("Running scene modeling")
     smphot_output = cwd.joinpath("smphot_output")
     smphot_output.mkdir(exist_ok=True)
-    run_and_log(["mklc", "-t", cwd.joinpath("pmfit"), "-O", smphot_output, driver_path], logger=logger)
+    run_and_log(["mklc", "-t", cwd.joinpath("pmfit"), "-O", smphot_output, "-v", driver_path], logger=logger)
 
     return True
 
