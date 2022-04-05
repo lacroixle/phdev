@@ -245,18 +245,31 @@ def smphot(cwd, ztfname, filtercode, logger):
     quadrant_folders = [folder for folder in cwd.glob("ztf_*".format(ztfname, filtercode)) if folder.is_dir()]
     quadrant_folders = list(filter(lambda x: x.joinpath("psfstars.list").exists(), quadrant_folders))
 
+    # Determination of the best seeing quadrant
+    # First determine the most represented field
     logger.info("Determining best seeing quadrant...")
-    seeing = {}
+    seeings = {}
 
     for quadrant in quadrant_folders:
         calibrated_file = quadrant.joinpath("calibrated.fits")
         with fits.open(calibrated_file) as hdul:
-            seeing[quadrant] = hdul[0].header['seseeing']
+            seeings[quadrant] = (hdul[0].header['seseeing'], hdul[0].header['fieldid'])
 
-    seeing_df = pd.DataFrame.from_dict(seeing, orient='index')
+    fieldids = list(set([seeing[1] for seeing in seeings.values()]))
+    fieldids_count = [sum([1 for f in seeings.values() if f[1]==fieldid]) for fieldid in fieldids]
+    maxcount_field = fieldids[np.argmax(fieldids_count)]
+
+    logger.info("{} different field ids".format(len(fieldids)))
+    logger.info(fieldids)
+    logger.info(fieldids_count)
+    logger.info("Max quadrant field={}".format(maxcount_field))
+
+    #seeing_df = pd.DataFrame.from_dict([{quadrant: seeings[quadrant][0]} for quadrant in seeings.keys() if seeings[quadrant][1]==maxcount_field], orient='index')
+    seeing_df = pd.DataFrame([[quadrant, seeings[quadrant][0]] for quadrant in seeings.keys() if seeings[quadrant][1]==maxcount_field], columns=['quadrant', 'seeing'])
+    seeing_df = seeing_df.set_index(['quadrant'])
 
     idxmin = seeing_df.idxmin().values[0]
-    minseeing = seeing_df.at[idxmin, 0]
+    minseeing = seeing_df.at[idxmin, 'seeing']
 
     logger.info("Best seeing quadrant: {}". format(idxmin))
     logger.info("  with seeing={}".format(minseeing))
@@ -282,7 +295,7 @@ def smphot(cwd, ztfname, filtercode, logger):
                                                                                 ztfname,
                                                                                 filtercode))
         f.write("IMAGES\n")
-        for quadrant_folder in seeing_df.index:
+        for quadrant_folder in quadrant_folders:
             f.write("{}\n".format(quadrant_folder))
         f.write("PHOREF\n")
         f.write("{}\n".format(idxmin))
@@ -304,8 +317,8 @@ def smphot(cwd, ztfname, filtercode, logger):
     gaia_path = args.wd.joinpath("{}/{}/gaia.npy".format(ztfname, filtercode))
     np.save(gaia_path, gaia_cat.to_records(index=False))
 
-    logger.info("Running pmfit")
-    run_and_log(["pmfit", driver_path, "--gaia={}".format(gaia_path), "--outdir={}".format(cwd.joinpath("pmfit")), "--plot-dir={}".format(cwd.joinpath("pmfit_plot"))], logger=logger)
+    logger.info("Running pmfit with polynomial of degree {} as relative astrometric transformation.".format(args.degree))
+    run_and_log(["pmfit", driver_path, "-d", str(args.degree), "--gaia={}".format(gaia_path), "--outdir={}".format(cwd.joinpath("pmfit")), "--plot-dir={}".format(cwd.joinpath("pmfit_plot")), "--mu-max=20"], logger=logger)
 
     logger.info("Running scene modeling")
     smphot_output = cwd.joinpath("smphot_output")
@@ -322,7 +335,7 @@ def smphot_plot(cwd, ztfname, filtercode, logger):
     logger.info("Running pmfit plots")
     driver_path = cwd.joinpath("{}_driver_{}".format(ztfname, filtercode))
     gaia_path = args.wd.joinpath("{}/{}/gaia.npy".format(ztfname, filtercode))
-    run_and_log(["pmfit", driver_path, "--gaia={}".format(gaia_path), "--outdir={}".format(cwd.joinpath("pmfit")), "--plot-dir={}".format(cwd.joinpath("pmfit_plot")), '--plot'], logger=logger)
+    run_and_log(["pmfit", driver_path, "--gaia={}".format(gaia_path), "--outdir={}".format(cwd.joinpath("pmfit")), "--plot-dir={}".format(cwd.joinpath("pmfit_plot")), "--plot", "--mu-max=20."], logger=logger)
 
     logger.info("Running smphot plots")
     with open(cwd.joinpath("smphot_output/lightcurve_sn.dat"), 'r') as f:
@@ -433,6 +446,7 @@ if __name__ == '__main__':
     argparser.add_argument('--scratch', type=pathlib.Path)
     argparser.add_argument('--lc-folder', dest='lc_folder', type=pathlib.Path)
     argparser.add_argument('--log-results', action='store_true', default=True)
+    argparser.add_argument('--degree', type=int, default=3, help="Degree of polynomial for relative astrometric fit in pmfit.")
 
     args = argparser.parse_args()
     args.wd = args.wd.expanduser().resolve()
@@ -532,8 +546,10 @@ if __name__ == '__main__':
 
     print("")
     print("Running. ", end="")
+
     if quadrant_count > 0:
         print(" Processing {} quadrants.".format(quadrant_count))
+
     if reduction_count > 0:
         print(" Processing {} reductions.".format(reduction_count))
 

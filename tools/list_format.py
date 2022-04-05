@@ -14,11 +14,15 @@ def read_list(f):
         splitted = line.split(" ")
         key = splitted[0][1:]
 
-        value = list(map(float, splitted[1:]))
-        if len(value) == 1:
-            value = value[0]
-        else:
-            value = pd.array(value)
+        try:
+            value = list(map(float, splitted[1:]))
+
+            if len(value) == 1:
+                value = value[0]
+            else:
+                value = pd.array(value)
+        except:
+            value = splitted[1:][0]
 
         global_params[key.lower()] = value
 
