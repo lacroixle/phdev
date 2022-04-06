@@ -242,7 +242,7 @@ if __name__ == '__main__':
             plt.subplot(3, 3, i*3+3)
             for i, fieldid in enumerate(lc_info['fieldids']):
                 sn_flux = lc_info['sn_flux'][lc_info['sn_flux']['fieldid'] == fieldid]
-                plt.errorbar(sn_flux['mjd'], sn_flux['flux'], yerr=sn_flux['varflux'], color='black', ms=5., lw=0., marker=idx_to_marker[i], ls='', label=str(fieldid))
+                plt.errorbar(sn_flux['mjd'], sn_flux['flux'], yerr=sn_flux['varflux'], color='black', ms=5., lw=0., marker=idx_to_marker[i], ls='', label=str(fieldid), elinewidth=1.)
 
             #plt.errorbar(lc_info['sn_flux']['mjd'], lc_info['sn_flux']['flux'], yerr=lc_info['sn_flux']['varflux'], color='black', marker='.', ls='')
 
@@ -260,7 +260,7 @@ if __name__ == '__main__':
             # Get first lc_info available to get initial position
             first_lc_info = [lc_infos[filtercode] for filtercode in filtercodes if lc_infos[filtercode]][0]
             init_radec = np.array([first_lc_info['init_radec'].frame.data.lon.value, first_lc_info['init_radec'].frame.data.lat.value])
-            plt.errorbar(init_radec[0], init_radec[1], marker='X', label='init')
+            plt.errorbar(init_radec[0], init_radec[1], marker='X', label='init', lw=0.)
 
             pos_list = [init_radec]
             err_list = []
@@ -270,7 +270,7 @@ if __name__ == '__main__':
                 err_list.append(3600.*np.max(lc_info['fit_radec_var']))
                 pos_list.append(pos_radec)
                 plt.errorbar(pos_radec[0], pos_radec[1], marker='.', color=filtercode_colors[filtercode],
-                             xerr=3600.*lc_info['fit_radec_var'][0], yerr=3600.*lc_info['fit_radec_var'][1], label=filtercode)
+                             xerr=3600.*lc_info['fit_radec_var'][0], yerr=3600.*lc_info['fit_radec_var'][1], label=filtercode, lw=0., elinewidth=1.)
 
             pos = np.stack(pos_list)
             off = 0.5*np.max(err_list)
