@@ -127,12 +127,12 @@ if __name__ == '__main__':
                 w = WCS(hdul[0].header)
 
             init_skycoord = SkyCoord(sn_parameters['sn_ra'].item(), sn_parameters['sn_dec'].item(), unit='deg')
-            init_px = (init_skycoord.to_pixel(w)[0].item(), init_skycoord.to_pixel(w)[1].item())
+            init_px = np.array([init_skycoord.to_pixel(w)[0].item(), init_skycoord.to_pixel(w)[1]])
 
             lc_info['init_radec'] = init_skycoord
             lc_info['init_px'] = init_px
 
-            fit_px = (sn_flux_df['x'].iloc[0], sn_flux_df['y'].iloc[0])
+            fit_px = np.array([sn_flux_df['x'].iloc[0], sn_flux_df['y'].iloc[0]])
 
             fit_skycoord = SkyCoord.from_pixel(*fit_px, w)
             fit_ra, fit_dec = fit_skycoord.ra, fit_skycoord.dec
@@ -231,11 +231,12 @@ if __name__ == '__main__':
 
 
         def _plot_fitted_pos(lc_infos):
-            # Get first lc_info available to get initial position
-            first_lc_info = [lc_infos[filtercode] for filtercode in filtercodes if lc_infos[filtercode]][0]
+            # Get first lc_info available to define 0
+            first_band = [filtercode for filtercode in filtercodes if filtercode in lc_infos.keys()][0]
 
             # init_radec = np.array([first_lc_info['init_radec'].frame.data.lon.value, first_lc_info['init_radec'].frame.data.lat.value])
-            init_px = first_lc_info['init_px']
+            #init_px = first_lc_info['init_px']
+            init_px = np.array([0., 0.])
 
             # plt.subplot(1, 2, 1)
 
@@ -268,14 +269,14 @@ if __name__ == '__main__':
             err_list = []
             for filtercode in filtercodes:
                 lc_info = lc_infos[filtercode]
-                pos_px = lc_info['fit_px']
+                pos_px = lc_info['fit_px'] - lc_info['init_px']
                 err_list.append(np.max(lc_info['fit_px_var']))
                 pos_list.append(pos_px)
                 plt.errorbar(pos_px[0], pos_px[1], marker='.', color=filtercode_colors[filtercode],
                              xerr=lc_info['fit_px_var'][0], yerr=lc_info['fit_px_var'][1], label=filtercode, lw=0., elinewidth=1.)
 
             pos = np.stack(pos_list)
-            off = 10*np.max(err_list) + 5.
+            off = np.max(err_list) + 0.1
             plt.xlim([np.min(pos[:, 0]) - off, np.max(pos[:, 0]) + off])
             plt.ylim([np.min(pos[:, 1]) - off, np.max(pos[:, 1]) + off])
             # plt.axis('equal')
