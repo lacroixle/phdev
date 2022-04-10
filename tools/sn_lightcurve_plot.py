@@ -117,6 +117,7 @@ if __name__ == '__main__':
 
             ref_exp = globals_fit_df['referenceimage']
             lc_info['ref_exp'] = ref_exp
+            lc_info['filtercode'] = filtercode
 
             lc_info['sn_flux'] = sn_flux_df
             lc_info['sn_flux']['fieldid'] = fit_df['name'].apply(lambda x: int(x.split("_")[2]))
@@ -179,18 +180,23 @@ if __name__ == '__main__':
         # First get all relevant informations
         for filtercode in filtercodes:
             if ztffolder.joinpath(filtercode).exists():
-                lc_band_info = _get_lc_info(filtercode)
+                try:
+                    lc_band_info = _get_lc_info(filtercode)
+                except:
+                    lc_band_info = None
+
                 if lc_band_info is not None:
                     lc_infos[filtercode] = lc_band_info
 
         if not lc_infos:
             print("Found no data for {}... Skipping.".format(ztfname))
+            continue
 
 
         def _plot_lc_info(lc_info, i, first):
             plt.subplot(3, 3, i*3+1)
             plt.xlabel("$x$ [pixel]")
-            plt.ylabel("$y$ [pixel]")
+            plt.ylabel("$y$ [pixel] - {}".format(lc_info['filtercode']))
             if first:
                 plt.title("Host galaxy")
             plt.imshow(np.log(np.fmax(lc_info['t0_exp_host_stamp'], 1.)), cmap='gray', origin='upper',
