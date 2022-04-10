@@ -32,8 +32,8 @@ from imageproc.composable_functions import BiPol2D
 from ztfimg.stamps import stamp_it
 import numpy as np
 import pyloka
+import utils
 
-import list_format
 
 
 filtercodes = ['zg', 'zr', 'zi']
@@ -63,40 +63,6 @@ def radec_covar(px, varpx, w, h=1e-4):
     C = np.diag(varpx)
 
     return tuple(np.diag(P@C@P.T).tolist())
-
-
-def poly2d_from_file(filename):
-    with open(filename, 'r') as f:
-        f.readline()
-        deg_str = f.readline()[:-1]
-        degree = int(deg_str.split(" ")[1])
-        coeff_str = " ".join(f.readline()[:-1].split())
-        coeffs = list(map(float, coeff_str.split(" ")))
-
-    coeffs_1 = coeffs[:int(len(coeffs)/2)]
-    coeffs_2 = coeffs[int(len(coeffs)/2):]
-
-    def _extract_coeffs(coeffs):
-        idx = 0
-        c = np.zeros([degree, degree])
-        for d in range(degree):
-            p, q = d, 0
-            while p >= 0:
-                c[p, q] = coeffs[idx]
-                idx += 1
-                p -= 1
-                q += 1
-
-        return c
-
-    c_1 = _extract_coeffs(coeffs_1)
-    c_2 = _extract_coeffs(coeffs_2)
-
-    def _apply_pol(x, y):
-        return np.stack([np.polynomial.polynomial.polyval2d(x, y, c_1),
-                         np.polynomial.polynomial.polyval2d(x, y, c_2)])
-
-    return _apply_pol
 
 
 if __name__ == '__main__':
@@ -142,10 +108,10 @@ if __name__ == '__main__':
             lc_info = {}
 
             with open(smphot_lc_sn_file, 'r') as f:
-                _, sn_flux_df = list_format.read_list(f)
+                _, sn_flux_df = utils.read_list(f)
 
             with open(smphot_lc_fit_file, 'r') as f:
-                globals_fit_df, fit_df = list_format.read_list(f)
+                globals_fit_df, fit_df = utils.read_list(f)
 
             sn_parameters = pd.read_hdf(args.lc_folder.joinpath("{}.hd5".format(ztfname)), key='sn_info')
 
@@ -166,11 +132,13 @@ if __name__ == '__main__':
             lc_info['init_px'] = init_px
 
             fit_px = (sn_flux_df['x'].iloc[0], sn_flux_df['y'].iloc[0])
-            #fit_skycoord = utils.pixel_to_skycoord(*fit_px, w)
+
             fit_skycoord = SkyCoord.from_pixel(*fit_px, w)
             fit_ra, fit_dec = fit_skycoord.ra, fit_skycoord.dec
             loka_radec = pyloka.pix2radec(str(sn_folder.joinpath("{}/calibrated.fits".format(ref_exp))), [fit_px[0]], [fit_px[1]])
 
+            # lc_info['fit_px'] = fit_px
+            # lc_info['fit_radec'] = fit_skycoord
             lc_info['fit_px'] = fit_px
             lc_info['fit_radec'] = fit_skycoord
 
@@ -189,7 +157,7 @@ if __name__ == '__main__':
             lc_info['t0_exp'] = fit_df.iloc[t0_idx]['Date']
             lc_info['t0_exp_file'] = fit_df.iloc[t0_idx]['name']
 
-            pol = poly2d_from_file(sn_folder.joinpath("pmfit/transfoTo{}.dat".format(lc_info['t0_exp_file'])))
+            pol = utils.poly2d_from_file(sn_folder.joinpath("pmfit/transfoTo{}.dat".format(lc_info['t0_exp_file'])))
             fit_px_t0 = pol(*fit_px)
             init_px_t0 = pol(*init_px)
 
@@ -259,29 +227,56 @@ if __name__ == '__main__':
         def _plot_fitted_pos(lc_infos):
             # Get first lc_info available to get initial position
             first_lc_info = [lc_infos[filtercode] for filtercode in filtercodes if lc_infos[filtercode]][0]
-            init_radec = np.array([first_lc_info['init_radec'].frame.data.lon.value, first_lc_info['init_radec'].frame.data.lat.value])
-            plt.errorbar(init_radec[0], init_radec[1], marker='X', label='init', lw=0.)
 
-            pos_list = [init_radec]
+            # init_radec = np.array([first_lc_info['init_radec'].frame.data.lon.value, first_lc_info['init_radec'].frame.data.lat.value])
+            init_px = first_lc_info['init_px']
+
+            # plt.subplot(1, 2, 1)
+
+            # plt.errorbar(init_radec[0], init_radec[1], marker='X', label='init', lw=0.)
+
+            # pos_list = [init_radec]
+            # err_list = []
+            # for filtercode in filtercodes:
+            #     lc_info = lc_infos[filtercode]
+            #     pos_radec = np.array([lc_info['fit_radec'].frame.data.lon.value, lc_info['fit_radec'].frame.data.lat.value])
+            #     err_list.append(3600.*np.max(lc_info['fit_radec_var']))
+            #     pos_list.append(pos_radec)
+            #     plt.errorbar(pos_radec[0], pos_radec[1], marker='.', color=filtercode_colors[filtercode],
+            #                  xerr=3600.*lc_info['fit_radec_var'][0], yerr=3600.*lc_info['fit_radec_var'][1], label=filtercode, lw=0., elinewidth=1.)
+
+            # pos = np.stack(pos_list)
+            # off = 0.5*np.max(err_list)
+            # plt.xlim([np.min(pos[:, 0]) - off, np.max(pos[:, 0]) + off])
+            # plt.ylim([np.min(pos[:, 1]) - off, np.max(pos[:, 1]) + off])
+            # # plt.axis('equal')
+            # plt.xlabel("$\\alpha$ [deg]")
+            # plt.ylabel("$\\delta$ [deg]")
+            # plt.grid()
+            # plt.legend()
+
+            # plt.subplot(1, 2, 2)
+            plt.errorbar(init_px[0], init_px[1], marker='X', label='init', lw=0.)
+            pos_list = [init_px]
+
             err_list = []
             for filtercode in filtercodes:
                 lc_info = lc_infos[filtercode]
-                pos_radec = np.array([lc_info['fit_radec'].frame.data.lon.value, lc_info['fit_radec'].frame.data.lat.value])
-                err_list.append(3600.*np.max(lc_info['fit_radec_var']))
-                pos_list.append(pos_radec)
-                plt.errorbar(pos_radec[0], pos_radec[1], marker='.', color=filtercode_colors[filtercode],
-                             xerr=3600.*lc_info['fit_radec_var'][0], yerr=3600.*lc_info['fit_radec_var'][1], label=filtercode, lw=0., elinewidth=1.)
+                pos_px = lc_info['fit_px']
+                err_list.append(np.max(lc_info['fit_px_var']))
+                pos_list.append(pos_px)
+                plt.errorbar(pos_px[0], pos_px[1], marker='.', color=filtercode_colors[filtercode],
+                             xerr=lc_info['fit_px_var'][0], yerr=lc_info['fit_px_var'][1], label=filtercode, lw=0., elinewidth=1.)
 
             pos = np.stack(pos_list)
-            off = 0.5*np.max(err_list)
+            off = 10*np.max(err_list) + 5.
             plt.xlim([np.min(pos[:, 0]) - off, np.max(pos[:, 0]) + off])
             plt.ylim([np.min(pos[:, 1]) - off, np.max(pos[:, 1]) + off])
             # plt.axis('equal')
-            plt.xlabel("$x$ [deg]")
-            plt.ylabel("$y$ [deg]")
+            plt.xlabel("$x$ [pixel]")
+            plt.ylabel("$y$ [pixel]")
             plt.grid()
             plt.legend()
-            plt.title("Fitted position per band")
 
         # Do plots
         plt.subplots(ncols=3, nrows=3, constrained_layout=True, figsize=(15., 9.), gridspec_kw={'width_ratios': [1., 1., 3.], 'height_ratios': [1., 1., 1.]})
@@ -300,5 +295,6 @@ if __name__ == '__main__':
 
         plt.figure(figsize=(5., 5.), constrained_layout=True)
         _plot_fitted_pos(lc_infos)
+        plt.title("{}-{} fitted positions".format(ztfname, filtercode))
         plt.savefig(args.output.joinpath("{}_pos.png".format(ztfname)), dpi=200.)
         plt.close()
