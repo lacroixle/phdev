@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import pathlib
+from collections.abc import Iterable
 
 import numpy as np
 from croaks.match import NearestNeighAssoc
@@ -114,8 +115,19 @@ def poly2d_from_file(filename):
 
 
 def read_list(f):
+    if isinstance(f, str) or isinstance(f, pathlib.Path):
+        with open(f, 'r') as fi:
+            header, df, _, _ = read_list_ext(fi)
+
+    else:
+        header, df, _, _ = read_list_ext(f)
+
+    return header, df
+
+
+def read_list_ext(f):
     # Extract global @ parameters
-    global_params = {}
+    header = {}
     line = f.readline()
     curline = 1
     while line[0] == "@":
@@ -133,7 +145,7 @@ def read_list(f):
         except:
             value = splitted[1:][0]
 
-        global_params[key.lower()] = value
+        header[key.lower()] = value
 
         line = f.readline()
         curline += 1
@@ -141,24 +153,71 @@ def read_list(f):
     # Extract dataframe
     # First, column names
     columns = []
+    df_format = None
+    df_desc = {}
     while line[0] == "#":
         curline += 1
         line = line[1:-1].strip()
 
         splitted = line.split(" ")
         if splitted[0].strip() == "end":
-            line = f.readline()
             break
 
         if splitted[0].strip() == "format":
+            df_format = str(" ".join(line.split(" ")[1:])).strip()
             line = f.readline()
             continue
 
         splitted = line.split(":")
-        columns.append(splitted[0].strip())
+        column = splitted[0].strip()
+        columns.append(column)
+        if len(splitted) > 1:
+            df_desc[column] = splitted[1].strip()
 
         line = f.readline()
 
     df = pd.read_csv(f, sep=" ", names=columns, index_col=False, skipinitialspace=True)
 
-    return global_params, df
+    return header, df, df_desc, df_format
+
+
+def write_list(filename, header, df, df_desc, df_format):
+    with open(filename, 'w') as f:
+        for key in header.keys():
+            if isinstance(header[key], Iterable):
+                f.write("@{} {}\n".format(key.upper(), " ".join(map(str, header[key]))))
+            else:
+                f.write("@{} {}\n".format(key.upper(), str(header[key])))
+
+        for column in df.columns:
+            if column in df_desc.keys():
+                f.write("# {} : {}\n".format(column, df_desc[column]))
+            else:
+                f.write("# {}".format(column))
+
+        f.write("# format {}\n".format(df_format))
+        f.write("# end\n")
+
+        df.to_csv(f, sep=" ", index=False, header=False)
+
+
+class ListTable:
+    def __init__(self, header, df, df_desc, df_format, filename=None):
+        self.header = header
+        self.df = df
+        self.df_desc = df_desc
+        self.df_format = df_format
+        self.filename = filename
+
+    @classmethod
+    def from_filename(cls, filename):
+        with open(filename, 'r') as f:
+            header, df, df_desc, df_format = read_list_ext(f)
+
+        return cls(header, df, df_desc, df_format, filename=filename)
+
+    def write_to(self, filename):
+        write_list(filename, self.header, self.df, self.df_desc, self.df_format)
+
+    def write(self):
+        self.write_to(self.filename)

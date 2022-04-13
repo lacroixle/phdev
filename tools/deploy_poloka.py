@@ -26,9 +26,10 @@ from dask.distributed import Client, LocalCluster, wait, get_worker
 from dask_jobqueue import SLURMCluster, SGECluster
 import ztfquery.io
 import numpy as np
+from skimage.morphology import label
 
 
-import list_format
+import utils
 
 matplotlib.use('Agg')
 
@@ -49,25 +50,31 @@ def run_and_log(cmd, logger=None):
         logger.info(out.stdout)
         logger.info("=========================== output end ===========================")
 
+
     return out.returncode
 
 
-def make_catalog(folder, logger):
+def make_catalog(quadrant_folder, logger):
     logger.info("Retrieving calibrated.fits...")
-    sciimg_path = ztfquery.io.get_file(folder.name + "_sciimg.fits", downloadit=False)
-    shutil.copyfile(sciimg_path, folder.joinpath("calibrated.fits"))
+    sciimg_path = ztfquery.io.get_file(quadrant_folder.name + "_sciimg.fits", downloadit=False)
+    logger.info("Located at {}".format(sciimg_path))
+    shutil.copyfile(sciimg_path, quadrant_folder.joinpath("calibrated.fits"))
 
-    run_and_log(["make_catalog", folder, "-O", "-S"], logger)
+    run_and_log(["make_catalog", quadrant_folder, "-O", "-S"], logger)
 
-    # logger.info("Adding fake satur.fits.gz file")
-    # if folder.joinpath("calibrated.fits").exists():
-    #     with fits.open(folder.joinpath('calibrated.fits')) as f:
-    #         d = f[0].data.astype(int)
-    #         d[:, :] = 0
-    #         p = fits.PrimaryHDU(header=f[0].header, data=d)
-    #         p.writeto(folder.joinpath('satur.fits.gz'))
+    # Compute number of masked cosmics
+    with fits.open(quadrant_folder.joinpath("cosmic.fits.gz")) as hdul:
+        _, cosmic_count = label(hdul[0].data, return_num=True)
 
-    return folder.joinpath("se.list").exists()
+    aperse_listtable = utils.ListTable.from_filename(quadrant_folder.joinpath("se.list"))
+    aperse_listtable.header['cosmic_count'] = cosmic_count
+    aperse_listtable.write()
+
+    if cosmic_count > 500:
+        quadrant_folder.joinpath("se.list").unlink(missing_ok=True)
+
+    return quadrant_folder.joinpath("se.list").exists()
+
 
 poloka_func.append({'map': make_catalog})
 
@@ -75,6 +82,7 @@ poloka_func.append({'map': make_catalog})
 def mkcat2(folder, logger):
     run_and_log(["mkcat2", folder, "-o"], logger)
     return folder.joinpath("standalone_stars.list").exists()
+
 
 poloka_func.append({'map': mkcat2})
 
@@ -141,7 +149,7 @@ def stats(folder, logger):
             return False
 
         with open(list_path, mode='r') as f:
-            global_params, df = list_format.read_list(f)
+            global_params, df, _, _ = utils.read_list(f)
 
         hdfstore.put(list_path.stem, df)
         hdfstore.put("{}_globals".format(list_path.stem), pd.DataFrame([global_params]))
@@ -390,6 +398,7 @@ def map_op(quadrant, wd, ztfname, filtercode, func, scratch=None):
         logger.error("")
         logger.error("In folder {}".format(quadrant_dir))
         logger.error(traceback.format_exc())
+        print(traceback.format_exc())
     finally:
         if scratch and func != 'clean':
             logger.info("Erasing quadrant data from scratchspace")
