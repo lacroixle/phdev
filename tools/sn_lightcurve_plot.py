@@ -191,6 +191,8 @@ if __name__ == '__main__':
         if not lc_infos:
             print("Found no data for {}... Skipping.".format(ztfname))
             continue
+        else:
+            print(ztfname)
 
 
         def _plot_lc_info(lc_info, i, first):
@@ -231,9 +233,6 @@ if __name__ == '__main__':
 
 
         def _plot_fitted_pos(lc_infos):
-            # Get first lc_info available to define 0
-            first_band = [filtercode for filtercode in filtercodes if filtercode in lc_infos.keys()][0]
-
             # init_radec = np.array([first_lc_info['init_radec'].frame.data.lon.value, first_lc_info['init_radec'].frame.data.lat.value])
             #init_px = first_lc_info['init_px']
             init_px = np.array([0., 0.])
@@ -267,7 +266,8 @@ if __name__ == '__main__':
             pos_list = [init_px]
 
             err_list = []
-            for filtercode in filtercodes:
+            #for filtercode in filtercodes:
+            for filtercode in lc_infos.keys():
                 lc_info = lc_infos[filtercode]
                 pos_px = lc_info['fit_px'] - lc_info['init_px']
                 err_list.append(np.max(lc_info['fit_px_var']))
@@ -279,7 +279,7 @@ if __name__ == '__main__':
             off = np.max(err_list) + 0.1
             plt.xlim([np.min(pos[:, 0]) - off, np.max(pos[:, 0]) + off])
             plt.ylim([np.min(pos[:, 1]) - off, np.max(pos[:, 1]) + off])
-            # plt.axis('equal')
+            plt.axis('equal')
             plt.xlabel("$x$ [pixel]")
             plt.ylabel("$y$ [pixel]")
             plt.grid()
