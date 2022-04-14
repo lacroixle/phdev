@@ -35,7 +35,6 @@ import pyloka
 import utils
 
 
-
 filtercodes = ['zg', 'zr', 'zi']
 filtercode_colors = {'zg': 'green', 'zr': 'red', 'zi': 'orange'}
 idx_to_marker = {0: "1", 1: "2", 2: "3", 3: "4", 4: "v", 5: "^", 6: "<", 7: ">"}
@@ -172,6 +171,10 @@ if __name__ == '__main__':
             sn_host_stamp = np.array(stamp_it(t0_quadrant, fit_px_t0[0], fit_px_t0[1], args.stamp_size, asarray=True))
             lc_info['t0_exp_host_stamp'] = sn_host_stamp
 
+            # Get forced photometry lightcurve
+            lc_info['lc_fp'] = pd.read_hdf(args.lc_folder.joinpath("{}.hd5".format(ztfname)), key='lc_fp_{}'.format(filtercode))
+            lc_info['lc_fp'] = lc_info['lc_fp'].loc[lc_info['lc_fp'].index.to_series().between(lc_info['t_inf'][0], lc_info['t_sup'][0])]
+
             return lc_info
 
 
@@ -180,10 +183,12 @@ if __name__ == '__main__':
         # First get all relevant informations
         for filtercode in filtercodes:
             if ztffolder.joinpath(filtercode).exists():
-                try:
-                    lc_band_info = _get_lc_info(filtercode)
-                except:
-                    lc_band_info = None
+                # try:
+                #     lc_band_info = _get_lc_info(filtercode)
+                # except:
+                #     lc_band_info = None
+                #
+                lc_band_info = _get_lc_info(filtercode)
 
                 if lc_band_info is not None:
                     lc_infos[filtercode] = lc_band_info
@@ -220,8 +225,6 @@ if __name__ == '__main__':
                 sn_flux = lc_info['sn_flux'][lc_info['sn_flux']['fieldid'] == fieldid]
                 plt.errorbar(sn_flux['mjd'], sn_flux['flux'], yerr=sn_flux['varflux'], color='black', ms=5., lw=0., marker=idx_to_marker[i], ls='', label=str(fieldid), elinewidth=1.)
 
-            #plt.errorbar(lc_info['sn_flux']['mjd'], lc_info['sn_flux']['flux'], yerr=lc_info['sn_flux']['varflux'], color='black', marker='.', ls='')
-
             plt.xlim([lc_info['t_inf'], lc_info['t_sup']])
             plt.axvline(lc_info['t0'], color='black')
             plt.xlabel("MJD")
@@ -233,35 +236,8 @@ if __name__ == '__main__':
 
 
         def _plot_fitted_pos(lc_infos):
-            # init_radec = np.array([first_lc_info['init_radec'].frame.data.lon.value, first_lc_info['init_radec'].frame.data.lat.value])
-            #init_px = first_lc_info['init_px']
             init_px = np.array([0., 0.])
 
-            # plt.subplot(1, 2, 1)
-
-            # plt.errorbar(init_radec[0], init_radec[1], marker='X', label='init', lw=0.)
-
-            # pos_list = [init_radec]
-            # err_list = []
-            # for filtercode in filtercodes:
-            #     lc_info = lc_infos[filtercode]
-            #     pos_radec = np.array([lc_info['fit_radec'].frame.data.lon.value, lc_info['fit_radec'].frame.data.lat.value])
-            #     err_list.append(3600.*np.max(lc_info['fit_radec_var']))
-            #     pos_list.append(pos_radec)
-            #     plt.errorbar(pos_radec[0], pos_radec[1], marker='.', color=filtercode_colors[filtercode],
-            #                  xerr=3600.*lc_info['fit_radec_var'][0], yerr=3600.*lc_info['fit_radec_var'][1], label=filtercode, lw=0., elinewidth=1.)
-
-            # pos = np.stack(pos_list)
-            # off = 0.5*np.max(err_list)
-            # plt.xlim([np.min(pos[:, 0]) - off, np.max(pos[:, 0]) + off])
-            # plt.ylim([np.min(pos[:, 1]) - off, np.max(pos[:, 1]) + off])
-            # # plt.axis('equal')
-            # plt.xlabel("$\\alpha$ [deg]")
-            # plt.ylabel("$\\delta$ [deg]")
-            # plt.grid()
-            # plt.legend()
-
-            # plt.subplot(1, 2, 2)
             plt.errorbar(init_px[0], init_px[1], marker='X', label='init', lw=0.)
             pos_list = [init_px]
 
@@ -285,6 +261,25 @@ if __name__ == '__main__':
             plt.grid()
             plt.legend()
 
+        def _plot_fp_diff(lc_info, i, first):
+            plt.subplot(3, 2, i*2 + 1)
+            if first:
+                plt.title("Scene modeling lightcurve")
+            plt.errorbar(lc_info['sn_flux']['mjd'], lc_info['sn_flux']['flux'], yerr=lc_info['sn_flux']['varflux'], color='black', ms=5., lw=0., marker='.', ls='', elinewidth=1.)
+            plt.axvline(lc_info['t0'], color='black')
+            plt.grid()
+            plt.xlabel("MJD")
+            plt.ylabel("Flux - {}".format(lc_info['filtercode']))
+
+
+            plt.subplot(3, 2, i*2 + 2)
+            if first:
+                plt.title("Forced photometry lightcurve")
+            plt.errorbar(lc_info['lc_fp'].index, lc_info['lc_fp']['flux'],yerr=lc_info['lc_fp']['flux_err'], color='black', ms=5., lw=0., marker='.', ls='', elinewidth=1.)
+            plt.axvline(lc_info['t0'], color='black')
+            plt.grid()
+            plt.xlabel("MJD")
+
         # Do plots
         plt.subplots(ncols=3, nrows=3, constrained_layout=True, figsize=(15., 9.), gridspec_kw={'width_ratios': [1., 1., 3.], 'height_ratios': [1., 1., 1.]})
         first = True
@@ -304,4 +299,18 @@ if __name__ == '__main__':
         _plot_fitted_pos(lc_infos)
         plt.title("{}-{} fitted positions".format(ztfname, filtercode))
         plt.savefig(args.output.joinpath("{}_pos.png".format(ztfname)), dpi=200.)
+        plt.close()
+
+        plt.subplots(ncols=2, nrows=3, constrained_layout=True, figsize=(15., 9.))
+        first = True
+        for i, filtercode in enumerate(filtercodes):
+            if filtercode in lc_infos.keys():
+                _plot_fp_diff(lc_infos[filtercode], i, first)
+                first = False
+            else:
+                ax = plt.subplot(3, 1, i+1)
+                ax.text(0.5, 0.5, "No data", fontsize=30, transform=ax.transAxes, horizontalalignment='center', verticalalignment='center')
+                ax.axis('off')
+
+        plt.savefig(args.output.joinpath("{}_fp_diff.png".format(ztfname)), dpi=200.)
         plt.close()
