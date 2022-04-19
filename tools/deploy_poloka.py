@@ -63,15 +63,15 @@ def make_catalog(quadrant_folder, logger):
     run_and_log(["make_catalog", quadrant_folder, "-O", "-S"], logger)
 
     # Compute number of masked cosmics
-    with fits.open(quadrant_folder.joinpath("cosmic.fits.gz")) as hdul:
-        _, cosmic_count = label(hdul[0].data, return_num=True)
+    # with fits.open(quadrant_folder.joinpath("cosmic.fits.gz")) as hdul:
+    #     _, cosmic_count = label(hdul[0].data, return_num=True)
 
-    aperse_listtable = utils.ListTable.from_filename(quadrant_folder.joinpath("se.list"))
-    aperse_listtable.header['cosmic_count'] = cosmic_count
-    aperse_listtable.write()
+    # aperse_listtable = utils.ListTable.from_filename(quadrant_folder.joinpath("se.list"))
+    # aperse_listtable.header['cosmic_count'] = cosmic_count
+    # aperse_listtable.write()
 
-    if cosmic_count > 500:
-        quadrant_folder.joinpath("se.list").unlink(missing_ok=True)
+    # if cosmic_count > 500:
+    #     quadrant_folder.joinpath("se.list").unlink(missing_ok=True)
 
     return quadrant_folder.joinpath("se.list").exists()
 
@@ -110,7 +110,7 @@ poloka_func.append({'map': pipeline})
 
 
 #files_to_keep = ["elixir.fits", "mask.fits", "deads.fits.gz", ".dbstuff"]
-files_to_keep = ["elixir.fits", "deads.fits.gz", ".dbstuff"]
+files_to_keep = ["elixir.fits", "dead.fits.gz", ".dbstuff"]
 def clean(folder, logger):
     # calibrated.fits header gets modified, it might be problematic at some point (or not)
     if args.dry_run:
@@ -135,6 +135,7 @@ def clean_reduce(folder, ztfname, filtercode, logger):
 
     shutil.rmtree(folder.joinpath("pmfit"))
     shutil.rmtree(folder.joinpath("pmfit_plot"))
+    shutil.rmtree(folder.joinpath("smphot_output"))
 
 
 poloka_func.append({'map': clean, 'reduce': clean_reduce})
