@@ -492,27 +492,19 @@ if __name__ == '__main__':
 
 
     if args.cluster:
-        # cluster = SLURMCluster(cores=12,
-        #                        processes=12,
-        #                        memory="32GB",
-        #                        project="ztf",
-        #                        walltime="12:00:00",
-        #                        queue="htc",
-        #                        job_extra=["-L sps"])
+        cluster = SLURMCluster(cores=12,
+                               processes=12,
+                               memory="32GB",
+                               project="ztf",
+                               walltime="12:00:00",
+                               queue="htc",
+                               job_extra=["-L sps"])
 
-        cluster = SGECluster(cores=5,
-                             processes=5,
-                             queue="long",
-                             memory="20GB",
-                             #project="ztf",
-                             walltime="12:00:00",
-                             job_extra=["-l sps=1"])
-
-        cluster.scale(jobs=120)
+        cluster.scale(jobs=20)
         client = Client(cluster)
         print(client.dashboard_link, flush=True)
         print(socket.gethostname(), flush=True)
-        client.wait_for_workers(1)
+        client.wait_for_workers(5)
     else:
         if args.n_jobs == 1:
             dask.config.set(scheduler='synchronous')
