@@ -273,9 +273,12 @@ def smphot(cwd, ztfname, filtercode, logger):
     logger.info(fieldids_count)
     logger.info("Max quadrant field={}".format(maxcount_field))
 
-    #seeing_df = pd.DataFrame.from_dict([{quadrant: seeings[quadrant][0]} for quadrant in seeings.keys() if seeings[quadrant][1]==maxcount_field], orient='index')
     seeing_df = pd.DataFrame([[quadrant, seeings[quadrant][0]] for quadrant in seeings.keys() if seeings[quadrant][1]==maxcount_field], columns=['quadrant', 'seeing'])
     seeing_df = seeing_df.set_index(['quadrant'])
+
+    # Remove exposure where small amounts of stars are detected
+    seeing_df['n_standalonestars'] = list(map(lambda x: len(utils.read_list(pathlib.Path(x).joinpath("standalone_stars.list"))[1]), seeing_df.index))
+    seeing_df = seeing_df.loc[seeing_df['n_standalonestars'] >= 25]
 
     idxmin = seeing_df.idxmin().values[0]
     minseeing = seeing_df.at[idxmin, 'seeing']

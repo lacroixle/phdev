@@ -270,6 +270,7 @@ if __name__ == '__main__':
             plt.grid()
             plt.xlabel("MJD")
             plt.ylabel("Flux - {}".format(lc_info['filtercode']))
+            plt.xlim(lc_info['t_inf'], lc_info['t_sup'])
 
 
             plt.subplot(3, 2, i*2 + 2)
@@ -279,6 +280,7 @@ if __name__ == '__main__':
             plt.axvline(lc_info['t0'], color='black')
             plt.grid()
             plt.xlabel("MJD")
+            plt.xlim(lc_info['t_inf'], lc_info['t_sup'])
 
         # Do plots
         plt.subplots(ncols=3, nrows=3, constrained_layout=True, figsize=(15., 9.), gridspec_kw={'width_ratios': [1., 1., 3.], 'height_ratios': [1., 1., 1.]})
