@@ -35,13 +35,13 @@ print("Running {} threads...".format(n_jobs))
 
 total_estimated_filesize = 0
 
-def download_lc(hdfstore, filter_key):
-    lc_df = pd.read_hdf(hdfstore, key=filter_key)
+def download_lc(hdfstore, filtercode):
+    lc_df = pd.read_hdf(hdfstore, key=filtercode)
 
     estimated_filesize = len(lc_df)*(sciimg_size+mskimg_size)/1000
     global total_estimated_filesize
     total_estimated_filesize = total_estimated_filesize + estimated_filesize
-    print("Downloading filter {} ({} quadrants)".format(filterkey, len(lc_df)))
+    print("Downloading filter {} ({} quadrants)".format(filtercode, len(lc_df)))
     print("Estimated size to download=~{} GB".format(estimated_filesize))
 
     def _download_lc(lc_filename):

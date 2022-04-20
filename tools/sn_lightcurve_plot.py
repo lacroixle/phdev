@@ -157,7 +157,11 @@ if __name__ == '__main__':
             lc_info['t0_exp'] = fit_df.iloc[t0_idx]['Date']
             lc_info['t0_exp_file'] = fit_df.iloc[t0_idx]['name']
 
-            pol = utils.poly2d_from_file(sn_folder.joinpath("pmfit/transfoTo{}.dat".format(lc_info['t0_exp_file'])))
+            try:
+                pol = utils.poly2d_from_file(sn_folder.joinpath("pmfit/transfoTo{}.dat".format(lc_info['t0_exp_file'])))
+            except FileNotFoundError:
+                return
+
             fit_px_t0 = pol(*fit_px)
             init_px_t0 = pol(*init_px)
 
