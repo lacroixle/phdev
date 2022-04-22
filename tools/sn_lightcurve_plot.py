@@ -37,7 +37,7 @@ import utils
 
 filtercodes = ['zg', 'zr', 'zi']
 filtercode_colors = {'zg': 'green', 'zr': 'red', 'zi': 'orange'}
-idx_to_marker = {0: "1", 1: "2", 2: "3", 3: "4", 4: "v", 5: "^", 6: "<", 7: ">"}
+#idx_to_marker = {0: "1", 1: "2", 2: "3", 3: "4", 4: "v", 5: "^", 6: "<", 7: ">"}
 idx_to_marker = {0: "^", 1: "v", 2: "<", 3: ">", 4: "1", 5: "2", 6: "3", 7: "4"}
 
 
@@ -187,11 +187,6 @@ if __name__ == '__main__':
         # First get all relevant informations
         for filtercode in filtercodes:
             if ztffolder.joinpath(filtercode).exists():
-                # try:
-                #     lc_band_info = _get_lc_info(filtercode)
-                # except:
-                #     lc_band_info = None
-                #
                 lc_band_info = _get_lc_info(filtercode)
 
                 if lc_band_info is not None:
@@ -225,9 +220,9 @@ if __name__ == '__main__':
             plt.imshow(lc_info['t0_sn_stamp'], cmap='gray')
 
             plt.subplot(3, 3, i*3+3)
-            for i, fieldid in enumerate(lc_info['fieldids']):
+            for j, fieldid in enumerate(lc_info['fieldids']):
                 sn_flux = lc_info['sn_flux'][lc_info['sn_flux']['fieldid'] == fieldid]
-                plt.errorbar(sn_flux['mjd'], sn_flux['flux'], yerr=sn_flux['varflux'], color='black', ms=5., lw=0., marker=idx_to_marker[i], ls='', label=str(fieldid), elinewidth=1.)
+                plt.errorbar(sn_flux['mjd'], sn_flux['flux'], yerr=sn_flux['varflux'], color='black', ms=5., lw=0., marker=idx_to_marker[j], ls='', label=str(fieldid), elinewidth=1.)
 
             plt.xlim([lc_info['t_inf'], lc_info['t_sup']])
             plt.axvline(lc_info['t0'], color='black')
@@ -269,18 +264,27 @@ if __name__ == '__main__':
             plt.subplot(3, 2, i*2 + 1)
             if first:
                 plt.title("Scene modeling lightcurve")
-            plt.errorbar(lc_info['sn_flux']['mjd'], lc_info['sn_flux']['flux'], yerr=lc_info['sn_flux']['varflux'], color='black', ms=5., lw=0., marker='.', ls='', elinewidth=1.)
+
+            for j, fieldid in enumerate(lc_info['fieldids']):
+                sn_flux = lc_info['sn_flux'][lc_info['sn_flux']['fieldid'] == fieldid]
+                plt.errorbar(sn_flux['mjd'], sn_flux['flux'], yerr=sn_flux['varflux'], color='black', ms=5., lw=0., marker=idx_to_marker[j], ls='', label=str(fieldid), elinewidth=1.)
+
+            plt.legend(title="Field ID")
             plt.axvline(lc_info['t0'], color='black')
             plt.grid()
             plt.xlabel("MJD")
             plt.ylabel("Flux - {}".format(lc_info['filtercode']))
             plt.xlim(lc_info['t_inf'], lc_info['t_sup'])
 
-
             plt.subplot(3, 2, i*2 + 2)
             if first:
                 plt.title("Forced photometry lightcurve")
-            plt.errorbar(lc_info['lc_fp'].index, lc_info['lc_fp']['flux'],yerr=lc_info['lc_fp']['flux_err'], color='black', ms=5., lw=0., marker='.', ls='', elinewidth=1.)
+
+            for j, fieldid in enumerate(lc_info['fieldids']):
+                sn_flux = lc_info['lc_fp'][lc_info['lc_fp']['field_id'] == fieldid]
+                plt.errorbar(sn_flux.index, sn_flux['flux'], yerr=sn_flux['flux_err'], color='black', ms=5., lw=0., marker=idx_to_marker[j], ls='', label=str(fieldid), elinewidth=1.)
+
+            plt.legend(title="Field ID")
             plt.axvline(lc_info['t0'], color='black')
             plt.grid()
             plt.xlabel("MJD")
