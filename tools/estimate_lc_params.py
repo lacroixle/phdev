@@ -6,6 +6,7 @@ import pathlib
 import distutils.util
 import argparse
 import itertools
+from gc import collect
 
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -65,7 +66,7 @@ if args.ztfname:
     else:
         args.ztfname = args.ztfname.expanduser().resolve()
         with open(args.ztfname, 'r') as f:
-            ztfnames = [ztfname[:-1] for ztfname in f.readlines() if not ztfname.strip()[0] == "#"]
+            ztfnames = [ztfname.strip() for ztfname in f.readlines() if not ztfname.strip()[0] == "#"]
 
 else:
     ztf_files = lightcurve_folder.glob("*.csv")
@@ -265,12 +266,6 @@ def estimate_lc_params(ztfname):
 
         plt.close()
 
-
-    # def generate_lc_df(lc_dict, zfilter):
-    #     if lc_dict[zfilter] is not None:
-    #         return (lc_dict[zfilter]['sql_lc'], lc_dict[zfilter]['fp_lc'])
-
-
     def generate_params_df(lc_dict, zfilter):
         if lc_dict[zfilter] is not None:
             params = {'t_0': t_0,
@@ -281,26 +276,6 @@ def estimate_lc_params(ztfname):
                     'off_mul': off_mul}
 
             return pd.DataFrame.from_records([params])
-
-
-    # def save_df(df_lc_zg, df_lc_zr, df_lc_zi, df_params_zg, df_params_zr, df_params_zi, gaia_cal_df, sn_info_df):
-    #     def _save_df_filter(df_lc, df_params, zfilter, first=False):
-    #         if df_lc is not None and df_params is not None:
-    #             if first:
-    #                 mode = 'w'
-    #             else:
-    #                 mode = 'a'
-
-    #             df_lc.to_csv(output_folder.joinpath("{}_{}.csv".format(ztfname, zfilter)), sep=",")
-    #             df_params.to_csv(output_folder.joinpath("{}_{}_params.csv".format(ztfname, zfilter)), sep=",")
-    #             df_lc.to_hdf(output_folder.joinpath("{}.hd5".format(ztfname)), key='lc_{}'.format(zfilter), mode=mode)
-    #             df_params.to_hdf(output_folder.joinpath("{}.hd5".format(ztfname)), key='params_{}'.format(zfilter))
-
-    #     _save_df_filter(df_lc_zg, df_params_zg, 'zg', first=True)
-    #     _save_df_filter(df_lc_zr, df_params_zr, 'zr')
-    #     _save_df_filter(df_lc_zi, df_params_zi, 'zi')
-    #     gaia_cal_df.to_hdf(output_folder.joinpath("{}.hd5".format(ztfname)), key='gaia_cal')
-    #     sn_info_df.to_hdf(output_folder.joinpath("{}.hd5".format(ztfname)), key='sn_info')
 
     def save_df(df_lc, gaia_cal_df, sn_info_df):
         def _save_df_filter(zfilter, first=False):
@@ -324,18 +299,7 @@ def estimate_lc_params(ztfname):
         gaia_cal_df.to_hdf(output_folder.joinpath("{}.hd5".format(ztfname)), key='gaia_cal')
         sn_info_df.to_hdf(output_folder.joinpath("{}.hd5".format(ztfname)), key='sn_info')
 
-
-
     if output_folder:
-        # save_df(generate_lc_df(lc_dict, 'zg'),
-        #         generate_lc_df(lc_dict, 'zr'),
-        #         generate_lc_df(lc_dict, 'zi'),
-        #         generate_params_df(lc_dict, 'zg'),
-        #         generate_params_df(lc_dict, 'zr'),
-        #         generate_params_df(lc_dict, 'zi'),
-        #         gaia_cal_df,
-        #         sn_info_df)
-        #
         save_df(lc_dict, gaia_cal_df, sn_info_df)
 
         # fgallery description file
@@ -346,6 +310,8 @@ def estimate_lc_params(ztfname):
 
         if len(ztfnames) > 1 and verbosity == 0:
             print(".", end="", flush=True)
+
+    collect(0)
 
 
 

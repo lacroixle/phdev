@@ -8,6 +8,9 @@ from croaks.match import NearestNeighAssoc
 import pandas as pd
 
 
+filtercodes = ['zg', 'zr', 'zi']
+
+
 def cat_to_ds9regions(cat, filename, radius=5., color='green'):
     with open(filename, 'w') as f:
         f.write("global color={} dashlist=8 3 width=1 font=\"helvetica 10 normal roman\" select=1 highlite=1 dash=0 fixed=0 edit=1 move=1 delete=1 include=1 source=1\n".format(color))
