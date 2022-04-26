@@ -80,40 +80,44 @@ if __name__ == '__main__':
     def _extract_colored_t0_stamp(lc_file):
         stamps = {}
 
-        with pd.HDFStore(args.lc_folder.joinpath(lc_file)) as hdfstore:
-            sn_info = hdfstore.get('/sn_info')
-            sn_skycoord = SkyCoord(sn_info['sn_ra'].item(), sn_info['sn_dec'].item(), unit='deg')
+        try:
+            with pd.HDFStore(args.lc_folder.joinpath(lc_file)) as hdfstore:
+                sn_info = hdfstore.get('/sn_info')
+                sn_skycoord = SkyCoord(sn_info['sn_ra'].item(), sn_info['sn_dec'].item(), unit='deg')
 
-            # Get first band with data
-            tanspace_radec = None
+                # Get first band with data
+                tanspace_radec = None
+                for filtercode in filtercodes:
+                    if '/lc_{}'.format(filtercode) in hdfstore.keys():
+                        t0_quadrant, wcs, _ = get_t0_quadrant(hdfstore, filtercode)
+                        tanspace_radec = sample_quadrant_tanspace(t0_quadrant, wcs, sn_skycoord, args.stamp_size)
+                        break
+
+                if not tanspace_radec:
+                    return
+
+                for filtercode in filtercodes:
+                    if '/lc_{}'.format(filtercode) in hdfstore.keys():
+                        t0_quadrant, wcs, _ = get_t0_quadrant(hdfstore, filtercode)
+                        stamps[filtercode] = sample_quadrant(t0_quadrant, wcs, tanspace_radec, args.stamp_size)
+                    else:
+                        stamps[filtercode] = None
+
             for filtercode in filtercodes:
-                if '/lc_{}'.format(filtercode) in hdfstore.keys():
-                    t0_quadrant, wcs, _ = get_t0_quadrant(hdfstore, filtercode)
-                    tanspace_radec = sample_quadrant_tanspace(t0_quadrant, wcs, sn_skycoord, args.stamp_size)
-                    break
+                if stamps[filtercode] is None:
+                    stamps[filtercode] = np.zeros([args.stamp_size, args.stamp_size])
 
-            if not tanspace_radec:
-                return
+            color_stamp = make_lupton_rgb(stamps['zr'], stamps['zg'], np.zeros([args.stamp_size, args.stamp_size]), stretch=100., Q=10.)
+            #color_stamp = make_lupton_rgb(stamps['zi'], stamps['zr'], stamps['zg'], stretch=100., Q=10.)
+            plt.figure(figsize=(10., 10.), tight_layout=True)
+            plt.imshow(color_stamp)
+            plt.axis('off')
+            plt.savefig(args.output.joinpath("{}.png".format(sn_info['ztfname'].item())), dpi=200.)
+            plt.close()
 
-            for filtercode in filtercodes:
-                if '/lc_{}'.format(filtercode) in hdfstore.keys():
-                    t0_quadrant, wcs, _ = get_t0_quadrant(hdfstore, filtercode)
-                    stamps[filtercode] = sample_quadrant(t0_quadrant, wcs, tanspace_radec, args.stamp_size)
-                else:
-                    stamps[filtercode] = None
-
-        for filtercode in filtercodes:
-            if stamps[filtercode] is None:
-                stamps[filtercode] = np.zeros([args.stamp_size, args.stamp_size])
-
-        # color_stamp = make_lupton_rgb(stamps['zr'], stamps['zg'], np.zeros([args.stamp_size, args.stamp_size]), stretch=200., Q=10.)
-        color_stamp = make_lupton_rgb(stamps['zi'], stamps['zr'], stamps['zg'], stretch=100., Q=10.)
-        plt.figure(figsize=(10., 10.), tight_layout=True)
-        plt.imshow(color_stamp)
-        plt.savefig(args.output.joinpath("{}.png".format(sn_info['ztfname'].item())), dpi=200.)
-        plt.close()
-
-        print(".", end="", flush=True)
+            print(".", end="", flush=True)
+        except:
+            print("x", end="", flush=True)
 
 
     Parallel(n_jobs=args.j)(delayed(_extract_colored_t0_stamp)(lc_file) for lc_file in lc_files)
