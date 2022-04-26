@@ -110,9 +110,11 @@ if __name__ == '__main__':
             color_stamp = make_lupton_rgb(stamps['zr'], stamps['zg'], np.zeros([args.stamp_size, args.stamp_size]), stretch=100., Q=10.)
             #color_stamp = make_lupton_rgb(stamps['zi'], stamps['zr'], stamps['zg'], stretch=100., Q=10.)
             plt.figure(figsize=(10., 10.), tight_layout=True)
-            plt.imshow(color_stamp)
+            fig = plt.imshow(color_stamp)
+            fig.axes.get_xaxis().set_visible(False)
+            fig.axes.get_yaxis().set_visible(False)
             plt.axis('off')
-            plt.savefig(args.output.joinpath("{}.png".format(sn_info['ztfname'].item())), dpi=200.)
+            plt.savefig(args.output.joinpath("{}.png".format(sn_info['ztfname'].item())), dpi=150., pad_inches=0., bbox_inches='tight')
             plt.close()
 
             print(".", end="", flush=True)
