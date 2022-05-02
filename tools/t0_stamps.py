@@ -2,6 +2,8 @@
 
 import argparse
 import pathlib
+import math
+import traceback
 
 import pandas as pd
 import numpy as np
@@ -59,6 +61,8 @@ if __name__ == '__main__':
     argparser.add_argument('--ztfname', type=pathlib.Path, required=False)
     argparser.add_argument('--stamp-size', type=int, default=32)
     argparser.add_argument('--output', type=pathlib.Path, required=True)
+    argparser.add_argument('--target', choices=['host', 'sn'], default='sn')
+    argparser.add_argument('--arrow', action='store_true')
     argparser.add_argument('-j', type=int, default=1)
 
     args = argparser.parse_args()
@@ -83,18 +87,34 @@ if __name__ == '__main__':
         try:
             with pd.HDFStore(args.lc_folder.joinpath(lc_file)) as hdfstore:
                 sn_info = hdfstore.get('/sn_info')
-                sn_skycoord = SkyCoord(sn_info['sn_ra'].item(), sn_info['sn_dec'].item(), unit='deg')
+                target = 'sn'
+                if args.target == 'host':
+                    target = 'host'
+                object_skycoord = SkyCoord(sn_info['{}_ra'.format(target)].item(), sn_info['{}_dec'.format(target)].item(), unit='deg')
 
                 # Get first band with data
                 tanspace_radec = None
                 for filtercode in filtercodes:
                     if '/lc_{}'.format(filtercode) in hdfstore.keys():
                         t0_quadrant, wcs, _ = get_t0_quadrant(hdfstore, filtercode)
-                        tanspace_radec = sample_quadrant_tanspace(t0_quadrant, wcs, sn_skycoord, args.stamp_size)
+                        tanspace_radec = sample_quadrant_tanspace(t0_quadrant, wcs, object_skycoord, args.stamp_size)
                         break
 
                 if not tanspace_radec:
                     return
+
+                if args.arrow:
+                    arrow_length = 20.
+                    arrow_dl = 4.
+                    arrow_dir = np.array([-1/math.sqrt(2)*arrow_length]*2)
+                    arrow_tail = np.array([args.stamp_size/2. + 1/math.sqrt(2)*(arrow_length + arrow_dl)]*2)
+                    if args.target == 'host':
+                        sn_skycoord = SkyCoord(sn_info['sn_ra'].item(), sn_info['sn_dec'].item(), unit='deg')
+                        host_skycoord = SkyCoord(sn_info['host_ra'].item(), sn_info['host_dec'].item(), unit='deg')
+                        sn_px = np.stack(sn_skycoord.to_pixel(wcs))
+                        host_px = np.stack(host_skycoord.to_pixel(wcs))
+                        d = sn_px - host_px
+                        arrow_tail += d
 
                 for filtercode in filtercodes:
                     if '/lc_{}'.format(filtercode) in hdfstore.keys():
@@ -111,14 +131,20 @@ if __name__ == '__main__':
             #color_stamp = make_lupton_rgb(stamps['zi'], stamps['zr'], stamps['zg'], stretch=100., Q=10.)
             plt.figure(figsize=(10., 10.), tight_layout=True)
             fig = plt.imshow(color_stamp)
+            if args.arrow:
+                plt.arrow(arrow_tail[0], arrow_tail[1], arrow_dir[0], arrow_dir[1], head_width=3., length_includes_head=True, color='white')
             fig.axes.get_xaxis().set_visible(False)
             fig.axes.get_yaxis().set_visible(False)
             plt.axis('off')
-            plt.savefig(args.output.joinpath("{}.png".format(sn_info['ztfname'].item())), dpi=150., pad_inches=0., bbox_inches='tight')
+            #plt.savefig(args.output.joinpath("{}_{}.png".format(sn_info['ztfname'].item(), args.stamp_size)), dpi=150., pad_inches=0., bbox_inches='tight')
+            plt.savefig(args.output.joinpath("{}.png".format(sn_info['ztfname'].item())), dpi=400., pad_inches=0., bbox_inches='tight')
             plt.close()
 
             print(".", end="", flush=True)
-        except:
+        except KeyboardInterrupt:
+            exit()
+        except Exception as e:
+            traceback.print_exc()
             print("x", end="", flush=True)
 
 

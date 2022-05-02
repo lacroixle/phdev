@@ -41,7 +41,7 @@ def sc_dec(skycoord):
     return skycoord.frame.data.lat.value
 
 
-def contained_in_exposure(objects, wcs):
+def contained_in_exposure(objects, wcs, return_mask=False):
     width, height = wcs.pixel_shape
 
     top_left = [0., height]
@@ -57,7 +57,12 @@ def contained_in_exposure(objects, wcs):
     tl = (max([sc_ra(tl_radec), sc_ra(bl_radec)]), min([sc_dec(tl_radec), sc_dec(tr_radec)]))
     br = (min([sc_ra(tr_radec), sc_ra(br_radec)]), max([sc_dec(bl_radec), sc_dec(br_radec)]))
 
-    return objects[(sc_ra(objects) < tl[0]) & (sc_ra(objects) > br[0]) & (sc_dec(objects) > tl[1]) & (sc_dec(objects) < br[1])]
+    mask = (sc_ra(objects) < tl[0]) & (sc_ra(objects) > br[0]) & (sc_dec(objects) > tl[1]) & (sc_dec(objects) < br[1])
+
+    if return_mask:
+        return mask
+    else:
+        return objects[mask]
 
 
 def get_ref_quadrant_from_driver(driver_path):
