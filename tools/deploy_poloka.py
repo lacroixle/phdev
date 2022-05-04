@@ -332,6 +332,21 @@ def smphot(cwd, ztfname, filtercode, logger):
     logger.info("Running pmfit with polynomial of degree {} as relative astrometric transformation.".format(args.degree))
     run_and_log(["pmfit", driver_path, "-d", str(args.degree), "--gaia={}".format(gaia_path), "--outdir={}".format(cwd.joinpath("pmfit")), "--plot-dir={}".format(cwd.joinpath("pmfit_plot")), "--mu-max=20"], logger=logger)
 
+    if args.use_gaia_photom:
+        print("Hey")
+        logger.info("Retrieving GAIA photometric ratios... (stats.csv)")
+        stats_df = pd.read_csv(cwd.joinpath("stats.csv"))
+        shutil.copy(cwd.joinpath("pmfit/photom_ratios.ntuple"), cwd.joinpath("pmfit/photom_ratios.ntuple.ori"))
+        photom_ratios = utils.ListTable.from_filename(cwd.joinpath("pmfit/photom_ratios.ntuple"))
+        print(photom_ratios.header)
+        print(photom_ratios.df)
+        photom_ratios.df = stats_df[['quadrant', 'alpha_gaia']]
+        photom_ratios.df.rename(columns={'quadrant': 'expccd', 'alpha_gaia': 'alpha'}, inplace=True)
+        photom_ratios.df['ealpha'] = 0
+        photom_ratios.write()
+        print(photom_ratios.df)
+        print(stats_df)
+
     logger.info("Running scene modeling")
     smphot_output = cwd.joinpath("smphot_output")
     smphot_output.mkdir(exist_ok=True)
@@ -460,6 +475,7 @@ if __name__ == '__main__':
     argparser.add_argument('--lc-folder', dest='lc_folder', type=pathlib.Path)
     argparser.add_argument('--log-results', action='store_true', default=True)
     argparser.add_argument('--degree', type=int, default=3, help="Degree of polynomial for relative astrometric fit in pmfit.")
+    argparser.add_argument('--use-gaia-photom', action='store_true', help="Use photometric ratios computed using GAIA")
 
     args = argparser.parse_args()
     args.wd = args.wd.expanduser().resolve()

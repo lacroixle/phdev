@@ -192,18 +192,20 @@ def read_list_ext(f):
 def write_list(filename, header, df, df_desc, df_format):
     with open(filename, 'w') as f:
         for key in header.keys():
-            if isinstance(header[key], Iterable):
+            if isinstance(header[key], Iterable) and not isinstance(header[key], str):
                 f.write("@{} {}\n".format(key.upper(), " ".join(map(str, header[key]))))
             else:
                 f.write("@{} {}\n".format(key.upper(), str(header[key])))
 
         for column in df.columns:
             if column in df_desc.keys():
-                f.write("# {} : {}\n".format(column, df_desc[column]))
+                f.write("#{} : {}\n".format(column, df_desc[column]))
             else:
-                f.write("# {}".format(column))
+                f.write("#{}".format(column))
 
-        f.write("# format {}\n".format(df_format))
+        if df_format is not None:
+            f.write("# format {}\n".format(df_format))
+
         f.write("# end\n")
 
         df.to_csv(f, sep=" ", index=False, header=False)
