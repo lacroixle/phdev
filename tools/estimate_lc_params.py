@@ -76,7 +76,7 @@ ztfnames = list(map(str, ztfnames))
 
 
 # For some reason this sn does not exist in the SALT db
-blacklist = ["ZTF18aaajrso"]
+blacklist = ["ZTF18aaajrso", "ZTF19aanxgle"]
 
 empty_snae = []
 

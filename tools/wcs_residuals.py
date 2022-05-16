@@ -6,6 +6,7 @@ import os
 import time
 import itertools
 import copy
+import gc
 
 import numpy as np
 from astropy.coordinates import SkyCoord
@@ -25,10 +26,9 @@ import utils
 filtercodes = ['zg', 'zr', 'zi']
 
 def residuals_quadrant(quadrant_path, reference_quadrant_path, gaia_stars, filtercode, output_path):
-    pd.options.mode.chained_assignment = None
+    #pd.options.mode.chained_assignment = None
     # Astrometric residuals of psfstars with Gaia stars
     quadrant_name = quadrant_path.name
-    print(quadrant_name)
 
     if not args.wd.joinpath("{}/{}/pmfit/transfoTo{}.dat".format(ztfname, filtercode, quadrant_name)).exists():
         print("Could not find transformation!")
@@ -55,8 +55,10 @@ def residuals_quadrant(quadrant_path, reference_quadrant_path, gaia_stars, filte
     gaia_coords_radec = gaia_coords_radec[gaia_mask]
 
     x, y = gaia_coords_radec.to_pixel(wcs)
-    gaia_stars['x'] = x
-    gaia_stars['y'] = y
+    #gaia_stars['x'] = x
+    #gaia_stars['y'] = y
+    gaia_stars.insert(0, 'y', y)
+    gaia_stars.insert(0, 'x', x)
 
     # Translate the gaia stars catalogue into quadrant pixel space
     i = utils.match_pixel_space(gaia_stars[['x', 'y']], stars, radius=3.)
@@ -66,7 +68,7 @@ def residuals_quadrant(quadrant_path, reference_quadrant_path, gaia_stars, filte
     refstars_pair = stars[i>=0].reset_index(drop=True)
     gaia_stars_count = len(refstars)
 
-    wcs_residuals = refstars.sub(refstars_pair)
+    wcs_residuals = refstars[['x', 'y']].sub(refstars_pair[['x', 'y']])
 
     plt.subplots(1, 2, figsize=(10., 5.))
     plt.suptitle("WCS with Gaia stars residuals")
@@ -78,7 +80,7 @@ def residuals_quadrant(quadrant_path, reference_quadrant_path, gaia_stars, filte
     plt.ylabel("Count")
 
     plt.subplot(1, 2, 2)
-    plt.hist(wcs_residuals['y'], bins=50, histtype='step', color='black')
+
     plt.xlabel("Residual [pixel]")
     plt.grid()
 
@@ -166,9 +168,12 @@ def residuals_quadrant(quadrant_path, reference_quadrant_path, gaia_stars, filte
     else:
         alpha = float('nan')
         rvalue = float('nan')
-        exit()
 
-    return [alpha, rvalue, gaia_stars_count, match_stars_count, aperse_stars_count, standalone_stars_count, psf_stars_count, seeing, cosmic_count, c_intercept], wcs_residuals
+    gc.collect(2)
+    gc.collect(1)
+    gc.collect(0)
+
+    return [alpha, rvalue, gaia_stars_count, match_stars_count, aperse_stars_count, standalone_stars_count, psf_stars_count, seeing, cosmic_count, c_intercept]#, wcs_residuals
 
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser(description="")
@@ -177,6 +182,7 @@ if __name__ == '__main__':
     argparser.add_argument('--output', type=pathlib.Path, required=True)
     argparser.add_argument('--color-degree', type=int, default=1)
     argparser.add_argument('-j', type=int, default=1)
+    argparser.add_argument('--force', action='store_true', help="Redo computations from scratch.")
 
     args = argparser.parse_args()
     args.wd = args.wd.expanduser().resolve()
@@ -194,8 +200,11 @@ if __name__ == '__main__':
             else:
                 pass
 
-    print("Found {} SN1a".format(len(ztfnames)))
+    # to_remove = ["ZTF19aavmnpb", "ZTF20abzjads", "ZTF20abzvxyk"]
+    # for ztfname in to_remove:
+    #     ztfnames.remove(ztfname)
 
+    print("Found {} SN1a".format(len(ztfnames)))
 
     for ztfname in ztfnames:
         print("For {}".format(ztfname))
@@ -203,6 +212,10 @@ if __name__ == '__main__':
             print("In filter band {}".format(filtercode))
             band_folder = args.wd.joinpath("{}/{}".format(ztfname, filtercode))
             if not band_folder.exists():
+                continue
+
+            if band_folder.joinpath("stats.csv").exists() and not args.force:
+                print("Already done, continuing.")
                 continue
 
             # Get reference quadrant
@@ -227,13 +240,18 @@ if __name__ == '__main__':
             results = Parallel(n_jobs=args.j)(delayed(residuals_quadrant)(quadrant_path, reference_quadrant_path, copy.deepcopy(gaia_stars), filtercode, output_path) for quadrant_path in quadrant_paths)
             results_mask = [result is not None for result in results]
             results = list(itertools.compress(results, results_mask))
+
+            if len(results) == 0:
+                print("No computation done for this band... continuing.")
+                continue
+
             quadrant_paths = list(itertools.compress(quadrant_paths, results_mask))
-            alphas = [result[0] for result in results]
-            wcs_residuals = [result[1] for result in results]
+            alphas = [result for result in results]
             stats_df = pd.DataFrame(data=np.array(alphas), index=list(map(lambda x: x.name, quadrant_paths)), columns=['alpha', 'r', 'n_gaia', 'n_match', 'n_aperse', 'n_standalone', 'n_psf', 'seeing', 'n_cosmic', 'color_intercept'])
             stats_df.index.name = 'quadrant'
 
-            wcs_residuals_df = pd.concat(wcs_residuals, ignore_index=True)
+            #wcs_residuals_df = pd.concat(wcs_residuals, ignore_index=True)
+
 
             # Now compute phtometric ratios
             c_intercept_ref = stats_df.at[reference_quadrant_path.name, 'color_intercept']
@@ -259,20 +277,20 @@ if __name__ == '__main__':
             plt.savefig(output_path.joinpath("alpha_distribution.png"), dpi=150.)
             plt.close()
 
-            # Residuals distribution
-            plt.subplots(nrows=1, ncols=2, figsize=(10., 5.))
+            # # Residuals distribution
+            # plt.subplots(nrows=1, ncols=2, figsize=(10., 5.))
 
-            plt.subplot(1, 2, 1)
-            plt.hist(wcs_residuals_df['x'], bins=200, histtype='step', color='black')
-            plt.grid()
-            plt.xlabel("Residuals $x$ [pixel]")
-            plt.ylabel("Count")
+            # plt.subplot(1, 2, 1)
+            # plt.hist(wcs_residuals_df['x'], bins=200, histtype='step', color='black')
+            # plt.grid()
+            # plt.xlabel("Residuals $x$ [pixel]")
+            # plt.ylabel("Count")
 
-            plt.subplot(1, 2, 2)
-            plt.hist(wcs_residuals_df['y'], bins=200, histtype='step', color='black')
-            plt.grid()
-            plt.xlabel("Residuals $y$ [pixel]")
-            plt.ylabel("Count")
+            # plt.subplot(1, 2, 2)
+            # plt.hist(wcs_residuals_df['y'], bins=200, histtype='step', color='black')
+            # plt.grid()
+            # plt.xlabel("Residuals $y$ [pixel]")
+            # plt.ylabel("Count")
 
-            plt.savefig(output_path.joinpath("wcs_residuals.png"), dpi=200.)
-            plt.close()
+            # plt.savefig(output_path.joinpath("wcs_residuals.png"), dpi=200.)
+            # plt.close()

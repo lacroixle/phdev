@@ -62,17 +62,6 @@ def make_catalog(quadrant_folder, logger):
 
     run_and_log(["make_catalog", quadrant_folder, "-O", "-S"], logger)
 
-    # Compute number of masked cosmics
-    # with fits.open(quadrant_folder.joinpath("cosmic.fits.gz")) as hdul:
-    #     _, cosmic_count = label(hdul[0].data, return_num=True)
-
-    # aperse_listtable = utils.ListTable.from_filename(quadrant_folder.joinpath("se.list"))
-    # aperse_listtable.header['cosmic_count'] = cosmic_count
-    # aperse_listtable.write()
-
-    # if cosmic_count > 500:
-    #     quadrant_folder.joinpath("se.list").unlink(missing_ok=True)
-
     return quadrant_folder.joinpath("se.list").exists()
 
 
@@ -333,19 +322,19 @@ def smphot(cwd, ztfname, filtercode, logger):
     run_and_log(["pmfit", driver_path, "-d", str(args.degree), "--gaia={}".format(gaia_path), "--outdir={}".format(cwd.joinpath("pmfit")), "--plot-dir={}".format(cwd.joinpath("pmfit_plot")), "--mu-max=20"], logger=logger)
 
     if args.use_gaia_photom:
-        print("Hey")
+        if not cwd.joinpath("stats.csv").exists():
+            logger.info("Could not find GAIA photometric ratio file... quitting.")
+            return False
+
         logger.info("Retrieving GAIA photometric ratios... (stats.csv)")
         stats_df = pd.read_csv(cwd.joinpath("stats.csv"))
         shutil.copy(cwd.joinpath("pmfit/photom_ratios.ntuple"), cwd.joinpath("pmfit/photom_ratios.ntuple.ori"))
         photom_ratios = utils.ListTable.from_filename(cwd.joinpath("pmfit/photom_ratios.ntuple"))
-        print(photom_ratios.header)
-        print(photom_ratios.df)
         photom_ratios.df = stats_df[['quadrant', 'alpha_gaia']]
         photom_ratios.df.rename(columns={'quadrant': 'expccd', 'alpha_gaia': 'alpha'}, inplace=True)
         photom_ratios.df['ealpha'] = 0
+        #photom_ratios.df.assign(ealpha=0)
         photom_ratios.write()
-        print(photom_ratios.df)
-        print(stats_df)
 
     logger.info("Running scene modeling")
     smphot_output = cwd.joinpath("smphot_output")
@@ -470,7 +459,7 @@ if __name__ == '__main__':
     argparser.add_argument('--dry-run', dest='dry_run', action='store_true')
     argparser.add_argument('--no-map', dest='no_map', action='store_true')
     argparser.add_argument('--no-reduce', dest='no_reduce', action='store_true')
-    argparser.add_argument('--cluster', action='store_true')
+    argparser.add_argument('--cluster-worker', type=int, default=0)
     argparser.add_argument('--scratch', type=pathlib.Path)
     argparser.add_argument('--lc-folder', dest='lc_folder', type=pathlib.Path)
     argparser.add_argument('--log-results', action='store_true', default=True)
@@ -511,20 +500,21 @@ if __name__ == '__main__':
         atexit.register(delete_scratch_at_exit, scratch_dir=args.scratch)
 
 
-    if args.cluster:
-        cluster = SLURMCluster(cores=12,
-                               processes=12,
-                               memory="32GB",
+    if args.cluster_worker > 0:
+        cluster = SLURMCluster(cores=args.n_jobs,
+                               processes=args.n_jobs,
+                               memory="{}GB".format(3*n_jobs),
                                project="ztf",
                                walltime="12:00:00",
                                queue="htc",
                                job_extra=["-L sps"])
 
-        cluster.scale(jobs=20)
+        cluster.scale(jobs=args.cluster_worker)
         client = Client(cluster)
         print(client.dashboard_link, flush=True)
         print(socket.gethostname(), flush=True)
-        client.wait_for_workers(5)
+        print("Running {} workers with {} processes each ({} total).".format(args.cluster_worker, args.n_jobs, args.cluster_worker*args.n_jobs))
+        client.wait_for_workers(1)
     else:
         if args.n_jobs == 1:
             dask.config.set(scheduler='synchronous')

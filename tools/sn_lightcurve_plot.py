@@ -316,7 +316,14 @@ if __name__ == '__main__':
         for i, filtercode in enumerate(filtercodes):
             if filtercode in lc_infos.keys():
                 _plot_fp_diff(lc_infos[filtercode], i, first)
+                mode = 'a'
+                if first:
+                    mode = 'w'
+                lc_infos[filtercode]['sn_flux'].to_hdf(args.output.joinpath("SMP_{}.hd5".format(ztfname)), key=filtercode, mode=mode)
+
                 first = False
+
+                # Save
             else:
                 ax = plt.subplot(3, 1, i+1)
                 ax.text(0.5, 0.5, "No data", fontsize=30, transform=ax.transAxes, horizontalalignment='center', verticalalignment='center')
