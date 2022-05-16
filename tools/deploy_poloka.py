@@ -327,13 +327,13 @@ def smphot(cwd, ztfname, filtercode, logger):
             return False
 
         logger.info("Retrieving GAIA photometric ratios... (stats.csv)")
-        stats_df = pd.read_csv(cwd.joinpath("stats.csv"))
+        stats_df = pd.read_csv(cwd.joinpath("stats.csv"))[['quadrant', 'alpha_gaia']].rename(columns={'quadrant': 'expccd', 'alpha_gaia': 'alpha'})
+        stats_df.set_index(stats_df['expccd'], inplace=True)
+        stats_df['ealpha'] = 0
         shutil.copy(cwd.joinpath("pmfit/photom_ratios.ntuple"), cwd.joinpath("pmfit/photom_ratios.ntuple.ori"))
         photom_ratios = utils.ListTable.from_filename(cwd.joinpath("pmfit/photom_ratios.ntuple"))
-        photom_ratios.df = stats_df[['quadrant', 'alpha_gaia']]
-        photom_ratios.df.rename(columns={'quadrant': 'expccd', 'alpha_gaia': 'alpha'}, inplace=True)
-        photom_ratios.df['ealpha'] = 0
-        #photom_ratios.df.assign(ealpha=0)
+        photom_ratios.df.set_index(photom_ratios.df['expccd'], inplace=True)
+        photom_ratios.df.loc[stats_df.index] = stats_df
         photom_ratios.write()
 
     logger.info("Running scene modeling")
@@ -445,6 +445,7 @@ def reduce_op(results, cwd, ztfname, filtercode, func, save_stats):
         logger.error("")
         logger.error("In SN {}-{}".format(ztfname, filtercode))
         logger.error(traceback.format_exc())
+        print(traceback.format_exc())
     finally:
         pass
 

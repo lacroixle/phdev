@@ -414,14 +414,13 @@ class RobustMinimizer():
             self.bads = bads
 
         # first minimization
-        p = self._chi2.minimize(p0, goods=(~self.bads), algorithm=algorithm, **kwargs)
+        p = self._chi2.minimize(p0, goods=(~self.bads), algorithm=algorithm, maxiter=10, **kwargs)
 
         niter = 1
         while self.flag_outliers(p, **kwargs):
             logging.info('nbads/ntot=%d/%d' % (self.bads.sum(), len(self.bads)))
 
-
-            pp = self._chi2.minimize(p, goods=(~self.bads), algorithm=algorithm, **kwargs)
+            pp = self._chi2.minimize(p, goods=(~self.bads), algorithm=algorithm, maxiter=10, **kwargs)
             niter += 1
             logging.info('dp=%g chi2=%g' % (np.sum(np.abs(pp-p)), self._chi2(pp, goods=~self.bads)))
             p[:] = pp
@@ -1339,10 +1338,11 @@ def pmfit():
     dump_proper_motion_catalog(model, cat, outdir=args.outdir, param_errors=e)
 
     # photometric ratios
-    m = fit_photometric_ratios(cat, error_pedestal=args.flux_error_pedestal)
-    dump_photometric_fit_results(m, cat, astrometry_pars=model.params, outdir=args.outdir)
+    if not args.do_not_fit_photometry:
+        m = fit_photometric_ratios(cat, error_pedestal=args.flux_error_pedestal)
+        dump_photometric_fit_results(m, cat, astrometry_pars=model.params, outdir=args.outdir)
 
-    plot_photometric_fit_results(m, cat, outdir=args.plot_dir)
+        plot_photometric_fit_results(m, cat, outdir=args.plot_dir)
 
     with open(args.outdir.joinpath("model.pickle"), 'wb') as f:
         pickle.dump([cat, model], f)
@@ -1388,6 +1388,7 @@ if (__name__ == "__main__"):
                         help='light curve file')
     parser.add_argument('--mu-max', type=float, default=5.)
     parser.add_argument('--plot', action='store_true')
+    parser.add_argument('--do-not-fit-photometry', action='store_true')
 
     args = parser.parse_args()
 

@@ -133,6 +133,7 @@ def residuals_quadrant(quadrant_path, reference_quadrant_path, gaia_stars, filte
     try:
         pol = utils.poly2d_from_file(args.wd.joinpath("{}/{}/pmfit/transfoTo{}.dat".format(ztfname, filtercode, quadrant_name)))
     except:
+        print("x", end="", flush=True)
         return
 
     reference_stars[['x', 'y']] = reference_stars[['x', 'y']].apply(lambda x: pol(x[0], x[1]), axis=1, raw=True)
@@ -173,6 +174,7 @@ def residuals_quadrant(quadrant_path, reference_quadrant_path, gaia_stars, filte
     gc.collect(1)
     gc.collect(0)
 
+    print(".", end="", flush=True)
     return [alpha, rvalue, gaia_stars_count, match_stars_count, aperse_stars_count, standalone_stars_count, psf_stars_count, seeing, cosmic_count, c_intercept]#, wcs_residuals
 
 if __name__ == '__main__':
@@ -241,6 +243,8 @@ if __name__ == '__main__':
             results_mask = [result is not None for result in results]
             results = list(itertools.compress(results, results_mask))
 
+            print("")
+
             if len(results) == 0:
                 print("No computation done for this band... continuing.")
                 continue
@@ -259,6 +263,16 @@ if __name__ == '__main__':
             stats_df['alpha_gaia'] = alpha_df
 
             stats_df.to_csv(band_folder.joinpath("stats.csv"), sep=",")
+
+            plt.figure(figsize=(5., 5.))
+            plt.plot(stats_df['alpha'], stats_df['alpha_gaia'], '.')
+            plt.xlabel("$\\alpha$")
+            plt.ylabel("$\\alpha_G$")
+            plt.axis('equal')
+            plt.grid()
+            plt.savefig(output_path.joinpath("alphas.png"), dpi=150.)
+            plt.close()
+
 
             plt.subplots(nrows=1, ncols=2, figsize=(10., 5.))
 
