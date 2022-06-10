@@ -147,7 +147,10 @@ def read_list_ext(f):
             value = list(map(float, splitted[1:]))
 
             if len(value) == 1:
-                value = value[0]
+                if str(int(splitted)) == splitted[1:]:
+                    value = int(value[0])
+                else:
+                    value = value[0]
             else:
                 value = pd.array(value)
         except:

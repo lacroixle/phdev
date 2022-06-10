@@ -102,7 +102,10 @@ def residuals_quadrant(quadrant_path, reference_quadrant_path, gaia_stars, filte
 
     if band_mag is not None:
         color_min, color_max = -0.5, 0.5
-        color = (refstars['bp'] - refstars['rp']) - np.mean(refstars['bp'] - refstars['rp'])
+        mean_color = np.mean(refstars['bp'] - refstars['rp'])
+        #color = (refstars['bp'] - refstars['rp']) - np.mean(refstars['bp'] - refstars['rp'])
+        color = (refstars['bp'] - refstars['rp']) - mean_color
+        #print(np.mean(refstars['bp'] - refstars['rp']))
 
         fit_mask = np.all([(color >= color_min), (color <= color_max)], axis=0)
         fit_color = color[fit_mask]
@@ -122,7 +125,8 @@ def residuals_quadrant(quadrant_path, reference_quadrant_path, gaia_stars, filte
         plt.savefig(output_path.joinpath("{}_gaia_color.png".format(quadrant_name)), dpi=150.)
         plt.close()
 
-        c_intercept = poly.coef[0]
+        #c_intercept = poly.coef[0]
+        c_intercept = poly(-mean_color)
     else:
         c_intercept = float('nan')
 

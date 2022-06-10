@@ -321,20 +321,23 @@ def smphot(cwd, ztfname, filtercode, logger):
     logger.info("Running pmfit with polynomial of degree {} as relative astrometric transformation.".format(args.degree))
     run_and_log(["pmfit", driver_path, "-d", str(args.degree), "--gaia={}".format(gaia_path), "--outdir={}".format(cwd.joinpath("pmfit")), "--plot-dir={}".format(cwd.joinpath("pmfit_plot")), "--mu-max=20"], logger=logger)
 
-    if args.use_gaia_photom:
-        if not cwd.joinpath("stats.csv").exists():
-            logger.info("Could not find GAIA photometric ratio file... quitting.")
-            return False
+    if args.use_gaia_photom and not filtercode == 'zi':
+        # if not cwd.joinpath("stats.csv").exists():
+        #     logger.info("Could not find GAIA photometric ratio file... quitting.")
+        #     return False
 
-        logger.info("Retrieving GAIA photometric ratios... (stats.csv)")
-        stats_df = pd.read_csv(cwd.joinpath("stats.csv"))[['quadrant', 'alpha_gaia']].rename(columns={'quadrant': 'expccd', 'alpha_gaia': 'alpha'})
-        stats_df.set_index(stats_df['expccd'], inplace=True)
-        stats_df['ealpha'] = 0
-        shutil.copy(cwd.joinpath("pmfit/photom_ratios.ntuple"), cwd.joinpath("pmfit/photom_ratios.ntuple.ori"))
-        photom_ratios = utils.ListTable.from_filename(cwd.joinpath("pmfit/photom_ratios.ntuple"))
-        photom_ratios.df.set_index(photom_ratios.df['expccd'], inplace=True)
-        photom_ratios.df.loc[stats_df.index] = stats_df
-        photom_ratios.write()
+        # logger.info("Retrieving GAIA photometric ratios... (stats.csv)")
+        # stats_df = pd.read_csv(cwd.joinpath("stats.csv"))[['quadrant', 'alpha_gaia']].rename(columns={'quadrant': 'expccd', 'alpha_gaia': 'alpha'})
+        # stats_df.set_index(stats_df['expccd'], inplace=True)
+        # stats_df['ealpha'] = 0
+        # shutil.copy(cwd.joinpath("pmfit/photom_ratios.ntuple"), cwd.joinpath("pmfit/photom_ratios.ntuple.ori"))
+        # photom_ratios = utils.ListTable.from_filename(cwd.joinpath("pmfit/photom_ratios.ntuple"))
+        # photom_ratios.df.set_index(photom_ratios.df['expccd'], inplace=True)
+        # photom_ratios.df.loc[stats_df.index] = stats_df
+        # photom_ratios.write()
+
+        run_and_log(["gaiafit", "--ztfname={}".format(ztfname), "--filtercode={}".format(filtercode), "--wd={}".format(cwd),
+                     "--plots", '--build-measures', "--lc-folder={}".format(args.lc_folder), "--ref-exposure={}".format(idxmin.name)], logger=logger)
 
     logger.info("Running scene modeling")
     smphot_output = cwd.joinpath("smphot_output")

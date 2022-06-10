@@ -1,0 +1,451 @@
+#!/usr/bin/env python
+
+import argparse
+import os
+import time
+import shutil
+
+import numpy as np
+from scipy.sparse import coo_matrix, dia_array
+import matplotlib.pyplot as plt
+import pandas as pd
+import saunerie
+from saunerie.fitparameters import FitParameters
+import croaks
+from sksparse import cholmod
+from scipy.optimize import approx_fprime
+import pathlib
+import pickle
+from astropy.coordinates import SkyCoord
+from astropy.io import fits
+from astropy.wcs import WCS
+from matplotlib.cm import ScalarMappable
+from matplotlib.colors import Normalize
+from scipy.stats import norm
+from saunerie.plottools import binplot
+
+import utils
+
+
+filtercode2gaiaband = {'zg': 'bpmag',
+                       'zr': 'rpmag'}
+
+idx2markerstyle = ['*', 'x', '.', 'v', '^']
+
+def prepare_data(wd, ztfname, filtercode, lc_folder, verbose=False):
+    # Load GAIA stars catalogue
+    print("Preparing data")
+    gaia_stars = pd.read_hdf(lc_folder.joinpath("{}.hd5".format(ztfname)), key='gaia_cal')
+    gaia_coords_radec = SkyCoord(gaia_stars['ra'], gaia_stars['dec'], unit='deg')
+
+    # First collect all quadrants
+    quadrant_paths = [quadrant_path for quadrant_path in list(wd.glob("ztf_*")) if quadrant_path.joinpath("psfstars.list").exists()]
+
+    measures = []
+    for quadrant_path in quadrant_paths:
+        quadrant_name = quadrant_path.name
+        quadrant_stars = utils.ListTable.from_filename(quadrant_path.joinpath("psfstars.list")).df
+
+        # Load quadrant WCS
+        header_keys_to_get = {'seeing':('seeing', float),
+                              'obsmjd': ('mjd', float),
+                              'rcid': ('rcid', int),
+                              'airmass': ('airmass', float),
+                              'tempture': ('temperature', float),
+                              'headtemp': ('head_temperature', float),
+                              'windspd': ('wind_speed', float),
+                              'winddir': ('wind_dir', float),
+                              'dewpoint': ('dewpoint', float),
+                              }
+        header_keys = {}
+
+        with fits.open(quadrant_path.joinpath("calibrated.fits")) as hdul:
+            wcs = WCS(hdul[0].header)
+
+            for key in header_keys_to_get:
+                header_keys[header_keys_to_get[key][0]] = header_keys_to_get[key][1](hdul[0].header[key])
+
+        # Restrict GAIA stars to quadrant
+        gaia_mask = utils.contained_in_exposure(gaia_coords_radec, wcs, return_mask=True)
+        quadrant_gaia_stars = gaia_stars[gaia_mask].copy()
+        x, y = gaia_coords_radec[gaia_mask].to_pixel(wcs)
+        quadrant_gaia_stars.insert(0, 'y', y)
+        quadrant_gaia_stars.insert(0, 'x', x)
+
+        # Match GAIA stars catalogue to psfstars
+        i = utils.match_pixel_space(quadrant_gaia_stars[['x', 'y']], quadrant_stars[['x', 'y']], radius=1.)
+        quadrant_gaia_stars = quadrant_gaia_stars.iloc[i[i>=0]]
+        quadrant_star_pairs = quadrant_stars[i>=0]
+
+        quadrant_cat = quadrant_gaia_stars
+
+        key_to_keep = ['flux', 'eflux', 'fluxmax', 'psfchi2']
+        for key in key_to_keep:
+            quadrant_cat[key] = quadrant_star_pairs[key].to_list()
+
+        for key in header_keys:
+            quadrant_cat[key] = header_keys[key]
+
+        quadrant_cat['exp'] = quadrant_name
+        quadrant_cat['mag'] = -2.5*np.log10(quadrant_cat['flux'])
+        quadrant_cat['emag'] = quadrant_cat['eflux']/quadrant_cat['flux']
+        quadrant_cat['gaiaid'] = quadrant_gaia_stars.index
+
+        measures.append(quadrant_cat)
+
+        if verbose:
+            print(".", flush=True, end="")
+
+    measures_df = pd.concat(measures)
+
+    print("Done. {} total measures.".format(len(measures_df)))
+
+    return measures_df
+
+
+dp_index_list = ['exp', 'mjd', 'gaiaid', 'rcid', 'gaia_mag']
+
+
+def make_index_from_list(dp, index_list):
+    [dp.make_index(index) for index in index_list]
+
+
+def load(wd, filtercode):
+    print("Setting up dataproxy")
+    measures_df = pd.read_parquet(wd.joinpath("measures.parquet"))
+    measures_df['gaia_mag'] = measures_df[filtercode2gaiaband[filtercode]]
+    measures_df['gaia_emag'] = measures_df['e_{}'.format(filtercode2gaiaband[filtercode])]
+
+    measures_df = measures_df.loc[((measures_df['bpmag'] - measures_df['rpmag']) > 0.5)]
+    measures_df = measures_df.loc[((measures_df['bpmag'] - measures_df['rpmag']) < 1.5)]
+
+    kwargs = dict([(keyword, keyword) for keyword in measures_df.columns])
+
+    dp = croaks.DataProxy(measures_df.to_records(), **kwargs)
+    make_index_from_list(dp, dp_index_list)
+
+    return dp
+
+
+class ZPmodel():
+    def __init__(self, dp, degree=3):
+        self.dp = dp
+        self.degree = degree
+        self.params = self.init_params()
+
+    def init_params(self):
+        n_exp = len(self.dp.exp_set)
+        color_coeffs = [('k_{}'.format(k+1), 1) for k in range(self.degree)]
+        fp = FitParameters([*color_coeffs, ('zp', n_exp)])
+        return fp
+
+    def sigma(self, pedestal=0.):
+        return np.sqrt(self.dp.emag**2+self.dp.gaia_emag**2+pedestal**2)
+
+    @property
+    def W(self):
+        return dia_array((1./self.sigma()**2, 0), shape=(len(self.dp.nt), len(self.dp.nt)))
+
+    def __call__(self, p, jac=False):
+        """
+        """
+        self.params.free = p
+
+        zp = self.params['zp'].full[self.dp.exp_index]
+        col = self.dp.bpmag - self.dp.rpmag
+        k_i = [self.params['k_{}'.format(k+1)].full[0] for k in range(self.degree)]
+
+        # v = k * col + zp
+        v = zp
+        for i, k in enumerate(k_i):
+            v += k*col**(i+1)
+
+        if not jac:
+            return v
+
+        n = len(self.params.free)
+        N = len(self.dp.nt) # size of data vector
+        i = np.arange(N)
+
+        # elements of the (sparamse) jacobian
+        ii, jj, vv = [], [], []
+        
+        # dmdk
+        for k in range(self.degree):
+            ii.append(i)
+            jj.append(np.full(N, self.params['k_{}'.format(k+1)].indexof(0)))
+            vv.append(col**(k+1))
+
+        # dmdzp
+        ii.append(i)
+        jj.append(self.params['zp'].indexof(self.dp.exp_index))
+        vv.append(np.full(N, 1.))
+
+        ii = np.hstack(ii)
+        jj = np.hstack(jj)
+        vv = np.hstack(vv)
+        ok = jj>=0
+        
+        J = coo_matrix((vv[ok], (ii[ok], jj[ok])), shape=(N, n))
+
+        return v,J
+
+
+def fit_photometry(model):
+    print("Photomeric fit...")
+    t = time.perf_counter()
+    p = model.params.free.copy()
+    v, J = model(p, jac=1)
+    H = J.T @ model.W @ J
+    B = J.T @ model.W @ (model.dp.mag - model.dp.gaia_mag)
+    fact = cholmod.cholesky(H.tocsc())
+    p = fact(B)
+    model.params.free = p
+    print("Done. Elapsed time={}.".format(time.perf_counter()-t))
+    return p
+
+
+def compute_photoratios(model, y_model, ref_exposure, save=False, wd=None):
+    # First retrieve reference exposure
+    print("Computing photometric ratios")
+
+    zp_ref = model.params['zp'].full[model.dp.exp_map[ref_exposure]]
+
+    alphas = {}
+    for exp in model.dp.exp_set:
+        alphas[exp] = 10**(-0.4*(model.params['zp'].full[model.dp.exp_map[exp]] - zp_ref))
+
+    alphas_df = pd.DataFrame(list(alphas.values()), index=alphas.keys(), columns=['alpha'])
+
+    if save:
+        filename = wd.joinpath("pmfit/photom_ratios.ntuple")
+
+        shutil.copy(filename, filename.with_suffix(".ntuple.ori"))
+        photom_ratios = utils.ListTable.from_filename(filename)
+        photom_ratios.df.set_index(photom_ratios.df['expccd'], inplace=True)
+
+        indices = alphas_df.index[[(exp in photom_ratios.df.index) for exp in alphas_df.index]]
+
+        photom_ratios.df.loc[indices, 'alpha'] = alphas_df.loc[indices, 'alpha']
+        photom_ratios.df['ealpha'] = 0.
+        photom_ratios.write()
+
+        print("Saved photometric ratios to {}.".format(filename))
+
+    return alphas_df
+
+
+def filter_noisy_stars(model, y_model, threshold):
+    print("Removing noisy stars...")
+    res = y_model - (model.dp.mag - model.dp.gaia_mag)
+    chi2 = np.bincount(dp.gaiaid_index, weights=res**2)/np.bincount(dp.gaiaid_index)
+
+    noisy_stars = model.dp.gaiaid_set[chi2 > threshold]
+    noisy_measurements = np.any([model.dp.gaiaid == noisy_star for noisy_star in noisy_stars], axis=0)
+
+    filtered_dp = croaks.DataProxy(model.dp.nt[~noisy_measurements], **model.dp.mapping)
+    make_index_from_list(filtered_dp, dp_index_list)
+    print("Filtered {} stars...".format(len(noisy_stars)))
+    return ZPmodel(filtered_dp)
+
+
+def do_plots(model, y_model, save_folder=None, plot_ext=".png"):
+    print("Plotting...")
+    t = time.perf_counter()
+    def _show(filename):
+        if save_folder is not None:
+            plt.savefig(save_folder.joinpath("{}{}".format(filename, plot_ext)), dpi=250.)
+        else:
+            plt.show()
+
+        plt.close()
+
+    k_i = [model.params['k_{}'.format(k+1)].full[0] for k in range(model.degree)]
+    zp = model.params['zp'].full[:]
+    res = y_model - (model.dp.mag - model.dp.gaia_mag)
+    chi2 = np.bincount(model.dp.gaiaid_index, weights=res**2)/np.bincount(model.dp.gaiaid_index)
+    measurement_chi2 = np.array([chi2[model.dp.gaiaid_map[gaiaid]] for gaiaid in model.dp.gaiaid])
+
+    plt.plot([model.dp.gaiaid_map[gaiaid] for gaiaid in model.dp.gaiaid_set], chi2, '.', color='black')
+    plt.grid()
+    plt.xlabel("Star index")
+    plt.ylabel("$\\chi^2_p$")
+    _show("chi2_star")
+
+    plt.plot(model.dp.mag, 1./model.sigma()**2, '.', color='black')
+    plt.xlabel("$m$")
+    plt.ylabel("$1/\\sigma**2$")
+    plt.grid()
+    _show("sigma_mag")
+
+    rms = [np.std(model.dp.mag[model.dp.gaiaid==gaiaid]) for gaiaid in model.dp.gaiaid_set]
+
+    plt.plot(range(len(model.dp.gaiaid_set)), rms, '.', color='xkcd:light blue')
+    plt.xlabel("Gaia star #")
+    plt.ylabel("Lightcurve RMS")
+    plt.grid()
+    _show("rms_star")
+
+    plt.plot(model.dp.gaia_mag_set, rms, '.', color='xkcd:light blue')
+    plt.xlabel("$g_G$")
+    plt.ylabel("Lightcurve RMS")
+    plt.grid()
+    _show("rms_mag")
+
+    # bins=50
+    # pull_hist = np.histogram2d(model.dp.ra, model.dp.dec, weights=res/model.sigma(), bins=bins)[0]/np.histogram2d(model.dp.ra, model.dp.dec, weights=1./model.sigma(), bins=bins)[0]
+    # plt.imshow(pull_hist)
+    # plt.xlabel("ra")
+    # plt.ylabel("dec")
+    # _show("pull_radec")
+
+    plt.subplots(nrows=1, ncols=2, gridspec_kw={'width_ratios': [4, 1]}, figsize=(10., 5.))
+    pull = res/model.sigma(pedestal=0.01)
+    m = np.mean(pull)
+    s = np.std(pull)
+    n = 4. # Limit multiplier for more consistant plots
+
+    plt.subplot(1, 2, 1)
+    #plt.plot(model.dp.mag, pull, ',', color='black')
+    for i, rcid in enumerate(model.dp.rcid_set):
+        mask = (model.dp.rcid == rcid)
+        plt.scatter(model.dp.mag[mask], pull[mask], c=measurement_chi2[mask], s=0.05, marker=idx2markerstyle[i], label="{}".format(rcid))
+    cbar = plt.colorbar()
+    cbar.set_label("$\\chi^2_p$")
+    plt.legend()
+    plt.ylim(-n*s, n*s)
+    plt.xlabel("m")
+    plt.ylabel("pull")
+    plt.grid()
+
+    ax = plt.subplot(1, 2, 2)
+    plt.hist(pull, range=[-n*s, n*s], bins=50, orientation='horizontal', histtype='step', color='black', density=True)
+    x = np.linspace(-n*s, n*s, 100)
+    plt.plot(norm.pdf(x, loc=m, scale=s), x)
+    plt.text(0., -0.1, "$\\sigma={:.5f}, \\mu={:.5f}$".format(s, m), transform=ax.transAxes)
+    plt.xticks([])
+    plt.yticks([])
+    _show("pull_mag")
+
+    xbinned_mag, yplot_pull, pull_dispersion = binplot(model.dp.mag, pull, data=True, rms=True, scale=False)
+    plt.xlabel("$m$")
+    plt.ylabel("pull")
+    _show("pull_profile")
+
+    plt.plot(xbinned_mag, pull_dispersion, color='black')
+    plt.grid()
+    plt.xlabel("m")
+    plt.ylabel("pull RMS")
+    _show("pull_rms")
+
+    for rcid in model.dp.rcid_set:
+        mask = model.dp.rcid == rcid
+        plt.hist2d(model.dp.x[mask], model.dp.y[mask], weights=res[mask], bins=100, vmin=-0.5, vmax=0.5)
+        plt.title("Residuals, rcid={}, n_measurements={}".format(rcid, len(res[mask])))
+        plt.axis('equal')
+        plt.axis('off')
+        plt.xlabel("$x$")
+        plt.ylabel("$y$")
+        plt.colorbar()
+        _show("quad_{}".format(rcid))
+
+    # ZP distribution
+    plt.hist(zp, bins=40, histtype='step', color='black')
+    plt.grid()
+    plt.xlabel("ZP")
+    plt.ylabel("Count")
+    _show("zp_dist")
+
+    # Residuals distribution
+    plt.hist(res, bins=100, histtype='step', color='black')
+    plt.grid()
+    plt.xlabel("Residuals")
+    plt.ylabel("Count")
+    _show("res_dist")
+
+    # Residuals/day
+    plt.plot(model.dp.mjd, res, ',', color='red')
+    plt.grid()
+    plt.xlabel("MJD")
+    plt.ylabel("Residual")
+    _show("res_day")
+
+    plt.plot(model.dp.mjd_index, res, ',', color='red')
+    plt.grid()
+    plt.xlabel("MJD")
+    plt.ylabel("Residual")
+    _show("res_day_index")
+
+    #Residuals/star
+    plt.plot(model.dp.gaiaid_index, res, ',', color='red')
+    plt.grid()
+    plt.xlabel("Star")
+    plt.ylabel("Residual")
+    _show("res_star")
+
+    # Residuals/airmass
+    plt.plot(model.dp.airmass, res, ',', color='red')
+    plt.xlabel('Airmass')
+    plt.ylabel('Residual')
+    plt.grid()
+    _show("res_airmass")
+
+    # Residuals/color
+    plt.plot(model.dp.bpmag - model.dp.rpmag, res, ',', color='red')
+    plt.xlabel("$B_p-R_p$")
+    plt.ylabel("Residual")
+    plt.grid()
+    _show("res_color")
+
+    # Residuals/mag
+    plt.plot(model.dp.mag, res, ',', color='red')
+    plt.xlabel("$m$")
+    plt.ylabel("Residual")
+    plt.grid()
+    _show("res_mag")
+
+    print("Done. Elapsed time={}.".format(time.perf_counter()-t))
+
+
+if __name__ == '__main__':
+    argparser = argparse.ArgumentParser(description="")
+    argparser.add_argument('--wd', type=pathlib.Path, required=True)
+    argparser.add_argument('--ztfname', type=str, required=True)
+    argparser.add_argument('--filtercode', type=str, choices=utils.filtercodes, required=True)
+    argparser.add_argument('--build-measures', action='store_true')
+    argparser.add_argument('--lc-folder', type=pathlib.Path)
+    argparser.add_argument('--ref-exposure', type=str)
+    argparser.add_argument('--plots', action='store_true')
+
+    args = argparser.parse_args()
+    args.wd = args.wd.expanduser().resolve()
+    args.lc_folder = args.lc_folder.expanduser().resolve()
+
+    measures_filename = args.wd.joinpath("measures.parquet")
+
+    if not measures_filename.exists() or args.build_measures:
+        measures_df = prepare_data(args.wd, args.ztfname, args.filtercode, args.lc_folder)
+        measures_df.to_parquet(measures_filename)
+
+    dp = load(args.wd, args.filtercode)
+    model = ZPmodel(dp)
+
+    fit_photometry(model)
+    y_model = model(model.params.free)
+
+    if args.plots:
+        plot_folder = args.wd.joinpath("gaia_pm/no_filter")
+        os.makedirs(plot_folder, exist_ok=True)
+        do_plots(model, y_model, plot_folder)
+
+    new_model = filter_noisy_stars(model, y_model, 0.001)
+
+    fit_photometry(new_model)
+    new_y_model = new_model(model.params.free)
+
+    if args.plots:
+        new_plot_folder = args.wd.joinpath("gaia_pm/filter")
+        os.makedirs(new_plot_folder, exist_ok=True)
+        do_plots(new_model, new_y_model, new_plot_folder)
+
+    compute_photoratios(new_model, new_y_model, args.ref_exposure, save=True, wd=args.wd)
