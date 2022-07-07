@@ -6,9 +6,21 @@ from collections.abc import Iterable
 import numpy as np
 from croaks.match import NearestNeighAssoc
 import pandas as pd
+from astropy.io import fits
+from astropy.wcs import WCS
+from astropy.coordinates import SkyCoord
+from astropy.time import Time
+import astropy.units as u
 
 
 filtercodes = ['zg', 'zr', 'zi']
+quadrant_width_px, quadrant_height_px = 3072, 3080
+
+ztf_longitude = -116.8598 # deg
+ztf_latitude = 33.3573 # deg E
+ztf_altitude = 1668. # m
+
+gaiarefmjd = Time(2015.5, format='byear').mjd
 
 
 def cat_to_ds9regions(cat, filename, radius=5., color='green'):
@@ -22,7 +34,8 @@ def cat_to_ds9regions(cat, filename, radius=5., color='green'):
 def match_pixel_space(refcat, cat, radius=1.):
     def _euclidian(x1, y1, x2, y2):
         return np.sqrt((np.array(x1) - np.array(x2)) ** 2 + (np.array(y1) - np.array(y2)) ** 2)
-    assoc =  NearestNeighAssoc(first=[refcat['x'], refcat['y']], radius=radius)
+
+    assoc = NearestNeighAssoc(first=[refcat['x'], refcat['y']], radius=radius)
     index = assoc.match(cat['x'], cat['y'], metric=_euclidian)
     return index
 
@@ -32,6 +45,35 @@ def get_cat_size(catalog_filename):
         _, cat = read_list(f)
 
     return len(cat)
+
+
+def apply_space_motion(ra, dec, pm_ra, pm_dec, refmjd, newmjd):
+    reftime = Time(refmjd, format='mjd')
+    newtime = Time(newmjd, format='mjd')
+    #coords = SkyCoord(ra*u.deg, dec*u.deg, pm_ra_cosdec=pm_ra*np.cos(dec/180.*np.pi)*u.mas/u.year, pm_dec=pm_dec*u.mas/u.year, obstime=reftime)
+    coords = SkyCoord(ra*u.deg, dec*u.deg, pm_ra_cosdec=np.zeros_like(ra)*u.mas/u.year, pm_dec=np.zeros_like(ra)*u.mas/u.year, obstime=reftime)
+    coords.apply_space_motion(newtime)
+    return np.stack([coords.frame.data.lon.value, coords.frame.data.lat.value], axis=1)
+
+def get_wcs_from_quadrant(quadrant_path):
+    with fits.open(quadrant_path.joinpath("calibrated.fits")) as hdul:
+        wcs = WCS(hdul[0].header)
+
+    return wcs
+
+
+def get_mjd_from_quadrant_path(quadrant_path):
+    with fits.open(quadrant_path.joinpath("calibrated.fits")) as hdul:
+        return hdul[0].header['obsmjd']
+
+
+def get_header_from_quadrant_path(quadrant_path, key=None):
+    with fits.open(quadrant_path.joinpath("calibrated.fits")) as hdul:
+        if key is None:
+            return hdul[0].header
+        else:
+            return hdul[0].header[key]
+
 
 def sc_ra(skycoord):
     return skycoord.frame.data.lon.value
@@ -44,20 +86,23 @@ def sc_dec(skycoord):
 def contained_in_exposure(objects, wcs, return_mask=False):
     width, height = wcs.pixel_shape
 
-    top_left = [0., height]
-    top_right = [width, height]
-    bottom_left = [0., 0.]
-    bottom_right = [width, 0]
+    if isinstance(objects, pd.DataFrame):
+        mask = (objects['x'] >= 0.) & (objects['x'] < width) & (objects['y'] >= 0.) & (objects['y'] < height)
+    else:
+        top_left = [0., height]
+        top_right = [width, height]
+        bottom_left = [0., 0.]
+        bottom_right = [width, 0]
 
-    tl_radec = wcs.pixel_to_world(*top_left)
-    tr_radec = wcs.pixel_to_world(*top_right)
-    bl_radec = wcs.pixel_to_world(*bottom_left)
-    br_radec = wcs.pixel_to_world(*bottom_right)
+        tl_radec = wcs.pixel_to_world(*top_left)
+        tr_radec = wcs.pixel_to_world(*top_right)
+        bl_radec = wcs.pixel_to_world(*bottom_left)
+        br_radec = wcs.pixel_to_world(*bottom_right)
 
-    tl = (max([sc_ra(tl_radec), sc_ra(bl_radec)]), min([sc_dec(tl_radec), sc_dec(tr_radec)]))
-    br = (min([sc_ra(tr_radec), sc_ra(br_radec)]), max([sc_dec(bl_radec), sc_dec(br_radec)]))
+        tl = (max([sc_ra(tl_radec), sc_ra(bl_radec)]), min([sc_dec(tl_radec), sc_dec(tr_radec)]))
+        br = (min([sc_ra(tr_radec), sc_ra(br_radec)]), max([sc_dec(bl_radec), sc_dec(br_radec)]))
 
-    mask = (sc_ra(objects) < tl[0]) & (sc_ra(objects) > br[0]) & (sc_dec(objects) > tl[1]) & (sc_dec(objects) < br[1])
+        mask = (sc_ra(objects) < tl[0]) & (sc_ra(objects) > br[0]) & (sc_dec(objects) > tl[1]) & (sc_dec(objects) < br[1])
 
     if return_mask:
         return mask
@@ -85,7 +130,7 @@ def get_ref_quadrant_from_driver(driver_path):
         reference_quadrant = f.readline()
 
         if reference_quadrant:
-            return pathlib.Path(reference_quadrant[:-1])
+            return pathlib.Path(reference_quadrant[:-1]).name
 
 
 def poly2d_from_file(filename):

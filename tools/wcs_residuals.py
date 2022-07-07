@@ -74,13 +74,13 @@ def residuals_quadrant(quadrant_path, reference_quadrant_path, gaia_stars, filte
     plt.suptitle("WCS with Gaia stars residuals")
     plt.subplot(1, 2, 1)
     #plt.hist(refstars['x'] - refstars_pair['x'], bins=100, histtype='step', color='black')
-    plt.hist(wcs_residuals['x'], bins=50, histtype='step', color='black')
+    plt.hist(wcs_residuals['x'], bins=30, histtype='step', color='black')
     plt.grid()
     plt.xlabel("Residual [pixel]")
     plt.ylabel("Count")
 
     plt.subplot(1, 2, 2)
-
+    plt.hist(wcs_residuals['y'], bins=30, histtype='step', color='black')
     plt.xlabel("Residual [pixel]")
     plt.grid()
 
@@ -179,7 +179,7 @@ def residuals_quadrant(quadrant_path, reference_quadrant_path, gaia_stars, filte
     gc.collect(0)
 
     print(".", end="", flush=True)
-    return [alpha, rvalue, gaia_stars_count, match_stars_count, aperse_stars_count, standalone_stars_count, psf_stars_count, seeing, cosmic_count, c_intercept]#, wcs_residuals
+    return [alpha, rvalue, gaia_stars_count, match_stars_count, aperse_stars_count, standalone_stars_count, psf_stars_count, seeing, cosmic_count, c_intercept], wcs_residuals
 
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser(description="")
@@ -258,8 +258,7 @@ if __name__ == '__main__':
             stats_df = pd.DataFrame(data=np.array(alphas), index=list(map(lambda x: x.name, quadrant_paths)), columns=['alpha', 'r', 'n_gaia', 'n_match', 'n_aperse', 'n_standalone', 'n_psf', 'seeing', 'n_cosmic', 'color_intercept'])
             stats_df.index.name = 'quadrant'
 
-            #wcs_residuals_df = pd.concat(wcs_residuals, ignore_index=True)
-
+            wcs_residuals_df = pd.concat(wcs_residuals, ignore_index=True)
 
             # Now compute phtometric ratios
             c_intercept_ref = stats_df.at[reference_quadrant_path.name, 'color_intercept']
@@ -295,20 +294,20 @@ if __name__ == '__main__':
             plt.savefig(output_path.joinpath("alpha_distribution.png"), dpi=150.)
             plt.close()
 
-            # # Residuals distribution
-            # plt.subplots(nrows=1, ncols=2, figsize=(10., 5.))
+            # Residuals distribution
+            plt.subplots(nrows=1, ncols=2, figsize=(10., 5.))
 
-            # plt.subplot(1, 2, 1)
-            # plt.hist(wcs_residuals_df['x'], bins=200, histtype='step', color='black')
-            # plt.grid()
-            # plt.xlabel("Residuals $x$ [pixel]")
-            # plt.ylabel("Count")
+            plt.subplot(1, 2, 1)
+            plt.hist(wcs_residuals_df['x'], bins=200, histtype='step', color='black')
+            plt.grid()
+            plt.xlabel("Residuals $x$ [pixel]")
+            plt.ylabel("Count")
 
-            # plt.subplot(1, 2, 2)
-            # plt.hist(wcs_residuals_df['y'], bins=200, histtype='step', color='black')
-            # plt.grid()
-            # plt.xlabel("Residuals $y$ [pixel]")
-            # plt.ylabel("Count")
+            plt.subplot(1, 2, 2)
+            plt.hist(wcs_residuals_df['y'], bins=200, histtype='step', color='black')
+            plt.grid()
+            plt.xlabel("Residuals $y$ [pixel]")
+            plt.ylabel("Count")
 
-            # plt.savefig(output_path.joinpath("wcs_residuals.png"), dpi=200.)
-            # plt.close()
+            plt.savefig(output_path.joinpath("wcs_residuals.png"), dpi=200.)
+            plt.close()

@@ -12,6 +12,7 @@ import sys
 import socket
 import copy
 import traceback
+import json
 
 from joblib import Parallel, delayed
 import pandas as pd
@@ -27,6 +28,12 @@ from dask_jobqueue import SLURMCluster, SGECluster
 import ztfquery.io
 import numpy as np
 from skimage.morphology import label
+from saunerie.plottools import binplot
+from astropy.time import Time
+import imageproc.composable_functions as compfuncs
+import saunerie.fitparameters as fp
+from scipy import sparse
+from croaks import DataProxy
 
 
 import utils
@@ -370,9 +377,624 @@ def smphot_plot(cwd, ztfname, filtercode, logger):
 
     return True
 
+
 poloka_func.append({'reduce': smphot_plot})
 
+
+def match_gaia(quadrant_path, logger):
+    if not quadrant_path.joinpath("psfstars.list").exists():
+        return
+
+    _, stars_df = utils.read_list(quadrant_path.joinpath("psfstars.list"))
+    wcs = utils.get_wcs_from_quadrant(quadrant_path)
+    obsmjd = utils.get_mjd_from_quadrant_path(quadrant_path)
+
+    gaia_stars_df = pd.read_hdf(args.lc_folder.joinpath("{}.hd5".format(ztfname)), key='gaia_cal')
+    gaia_stars_df['gaiaid'] = gaia_stars_df.index
+
+    # Proper motion correction
+    gaia_stars_df['ra'] = gaia_stars_df['ra']+(obsmjd-utils.gaiarefmjd)*gaia_stars_df['pmra']/np.cos(gaia_stars_df['dec']/180.*np.pi)/1000./3600/365.
+    gaia_stars_df['dec'] = gaia_stars_df['dec']+(obsmjd-utils.gaiarefmjd)*gaia_stars_df['pmde']/1000./3600/365.25
+
+    gaia_stars_radec = SkyCoord(gaia_stars_df['ra'], gaia_stars_df['dec'], unit='deg')
+    gaia_mask = utils.contained_in_exposure(gaia_stars_radec, wcs, return_mask=True)
+    gaia_stars_df = gaia_stars_df.iloc[gaia_mask]
+    x, y = gaia_stars_radec[gaia_mask].to_pixel(wcs)
+    gaia_stars_df['x'] = x
+    gaia_stars_df['y'] = y
+
+    i = utils.match_pixel_space(gaia_stars_df[['x', 'y']].to_records(), stars_df[['x', 'y']].to_records(), radius=0.5)
+
+    matched_gaia_stars_df = gaia_stars_df.iloc[i[i>=0]].reset_index(drop=True)
+    matched_stars_df = stars_df.iloc[i>=0].reset_index(drop=True)
+    logger.info("Matched {} GAIA stars".format(len(matched_gaia_stars_df)))
+
+    with pd.HDFStore(quadrant_path.joinpath("matched_stars.hd5"), 'w') as hdfstore:
+        hdfstore.put('matched_gaia_stars', matched_gaia_stars_df)
+        hdfstore.put('matched_stars', matched_stars_df)
+
+
+def match_gaia_reduce(cwd, ztfname, filtercode, logger):
+    quadrant_paths = [quadrant_path for quadrant_path in list(cwd.glob("ztf_*")) if quadrant_path.is_dir() and quadrant_path.joinpath("psfstars.list").exists()]
+
+    matched_stars_list = []
+
+    for quadrant_path in quadrant_paths:
+        matched_gaia_stars_df = pd.read_hdf(quadrant_path.joinpath("matched_stars.hd5"), key='matched_gaia_stars')
+        matched_stars_df = pd.read_hdf(quadrant_path.joinpath("matched_stars.hd5"), key='matched_stars')
+
+        matched_gaia_stars_df.rename(columns={'x': 'gaia_x', 'y': 'gaia_y'}, inplace=True)
+        matched_stars_df['mag'] = -2.5*np.log10(matched_stars_df['flux'])
+        matched_stars_df['emag'] = matched_stars_df['flux']/matched_stars_df['eflux']
+
+        matched_stars_df = pd.concat([matched_stars_df, matched_gaia_stars_df], axis=1)
+
+        header = utils.get_header_from_quadrant_path(quadrant_path)
+        matched_stars_df['quadrant'] = quadrant_path.name
+        matched_stars_df['airmass'] = header['airmass']
+        matched_stars_df['mjd'] = header['obsmjd']
+        matched_stars_df['seeing'] = header['seeing']
+        matched_stars_df['ha'] = header['hourangd'] #*15
+        matched_stars_df['ha_15'] = 15.*header['hourangd']
+        matched_stars_df['lst'] = header['oblst']
+        matched_stars_df['azimuth'] = header['azimuth']
+        matched_stars_df['dome_azimuth'] = header['dome_az']
+        matched_stars_df['elevation'] = header['elvation']
+        matched_stars_df['z'] = 90. - header['elvation']
+        matched_stars_df['telra'] = header['telrad']
+        matched_stars_df['teldec'] = header['teldecd']
+
+        matched_stars_list.append(matched_stars_df)
+
+    matched_stars_df = pd.concat(matched_stars_list, axis=0, ignore_index=True)
+
+    # Remove measures with Nan's
+    nan_mask = matched_stars_df.isna().any(axis=1)
+    matched_stars_df = matched_stars_df[~nan_mask]
+    logger.info("Removed {} measurements with Nan's".format(nan_mask))
+
+    # Compute color
+    matched_stars_df['colormag'] = matched_stars_df['bpmag'] - matched_stars_df['rpmag']
+
+    matched_stars_df.to_parquet(cwd.joinpath("matched_stars.parquet"))
+    logger.info("Total matched Gaia stars: {}".format(len(matched_stars_df)))
+
+
+poloka_func.append({'map': match_gaia, 'reduce': match_gaia_reduce})
+
+
+def wcs_residuals(cwd, ztfname, filtercode, logger):
+    save_folder = cwd.joinpath("res_plots")
+    save_folder.mkdir(exist_ok=True)
+    matched_stars_df = pd.read_parquet(cwd.joinpath("matched_stars.parquet"))
+
+    ################################################################################
+    # Residuals distribution
+    plt.subplots(nrows=1, ncols=2, figsize=(10., 5.))
+    plt.subplot(1, 2, 1)
+    plt.hist(matched_stars_df['x']-matched_stars_df['gaia_x'], bins=100, range=[-0.5, 0.5])
+    plt.grid()
+    plt.xlabel("$x-x_\\mathrm{Gaia}$ [pixel]")
+    plt.ylabel("#")
+
+    plt.subplot(1, 2, 2)
+    plt.hist(matched_stars_df['y']-matched_stars_df['gaia_y'], bins=100, range=[-0.5, 0.5])
+    plt.grid()
+    plt.xlabel("$y-y_\\mathrm{Gaia}$ [pixel]")
+    plt.ylabel("#")
+
+    plt.savefig(save_folder.joinpath("wcs_res_dist.png"), dpi=300.)
+    plt.close()
+    ################################################################################
+
+    ################################################################################
+    # Residuals/magnitude
+    plt.subplots(nrows=2, ncols=1, figsize=(15., 10.))
+    plt.subplot(2, 1, 1)
+    plt.scatter(matched_stars_df['mag'], matched_stars_df['x']-matched_stars_df['gaia_x'], c=np.sqrt(matched_stars_df['pmra']**2+matched_stars_df['pmde']**2), marker='+', s=0.05)
+    plt.xlabel("$m$ [mag]")
+    plt.ylabel("$x-x_\\mathrm{Gaia}$ [pixel]")
+    plt.colorbar()
+    plt.grid()
+
+    plt.subplot(2, 1, 2)
+    plt.scatter(matched_stars_df['mag'], matched_stars_df['y']-matched_stars_df['gaia_y'], c=np.sqrt(matched_stars_df['pmra']**2+matched_stars_df['pmde']**2), marker='+', s=0.05)
+    plt.xlabel("$m$ [mag]")
+    plt.ylabel("$y-y_\\mathrm{Gaia}$ [pixel]")
+    plt.colorbar()
+    plt.grid()
+
+    plt.savefig(save_folder.joinpath("mag_wcs_res.png"), dpi=750.)
+    plt.close()
+    ################################################################################
+
+    ################################################################################
+    # Residuals/magnitude binplot
+    plt.subplots(nrows=2, ncols=2, figsize=(20., 10.))
+    plt.subplot(2, 2, 1)
+    xbinned_mag, yplot_res, res_dispersion = binplot(matched_stars_df['mag'].to_numpy(), (matched_stars_df['x']-matched_stars_df['gaia_x']).to_numpy(), nbins=50, data=True, rms=True, scale=False)
+    plt.xlabel("$m$ [mag]")
+    plt.ylabel("$x-x_\\mathrm{Gaia}$ [pixel]")
+    plt.grid()
+
+    plt.subplot(2, 2, 2)
+    plt.plot(xbinned_mag, res_dispersion, color='black')
+    plt.xlabel("$m$ [mag]")
+    plt.ylabel("$\\sigma_{x-x_\\mathrm{Gaia}}$ [pixel]")
+
+    plt.subplot(2, 2, 3)
+    xbinned_mag, yplot_res, res_dispersion = binplot(matched_stars_df['mag'].to_numpy(), (matched_stars_df['y']-matched_stars_df['gaia_y']).to_numpy(), nbins=50, data=True, rms=True, scale=False)
+    plt.xlabel("$m$ [mag]")
+    plt.ylabel("$y-y_\\mathrm{Gaia}$ [pixel]")
+    plt.grid()
+
+    plt.subplot(2, 2, 4)
+    plt.plot(xbinned_mag, res_dispersion, color='black')
+    plt.xlabel("$m$ [mag]")
+    plt.ylabel("$\\sigma_{y-y_\\mathrm{Gaia}}$ [pixel]")
+
+    plt.savefig(save_folder.joinpath("mag_wcs_res_binplot.png"), dpi=300.)
+    plt.close()
+    ################################################################################
+
+    ################################################################################
+    # Star lightcurve RMS mag/star lightcurve mean mag
+    rms, mean = [], []
+
+    for gaiaid in set(matched_stars_df['gaiaid']):
+        gaiaid_mask = (matched_stars_df['gaiaid']==gaiaid)
+        rms.append(matched_stars_df.loc[gaiaid_mask, 'mag'].std())
+        mean.append(matched_stars_df.loc[gaiaid_mask, 'mag'].mean())
+
+    plt.plot(mean, rms, '.')
+    plt.xlabel("$\\left<m\\right>$")
+    plt.ylabel("$\\sigma_m$")
+    plt.grid()
+    plt.savefig(save_folder.joinpath("rms_mean_lc.png"), dpi=300.)
+    plt.close()
+    ################################################################################
+
+
+poloka_func.append({'reduce': wcs_residuals})
+
+
+class AstromModel():
+    def __init__(self, dp, degree=5, scale_quadrant=True, quadrant_size=(3072, 3080)):
+        self.dp = dp
+        self.degree = degree
+        self.params = self.init_params()
+
+        self.quadrant_size = quadrant_size
+        self.scale = (1./quadrant_size[0], 1./quadrant_size[1])
+
+    def init_params(self):
+        self.sky_to_pix = compfuncs.BiPol2D(deg=self.degree, key='quadrant', n=len(self.dp.quadrant_set))
+        return fp.FitParameters([*self.sky_to_pix.get_struct(), ('k', 1)])
+
+
+    @property
+    def sigma(self):
+        return np.hstack((self.dp.sx, self.dp.sy))
+
+    @property
+    def W(self):
+        return sparse.dia_array((1./self.sigma**2, 0), shape=(2*len(self.dp.nt), 2*len(self.dp.nt)))
+
+    def __call__(self, x, p, jac=False):
+        self.params.free = p
+        k = self.params['k'].full
+        centered_color = self.dp.color - np.mean(self.dp.color)
+        if not jac:
+            xy = self.sky_to_pix((self.dp.tpx, self.dp.tpy), p=self.params, quadrant=self.dp.quadrant_index)
+
+            # Could be better implemented
+            xy[0] = xy[0] + k*np.tan(np.deg2rad(self.dp.z))*self.dp.parallactic_angle_x*centered_color
+            xy[1] = xy[1] + k*np.tan(np.deg2rad(self.dp.z))*self.dp.parallactic_angle_y*centered_color
+
+            return xy
+        else:
+            # Derivatives wrt polynomial
+            xy, _, (i, j, vals) = self.sky_to_pix.derivatives(np.array([self.dp.tpx, self.dp.tpy]),
+                                                              p=self.params, quadrant=self.dp.quadrant_index)
+
+            # Could be better implemented
+            xy[0] = xy[0] + k*np.tan(np.deg2rad(self.dp.z))*self.dp.parallactic_angle_x*centered_color
+            xy[1] = xy[1] + k*np.tan(np.deg2rad(self.dp.z))*self.dp.parallactic_angle_y*centered_color
+
+            ii = [np.hstack([i, i+len(self.dp.nt)])]
+            jj = [np.tile(j, 2).ravel()]
+            vv = [np.hstack(vals).ravel()]
+
+            # dm/dk
+            i = np.arange(2*len(self.dp.nt))
+            ii.append(i)
+            jj.append(np.full(2*len(self.dp.nt), self.params['k'].indexof(0)))
+            vv.append(np.tile(np.tan(np.deg2rad(self.dp.z)), 2)*np.concatenate([self.dp.parallactic_angle_x, self.dp.parallactic_angle_y])*np.tile(centered_color, 2))
+
+            NN = 2*len(self.dp.nt)
+            ii = np.hstack(ii)
+            jj = np.hstack(jj)
+            vv = np.hstack(vv)
+            ok = jj >= 0
+            J_model = sparse.coo_array((vv[ok], (ii[ok], jj[ok])), shape=(NN, len(self.params.free)))
+
+            return xy, J_model
+
+    def residuals(self):
+        fit_x, fit_y = self.__call__(None, self.params.free)
+        return self.dp.x - fit_x, self.dp.y - fit_y
+
+
+def astrometry_fit(cwd, ztfname, filtercode, logger):
+    from sksparse import cholmod
+    from imageproc import gnomonic
+
+    # Do the actual astrometry fit
+    def fit_astrometry(model):
+        print("Astrometry fit with {} measurements.".format(len(model.dp.nt)))
+        t = time.perf_counter()
+        p = model.params.free.copy()
+        v, J = model(None, p, jac=1)
+        H = J.T @ model.W @ J
+        #H = J.T @ J
+        B = J.T @ model.W @ np.hstack((model.dp.x, model.dp.y))
+        #B = J.T @ np.hstack((model.dp.x, model.dp.y))
+        fact = cholmod.cholesky(H.tocsc())
+        p = fact(B)
+        model.params.free = p
+        print("Done. Elapsed time={}.".format(time.perf_counter()-t))
+        return p
+
+    # Filter elements of defined set whose partial Chi2 is over some threshold
+    def filter_noisy(model, res_x, res_y, field, threshold):
+        w = np.sqrt(res_x**2 + res_y**2)
+        field_val = getattr(model.dp, field)
+        field_idx = getattr(model.dp, '{}_index'.format(field))
+        field_set = getattr(model.dp, '{}_set'.format(field))
+        chi2 = np.bincount(field_idx, weights=w)/np.bincount(field_idx)
+
+        noisy = field_set[chi2 > threshold]
+        noisy_measurements = np.any([field_val == noisy for noisy in noisy], axis=0)
+
+        model.dp.compress(~noisy_measurements)
+        print("Filtered {} {}... down to {} measurements".format(len(noisy), field, len(model.dp.nt)))
+
+        return AstromModel(model.dp, degree=model.degree)
+
+    sn_parameters_df = pd.read_hdf(args.lc_folder.joinpath("{}.hd5".format(ztfname)), key='sn_info')
+
+    # Define plot saving folder
+    save_folder = cwd.joinpath("astrometry_plots")
+    save_folder.mkdir(exist_ok=True)
+
+    # Load data
+    matched_stars_df = pd.read_parquet(cwd.joinpath("matched_stars.parquet"))
+
+    # Compute parallactic angle
+    parallactic_angle_sin = np.cos(np.deg2rad(utils.ztf_latitude))*np.sin(np.deg2rad(matched_stars_df['ha']))/np.sin(np.deg2rad(matched_stars_df['z']))
+    parallactic_angle_cos = np.sqrt(1.-parallactic_angle_sin**2)
+
+    # Project to tangent plane
+    tpx, tpy, e_tpx, e_tpy = gnomonic.gnomonic_projection(np.deg2rad(matched_stars_df['ra'].to_numpy()), np.deg2rad(matched_stars_df['dec'].to_numpy()),
+                                                          np.deg2rad(sn_parameters_df['sn_ra'].to_numpy()), np.deg2rad(sn_parameters_df['sn_dec'].to_numpy()),
+                                                          np.zeros_like(matched_stars_df['ra'].to_numpy()), np.zeros_like(matched_stars_df['dec'].to_numpy()))
+
+    # Add paralactic angle
+    matched_stars_df['parallactic_angle_x'] = parallactic_angle_sin
+    matched_stars_df['parallactic_angle_y'] = parallactic_angle_cos
+
+    matched_stars_df['tpx'] = tpx[0]
+    matched_stars_df['tpy'] = tpy[0]
+
+    plt.plot(tpx[0], tpy[0], '.')
+    plt.axis('equal')
+    plt.savefig(save_folder.joinpath("tangent_plane_positions.png"), dpi=300.)
+
+    matched_stars_df['color'] = matched_stars_df['bpmag'] - matched_stars_df['rpmag']
+
+
+    # Do cut in magnitude
+    matched_stars_df = matched_stars_df.loc[matched_stars_df['mag'] < -10.]
+
+    # Build dataproxy for model
+    dp = DataProxy(matched_stars_df.to_records(),
+                   x='x', sx='sx', sy='sy', y='y', ra='ra', dec='dec', quadrant='quadrant', mag='mag', gaiaid='gaiaid',
+                   bpmag='bpmag', rpmag='rpmag', seeing='seeing', z='z', airmass='airmass', tpx='tpx', tpy='tpy',
+                   parallactic_angle_x='parallactic_angle_x', parallactic_angle_y='parallactic_angle_y', color='color', rcid='rcid')
+
+    dp.make_index('quadrant')
+    dp.make_index('gaiaid')
+    dp.make_index('color')
+    dp.make_index('rcid')
+
+    # Build model
+    model = AstromModel(dp, degree=7)
+    model.init_params()
+
+    # Model fitting
+    fit_astrometry(model)
+    res_x, res_y = model.residuals()
+
+    # Filter outlier quadrants
+    model = filter_noisy(model, res_x, res_y, 'quadrant', 0.1)
+
+    # Redo fit
+    fit_astrometry(model)
+    res_x, res_y = model.residuals()
+
+    print("k={}".format(model.params['k'].full.item()))
+
+    # Extract and save on disk polynomial coefficients
+    coeffs_dict = dict((key, model.params[key].full) for key in model.params._struct.slices.keys())
+    coeffs_df = pd.DataFrame(data=coeffs_dict, index=model.dp.quadrant_set)
+    coeffs_df.to_csv(save_folder.joinpath("coeffs.csv"), sep=",")
+
+    # Compute partial Chi2 per quadrant and per gaia star
+    chi2_quadrant = np.bincount(model.dp.quadrant_index, weights=np.sqrt(res_x**2+res_y**2))/np.bincount(model.dp.quadrant_index)
+    chi2_gaiaid = np.bincount(model.dp.gaiaid_index, weights=np.sqrt(res_x**2+res_y**2))/np.bincount(model.dp.gaiaid_index)
+
+    color_mean = np.mean(model.dp.color_set)
+
+    ################################################################################
+    # Parallactic angle distribution
+    plt.subplot(1, 2, 1)
+    plt.hist(matched_stars_df['parallactic_angle_x'], bins=100)
+    plt.grid()
+    plt.xlabel("$\\sin(\eta)$")
+    plt.ylabel("#")
+
+    plt.subplot(1, 2, 1)
+    plt.hist(matched_stars_df['parallactic_angle_y'], bins=100)
+    plt.grid()
+    plt.xlabel("$\\sin(\eta)$")
+    plt.ylabel("#")
+
+    plt.savefig(save_folder.joinpath("parallactic_angle_distribution.png"), dpi=300.)
+    plt.close()
+    ################################################################################
+
+    ################################################################################
+    # Residuals / quadrant
+    # save_folder.joinpath("parallactic_angle_quadrant").mkdir(exist_ok=True)
+    # for quadrant in model.dp.quadrant_set:
+    #     quadrant_mask = (model.dp.quadrant == quadrant)
+    #     plt.subplots(ncols=2, nrows=1, figsize=(10., 5.))
+    #     plt.subplot(1, 2, 1)
+    #     plt.quiver(model.dp.x[quadrant_mask], model.dp.y[quadrant_mask], model.dp.parallactic_angle_x[quadrant_mask], model.dp.parallactic_angle_y[quadrant_mask])
+    #     plt.xlim(0., utils.quadrant_width_px)
+    #     plt.ylim(0., utils.quadrant_height_px)
+    #     plt.xlabel("$x$ [pixel]")
+    #     plt.xlabel("$y$ [pixel]")
+
+    #     plt.subplot(1, 2, 2)
+    #     plt.quiver(model.dp.x[quadrant_mask], model.dp.y[quadrant_mask], res_x[quadrant_mask], res_y[quadrant_mask])
+    #     plt.xlim(0., utils.quadrant_width_px)
+    #     plt.ylim(0., utils.quadrant_height_px)
+    #     plt.xlabel("$x$ [pixel]")
+    #     plt.xlabel("$y$ [pixel]")
+
+    #     plt.savefig(save_folder.joinpath("parallactic_angle_quadrant/parallactic_angle_{}.png".format(quadrant)), dpi=150.)
+    #     plt.close()
+
+    ################################################################################
+    # Color distribution
+    plt.hist(model.dp.color_set-color_mean, bins=25)
+    plt.xlabel("$B_p-R_p-\\left<B_p-R_p\\right>$ [mag]")
+
+    plt.savefig(save_folder.joinpath("color_distribution.png"), dpi=300.)
+    plt.close()
+    ################################################################################
+
+    ################################################################################
+    # Athmospheric refraction / residuals
+    plt.subplots(ncols=1, nrows=2, figsize=(20., 10.))
+    plt.subplot(2, 1, 1)
+    plt.plot(np.tan(np.deg2rad(model.dp.z))*model.dp.parallactic_angle_x*(model.dp.color-color_mean), res_x, ',')
+    # idx2marker = {0: '*', 1: '.', 2: 'o', 3: 'x'}
+    # for i, rcid in enumerate(model.dp.rcid_set):
+    #     rcid_mask = (model.dp.rcid == rcid)
+    #     plt.scatter(np.tan(np.deg2rad(model.dp.z[rcid_mask]))*model.dp.parallactic_angle_x[rcid_mask][:, 0]*(model.dp.color[rcid_mask]-color_mean), res_x[rcid_mask], marker=idx2marker[i], label=rcid, s=0.1)
+
+    plt.ylim(-0.5, 0.5)
+    plt.xlabel("$\\tan(z)\\sin(\\eta)(B_p-R_p-\\left<B_p-R_p\\right>)$")
+    plt.ylabel("$x-x_\\mathrm{fit}$")
+    plt.legend()
+    plt.grid()
+
+    plt.subplot(2, 1, 2)
+    plt.plot(np.tan(np.deg2rad(model.dp.z))*model.dp.parallactic_angle_y*(model.dp.color-color_mean), res_y, ',')
+    plt.ylim(-0.5, 0.5)
+    plt.xlabel("$\\tan(z)\\cos(\\eta)(B_p-R_p-\\left<B_p-R_p\\right>)$")
+    plt.ylabel("$y-y_\\mathrm{fit}$")
+    plt.grid()
+
+    plt.savefig(save_folder.joinpath("atmref_residuals.pdf"), dpi=300.)
+    plt.close()
+
+    ################################################################################
+    # Chi2/quadrant / seeing
+    plt.plot(model.dp.seeing, chi2_quadrant[model.dp.quadrant_index], '.')
+    plt.xlabel("Seeing")
+    plt.ylabel("$\\chi^2_\\mathrm{quadrant}$")
+    plt.grid()
+
+    plt.savefig(save_folder.joinpath("chi2_quadrant_seeing.png"), dpi=300.)
+    plt.close()
+    ################################################################################
+
+    ################################################################################
+    # Chi2/quadrant / airmass
+    plt.plot(model.dp.airmass, chi2_quadrant[model.dp.quadrant_index], '.')
+    plt.xlabel("Airmass")
+    plt.ylabel("$\\chi^2_\\mathrm{quadrant}$")
+    plt.grid()
+
+    plt.savefig(save_folder.joinpath("chi2_quadrant_airmass.png"), dpi=300.)
+    plt.close()
+    ################################################################################
+
+    ################################################################################
+    # Residuals / distance to origin
+    plt.subplots(nrows=1, ncols=2, figsize=(10., 5.))
+    plt.subplot(1, 2, 1)
+    plt.plot(np.sqrt(model.dp.x**2+model.dp.y**2), res_x, ',')
+    plt.xlabel("$D(x,y)$ [pixel]")
+    plt.ylabel("$x-x_\\mathrm{model}$ [pixel]")
+    plt.grid()
+    plt.subplot(1, 2, 2)
+    plt.plot(np.sqrt(model.dp.x**2+model.dp.y**2), res_y, ',')
+    plt.xlabel("$D(x,y)$ [pixel]")
+    plt.ylabel("$y-y_\\mathrm{model}$ [pixel]")
+    plt.grid()
+    plt.savefig(save_folder.joinpath("residuals_origindistance.png"), dpi=300.)
+    plt.close()
+    ################################################################################
+
+    ################################################################################
+    # Chi2 / star index
+    plt.plot(range(len(model.dp.gaiaid_set)), chi2_gaiaid, ".", color='black')
+    plt.xlabel("Gaia #")
+    plt.ylabel("$\\chi^2$")
+    plt.grid()
+    plt.savefig(save_folder.joinpath("chi2_star.png"), dpi=300.)
+    plt.close()
+    ################################################################################
+
+    ################################################################################
+    # Chi2 / quadrant index
+    plt.plot(range(len(model.dp.quadrant_set)), chi2_quadrant, ".", color='black')
+    plt.xlabel("Quadrant #")
+    plt.ylabel("$\\chi^2$")
+    plt.grid()
+    plt.savefig(save_folder.joinpath("chi2_quadrant.png"), dpi=300.)
+    plt.close()
+    ################################################################################
+
+    ################################################################################
+    # Residuals distribution
+    plt.subplot(1, 2, 1)
+    plt.hist(res_x, bins=100, range=[-0.25, 0.25])
+    plt.grid()
+    plt.xlabel("$x-x_\\mathrm{fit}$ [pixel]")
+
+    plt.subplot(1, 2, 2)
+    plt.hist(res_y, bins=100, range=[-0.25, 0.25])
+    plt.grid()
+    plt.xlabel("$y-y_\\mathrm{fit}$ [pixel]")
+
+    plt.savefig(save_folder.joinpath("residuals_distribution.png"), dpi=300.)
+    plt.close()
+    ################################################################################
+
+    ################################################################################
+    # Magnitude / residuals
+    plt.subplots(nrows=2, ncols=1, figsize=(10., 5.))
+    plt.subplot(2, 1, 1)
+    plt.plot(model.dp.mag, res_x, ",")
+    plt.grid()
+    plt.xlabel("$m$ [mag]")
+    plt.ylabel("$x-x_\\mathrm{fit}$ [pixel]")
+
+    plt.subplot(2, 1, 2)
+    plt.plot(model.dp.mag, res_y, ",")
+    plt.grid()
+    plt.xlabel("$m$ [mag]")
+    plt.ylabel("$y-y_\\mathrm{fit}$ [pixel]")
+
+    plt.savefig(save_folder.joinpath("magnitude_residuals.png"), dpi=300.)
+    plt.close()
+    ################################################################################
+
+    ################################################################################
+    plt.subplots(nrows=2, ncols=2, figsize=(10., 10.))
+    # Magnitude / residuals binplot
+    plt.subplot(2, 2, 1)
+    xbinned_mag, yplot_res, res_dispersion = binplot(dp.mag, res_x, nbins=10, data=True, rms=True, scale=False)
+    plt.xlabel("$m$ [mag]")
+    plt.ylabel("$x-x_\\mathrm{fit}$ [pixel]")
+    plt.grid()
+
+    plt.subplot(2, 2, 2)
+    plt.plot(xbinned_mag, res_dispersion, color='black')
+    plt.xlabel("$m$ [mag]")
+    plt.ylabel("$\\sigma_{x-x_\\mathrm{fit}}$ [pixel]")
+
+    plt.subplot(2, 2, 3)
+    xbinned_mag, yplot_res, res_dispersion = binplot(dp.mag, res_y, nbins=10, data=True, rms=True, scale=False)
+    plt.xlabel("$m$ [mag]")
+    plt.ylabel("$y-y_\\mathrm{fit}$ [pixel]")
+    plt.grid()
+
+    plt.subplot(2, 2, 4)
+    plt.plot(xbinned_mag, res_dispersion, color='black')
+    plt.xlabel("$m$ [mag]")
+    plt.ylabel("$\\sigma_{y-y_\\mathrm{git}}$ [pixel]")
+
+    plt.savefig(save_folder.joinpath("magnitude_residuals_binplot.png"), dpi=300.)
+    plt.close()
+    ################################################################################
+
+    ################################################################################
+    # Residuals/color plot
+    plt.subplots(nrows=2, ncols=1, figsize=(10., 5.))
+    plt.subplot(2, 1, 1)
+    plt.plot(model.dp.bpmag-model.dp.rpmag, res_x, ",")
+    plt.grid()
+    plt.xlabel("$B_p-R_p$ [mag]")
+    plt.ylabel("$x-x_\\mathrm{fit}$ [pixel]")
+
+    plt.subplot(2, 1, 2)
+    plt.plot(model.dp.bpmag-model.dp.rpmag, res_y, ",")
+    plt.grid()
+    plt.xlabel("$B_p-R_p$ [mag]")
+    plt.ylabel("$y-y_\\mathrm{fit}$ [pixel]")
+
+    plt.savefig(save_folder.joinpath("color_residuals.png"), dpi=300.)
+    plt.close()
+    ################################################################################
+
+    ################################################################################
+    # Residuals/color binplot
+    plt.subplots(nrows=2, ncols=2, figsize=(20., 10.))
+    plt.subplot(2, 2, 1)
+    xbinned_mag, yplot_res, res_dispersion = binplot(model.dp.bpmag-model.dp.rpmag, res_x, nbins=10, data=True, rms=True, scale=False)
+    plt.xlabel("$B_p-R_p$ [mag]")
+    plt.ylabel("$x-x_\\mathrm{fit}$ [pixel]")
+    plt.grid()
+
+    plt.subplot(2, 2, 2)
+    plt.plot(xbinned_mag, res_dispersion, color='black')
+    plt.xlabel("$B_p-R_p$ [mag]")
+    plt.ylabel("$\\sigma_{x-x_\\mathrm{fit}}$ [pixel]")
+    plt.grid()
+
+    plt.subplot(2, 2, 3)
+    xbinned_mag, yplot_res, res_dispersion = binplot(model.dp.bpmag-model.dp.rpmag, res_y, nbins=10, data=True, rms=True, scale=False)
+    plt.xlabel("$B_p-R_p$ [mag]")
+    plt.ylabel("$y-y_\\mathrm{fit}$ [pixel]")
+    plt.grid()
+
+    plt.subplot(2, 2, 4)
+    plt.plot(xbinned_mag, res_dispersion, color='black')
+    plt.xlabel("$B_p-R_p$ [mag]")
+    plt.ylabel("$\\sigma_{y-y_\\mathrm{fit}}$ [pixel]")
+    plt.grid()
+
+    plt.savefig(save_folder.joinpath("color_residuals_binplot.png"), dpi=300.)
+    plt.close()
+    ################################################################################
+
+
+poloka_func.append({'reduce': astrometry_fit})
+
+
 poloka_func = dict(zip([list(func.values())[0].__name__ for func in poloka_func], poloka_func))
+
+
+def dump_timings(start_time, end_time, output_file):
+    with open(output_file, 'w') as f:
+        f.write(json.dumps({'start': start_time, 'end': end_time, 'elapsed': end_time-start_time}))
+
 
 scratch_files_to_ignore = ["output.log"]
 def map_op(quadrant, wd, ztfname, filtercode, func, scratch=None):
@@ -404,6 +1026,7 @@ def map_op(quadrant, wd, ztfname, filtercode, func, scratch=None):
 
     result = False
     try:
+        start_time = time.perf_counter()
         result = poloka_func[func]['map'](quadrant_dir, logger)
     except Exception as e:
         logger.error("")
@@ -411,6 +1034,9 @@ def map_op(quadrant, wd, ztfname, filtercode, func, scratch=None):
         logger.error(traceback.format_exc())
         print(traceback.format_exc())
     finally:
+        end_time = time.perf_counter()
+        if args.dump_timings:
+            dump_timings(start_time, end_time, quadrant_dir.joinpath("timings_{}".format(func)))
         if scratch and func != 'clean':
             logger.info("Erasing quadrant data from scratchspace")
             files = list(quadrant_dir.glob("*"))
@@ -441,7 +1067,7 @@ def reduce_op(results, cwd, ztfname, filtercode, func, save_stats):
     logger.info(datetime.datetime.today())
     logger.info("Running reduction {}".format(args.func))
 
-    start_timer = time.perf_counter()
+    start_time = time.perf_counter()
     try:
         result = poloka_func[func]['reduce'](folder, ztfname, filtercode, logger)
     except Exception as e:
@@ -451,6 +1077,10 @@ def reduce_op(results, cwd, ztfname, filtercode, func, save_stats):
         print(traceback.format_exc())
     finally:
         pass
+
+    end_time = time.perf_counter()
+    if args.dump_timings:
+        dump_timings(start_time, end_time, folder.joinpath("timings_{}".format(func)))
 
 
 if __name__ == '__main__':
@@ -469,6 +1099,7 @@ if __name__ == '__main__':
     argparser.add_argument('--log-results', action='store_true', default=True)
     argparser.add_argument('--degree', type=int, default=3, help="Degree of polynomial for relative astrometric fit in pmfit.")
     argparser.add_argument('--use-gaia-photom', action='store_true', help="Use photometric ratios computed using GAIA")
+    argparser.add_argument('--dump-timings', action='store_true')
 
     args = argparser.parse_args()
     args.wd = args.wd.expanduser().resolve()

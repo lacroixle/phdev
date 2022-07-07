@@ -1183,8 +1183,6 @@ def plot_proper_motion_gaia_residuals(model, cat, outdir=None):
     _savefig(fig, outdir, 'pm_gaia_residuals.png')
 
 
-
-
 def plot_residual_vs_magnitude(model, cat, outdir=None):
     meas_xy, model_xy, res = residuals(model, cat)
     #res = np.sqrt(res[:, 0]**2 + res[:, 1]**2)

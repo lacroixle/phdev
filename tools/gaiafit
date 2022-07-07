@@ -4,6 +4,7 @@ import argparse
 import os
 import time
 import shutil
+import itertools
 
 import numpy as np
 from scipy.sparse import coo_matrix, dia_array
@@ -216,6 +217,7 @@ def compute_photoratios(model, y_model, ref_exposure, save=False, wd=None):
         alphas[exp] = 10**(-0.4*(model.params['zp'].full[model.dp.exp_map[exp]] - zp_ref))
 
     alphas_df = pd.DataFrame(list(alphas.values()), index=alphas.keys(), columns=['alpha'])
+    #alphas_df['mjd'] = [model.dp.mjd_set[model.dp.exp_map[exp]] for exp in alphas_df.index]
 
     if save:
         filename = wd.joinpath("pmfit/photom_ratios.ntuple")
@@ -266,10 +268,11 @@ def do_plots(model, y_model, save_folder=None, plot_ext=".png"):
     chi2 = np.bincount(model.dp.gaiaid_index, weights=res**2)/np.bincount(model.dp.gaiaid_index)
     measurement_chi2 = np.array([chi2[model.dp.gaiaid_map[gaiaid]] for gaiaid in model.dp.gaiaid])
 
-    plt.plot([model.dp.gaiaid_map[gaiaid] for gaiaid in model.dp.gaiaid_set], chi2, '.', color='black')
+
+    plt.plot([model.dp.gaiaid_map[gaiaid] for gaiaid in model.dp.gaiaid_set], np.sqrt(chi2), '.', color='black')
     plt.grid()
     plt.xlabel("Star index")
-    plt.ylabel("$\\chi^2_p$")
+    plt.ylabel("RMS Res")
     _show("chi2_star")
 
     plt.plot(model.dp.mag, 1./model.sigma()**2, '.', color='black')
@@ -278,7 +281,7 @@ def do_plots(model, y_model, save_folder=None, plot_ext=".png"):
     plt.grid()
     _show("sigma_mag")
 
-    rms = [np.std(model.dp.mag[model.dp.gaiaid==gaiaid]) for gaiaid in model.dp.gaiaid_set]
+    rms = [np.std(model.dp.mag[model.dp.gaiaid==gaiaid]-model.params['zp'].full[model.dp.exp_index[model.dp.gaiaid==gaiaid]], ddof=1) for gaiaid in model.dp.gaiaid_set]
 
     plt.plot(range(len(model.dp.gaiaid_set)), rms, '.', color='xkcd:light blue')
     plt.xlabel("Gaia star #")
@@ -448,4 +451,105 @@ if __name__ == '__main__':
         os.makedirs(new_plot_folder, exist_ok=True)
         do_plots(new_model, new_y_model, new_plot_folder)
 
-    compute_photoratios(new_model, new_y_model, args.ref_exposure, save=True, wd=args.wd)
+    exit()
+    # alpha_df = compute_photoratios(new_model, new_y_model, args.ref_exposure, save=True, wd=args.wd)
+    # lc_mean = dict([(gaiaid, np.mean(model.dp.mag[model.dp.gaiaid==gaiaid])) for gaiaid in model.dp.gaiaid_set])
+    # mean_mjd = dict([(mjd, np.mean([model.dp.mag[(model.dp.mjd==mjd)]-lc_mean[gaiaid] for gaiaid in model.dp.gaiaid_set if gaiaid in set(model.dp.gaiaid[model.dp.mjd==mjd])])) for mjd in model.dp.mjd_set])
+
+    # stars_lc = {}
+    # for gaiaid in model.dp.gaiaid_set:
+    #     gaiaid_mask = (model.dp.gaiaid==gaiaid)
+    #     mjd = model.dp.mjd[gaiaid_mask]
+    #     zp = np.array([model.params['zp'].full[model.dp.mjd_map[m]] for m in mjd])
+    #     mean = np.mean(model.dp.mag[gaiaid_mask]-zp)
+    #     stars_lc[gaiaid] = (mjd, model.dp.mag[gaiaid_mask] - zp -mean, model.dp.emag[gaiaid_mask])
+
+
+    model.dp.add_field('zp', model.params['zp'].full[model.dp.exp_index])
+    model.dp.make_index('zp')
+
+    # star_lc_means = np.array([np.mean(model.dp.mag[model.dp.gaiaid==gaiaid]-model.dp.zp[model.dp.gaiaid==gaiaid]) for gaiaid in model.dp.gaiaid_set])
+    # star_lc_rms = np.array([np.std(model.dp.mag[model.dp.gaiaid==gaiaid]-model.dp.zp[model.dp.gaiaid==gaiaid]) for gaiaid in model.dp.gaiaid_set])
+    star_lc_means = np.array([np.mean(model.dp.mag[model.dp.gaiaid==gaiaid]) for gaiaid in model.dp.gaiaid_set])
+    star_lc_rms = np.array([np.std(model.dp.mag[model.dp.gaiaid==gaiaid]) for gaiaid in model.dp.gaiaid_set])
+    plt.plot(star_lc_means, star_lc_rms, '.')
+    plt.xlabel("$\\left<m-ZP\\right>$")
+    plt.ylabel("$\\sigma_{m-ZP}$")
+    plt.grid()
+    plt.show()
+
+    model.dp.add_field('mag_mean', star_lc_means[model.dp.gaiaid_index])
+    model.dp.make_index('mag_mean')
+
+    exit()
+
+    star_x_means = np.array([np.mean(model.dp.x[model.dp.gaiaid==gaiaid]) for gaiaid in model.dp.gaiaid_set])
+    star_y_means = np.array([np.mean(model.dp.y[model.dp.gaiaid==gaiaid]) for gaiaid in model.dp.gaiaid_set])
+    model.dp.add_field('x_mean', star_x_means[model.dp.gaiaid_index])
+    model.dp.add_field('y_mean', star_y_means[model.dp.gaiaid_index])
+    model.dp.make_index('x_mean')
+    model.dp.make_index('y_mean')
+
+    #plt.plot(model.dp.mjd[bright_stars_mask], model.dp.mag[bright_stars_mask]-model.dp.zp[bright_stars_mask]-model.dp.mean[bright_stars_mask], ',', color='black')
+
+    plt.plot(model.dp.mjd, model.dp.x-model.dp.x_mean, '.')
+    plt.show()
+
+    for thresh in [-8., -10, -12]:
+        bright_stars_mask = (model.dp.mag<thresh)
+        print(thresh, sum(bright_stars_mask))
+        m = np.array([np.mean(model.dp.mag[(model.dp.mjd==mjd)&bright_stars_mask]-model.dp.zp[(model.dp.mjd==mjd)&bright_stars_mask]-model.dp.mag_mean[(model.dp.mjd==mjd)&bright_stars_mask]) for mjd in model.dp.mjd_set])
+        s = np.array([np.std(model.dp.mag[(model.dp.mjd==mjd)&bright_stars_mask]-model.dp.zp[(model.dp.mjd==mjd)&bright_stars_mask]-model.dp.mag_mean[(model.dp.mjd==mjd)&bright_stars_mask]) for mjd in model.dp.mjd_set])
+        plt.plot(range(len(s)), s, '.', label="$m<{}$".format(thresh))
+
+    plt.grid()
+    plt.xlabel("MJD Index")
+    #plt.ylabel("$\\sqrt{\\mathrm{Var}[m-ZP-\\left<m-ZP\\right>]}$")
+    plt.ylabel("$\\sigma_{m-ZP-\\left<m-ZP\\right>}$")
+    plt.legend()
+    plt.show()
+
+    plt.plot(model.dp.mjd_set, s, '.')
+    plt.grid()
+    plt.show()
+
+    plt.errorbar(model.dp.mjd_set, m, s, lw=0., elinewidth=1., marker='.')
+
+    plt.grid()
+    plt.xlabel("MJD")
+    plt.ylabel("$m-ZP-\\left<m-ZP\\right>$")
+    plt.show()
+    plt.close()
+
+    plt.hist((model.dp.mag-model.dp.zp-model.dp.mean)[bright_stars_mask], bins=200)
+    plt.grid()
+    plt.xlabel("$m-ZP-\\left<m-ZP\\right>$")
+    plt.ylabel("Count")
+    plt.show()
+
+
+    # plt.subplots()
+
+    # plt.plot(alpha_df['alpha'], [mean_mjd.get(model.dp.mjd_set[model.dp.exp_map[exp]], 0.) for exp in alpha_df.index], '.')
+    # plt.xlabel("$\\alpha$")
+    # plt.ylabel("Mean")
+    # plt.grid()
+    # plt.show()
+    # plt.close()
+
+    # fig, ax1 = plt.subplots()
+    # ax2 = ax1.twinx()
+
+
+    # for gaiaid in model.dp.gaiaid_set:
+    #     gaiaid_mask = (model.dp.gaiaid == gaiaid)
+    #     lc_mean = np.mean(model.dp.mag[gaiaid_mask])
+    #     ax1.plot(model.dp.mjd[gaiaid_mask], model.dp.mag[gaiaid_mask]-lc_mean, ',', color='black')
+
+    # ax1.plot(model.dp.mjd_set, mean_mjd.values(), '.')
+    # ax2.plot([model.dp.mjd_set[model.dp.exp_map[exp]] for exp in alpha_df.index], alpha_df['alpha'], '.', color='black')
+    # ax1.set_ylabel("$m-\\left< m \\right>$")
+    # ax2.set_ylabel("$\\alpha$")
+    # plt.grid()
+    # plt.xlabel("MJD")
+    # plt.show()
