@@ -124,9 +124,7 @@ if __name__ == '__main__':
             lc_info['fieldids'] = tuple(set(lc_info['sn_flux']['fieldid']))
 
             t = np.linspace(sn_flux_df['mjd'].min()+1., sn_flux_df['mjd'].max()-1., int(len(sn_flux_df)/3.))
-            print(t)
-            print(sn_flux_df['mjd'].to_numpy())
-            lc_info['spline'] = LSQUnivariateSpline(sn_flux_df['mjd'].to_numpy(), sn_flux_df['flux'].to_numpy(), t)
+            #lc_info['spline'] = LSQUnivariateSpline(sn_flux_df['mjd'].to_numpy(), sn_flux_df['flux'].to_numpy(), t)
 
             with fits.open(sn_folder.joinpath("{}/calibrated.fits".format(ref_exp))) as hdul:
                 w = WCS(hdul[0].header)
@@ -231,7 +229,7 @@ if __name__ == '__main__':
                 plt.errorbar(sn_flux['mjd'], sn_flux['flux'], yerr=sn_flux['varflux'], color='black', ms=5., lw=0., marker=idx_to_marker[j], ls='', label=str(fieldid), elinewidth=1.)
 
             t = np.linspace(lc_info['sn_flux']['mjd'].min(), lc_info['sn_flux']['mjd'].max(), 500)
-            plt.plot(t, lc_info['spline'](t), color='grey')
+            #plt.plot(t, lc_info['spline'](t), color='grey')
             plt.xlim([lc_info['t_inf'], lc_info['t_sup']])
             plt.axvline(lc_info['t0'], color='black')
             plt.xlabel("MJD")
@@ -271,6 +269,20 @@ if __name__ == '__main__':
         def _plot_fp_diff(lc_info, i, first):
             plt.subplot(3, 2, i*2 + 1)
             if first:
+                plt.title("Forced photometry lightcurve")
+
+            for j, fieldid in enumerate(lc_info['fieldids']):
+                sn_flux = lc_info['lc_fp'][lc_info['lc_fp']['field_id'] == fieldid]
+                plt.errorbar(sn_flux.index, sn_flux['flux'], yerr=sn_flux['flux_err'], color='black', ms=5., lw=0., marker=idx_to_marker[j], ls='', label=str(fieldid), elinewidth=1.)
+
+            plt.legend(title="Field ID")
+            plt.axvline(lc_info['t0'], color='black')
+            plt.grid()
+            plt.xlabel("MJD")
+            plt.xlim(lc_info['t_inf'], lc_info['t_sup'])
+
+            plt.subplot(3, 2, i*2 + 2)
+            if first:
                 plt.title("Scene modeling lightcurve")
 
             for j, fieldid in enumerate(lc_info['fieldids']):
@@ -282,20 +294,6 @@ if __name__ == '__main__':
             plt.grid()
             plt.xlabel("MJD")
             plt.ylabel("Flux - {}".format(lc_info['filtercode']))
-            plt.xlim(lc_info['t_inf'], lc_info['t_sup'])
-
-            plt.subplot(3, 2, i*2 + 2)
-            if first:
-                plt.title("Forced photometry lightcurve")
-
-            for j, fieldid in enumerate(lc_info['fieldids']):
-                sn_flux = lc_info['lc_fp'][lc_info['lc_fp']['field_id'] == fieldid]
-                plt.errorbar(sn_flux.index, sn_flux['flux'], yerr=sn_flux['flux_err'], color='black', ms=5., lw=0., marker=idx_to_marker[j], ls='', label=str(fieldid), elinewidth=1.)
-
-            plt.legend(title="Field ID")
-            plt.axvline(lc_info['t0'], color='black')
-            plt.grid()
-            plt.xlabel("MJD")
             plt.xlim(lc_info['t_inf'], lc_info['t_sup'])
 
         # Do plots

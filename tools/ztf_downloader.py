@@ -12,6 +12,8 @@ from ztfimg import science
 from ztfquery import io
 from joblib import Parallel, delayed
 from more_itertools import chunked
+# from dask import delayed, compute
+# from dask.distributed import Client, LocalCluster, wait, get_worker
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -21,9 +23,11 @@ if __name__ == '__main__':
     argparser.add_argument('--quadrant-list', type=pathlib.Path)
     argparser.add_argument('--chunk-size', type=int, default=1000)
     argparser.add_argument('-j', type=int)
+    argparser.add_argument('--error-filename', type=pathlib.Path)
 
     args = argparser.parse_args()
     args.quadrant_list = args.quadrant_list.expanduser().resolve()
+    args.error_filename = args.error_filename.expanduser().resolve()
 
     print("Reading quadrant list from file {}".format(args.quadrant_list))
     quadrant_list = []
@@ -31,58 +35,57 @@ if __name__ == '__main__':
         quadrant_list.extend(map(lambda x: x.strip(), f.readlines()))
 
     quadrant_chunks = list(chunked(quadrant_list, args.chunk_size))
-    print("{} chunks of {} quadrants to download".format(len(quadrant_chunks), args.chunk_size))
+    print("{} chunks of {} quadrants to download".format(len(quadrant_chunks), args.chunk_size), flush=True)
 
-    quadrant_errors = []
+    # print("Allocating local cluster")
+    # localCluster = LocalCluster(n_workers=1, dashboard_address='localhost:8787', processes=True, threads_per_worker=1, nanny=True)
+    # client = Client(localCluster)
+    # print("Allocating {} workers".format(args.j))
+    # localCluster.scale(args.j)
+    # print("Done. Dashboard address={}".format(client.dashboard_link))
+
+    # Wipe error list file
+    with open(args.error_filename, 'w') as f:
+        pass
 
     def _download_quadrant(quadrant):
+        warnings.filterwarnings("ignore")
         try:
+            #science.ScienceQuadrant.from_filename(lc_filename).get_data('clean')
             downloaded_quadrant_sciimg = io.get_file(quadrant)
+            #gc.collect()
             downloaded_quadrant_mskimg = io.get_file(quadrant, suffix="mskimg.fits")
+            gc.collect()
         except PermissionError as e:
-            quadrant_errors.append(quadrant)
+            return False
+        except:
+            #traceback.print_exc()
             return False
         finally:
             return True
 
     def _download_quadrant_chunk(quadrant_chunk):
-        print("Dowloading sciimg", flush=True)
-        start_time = time.perf_counter()
-        downloaded_quadrants = io.get_file(quadrant_chunk, maxnprocess=args.j)
-        elapsed_time = time.perf_counter() - start_time
-        print("Done. Dowloaded {} quadrants at MB/s".format(len(downloaded_quadrants), 37.*len(quadrant_chunk)/elapsed_time))
-        print("Elapsed time={}".format(elapsed_time))
+        return Parallel(n_jobs=args.j)(delayed(_download_quadrant)(quadrant) for quadrant in quadrant_chunk)
+        #download_jobs = [delayed(_download_quadrant)(quadrant) for quadrant in quadrant_chunk]
+        #gc.collect()
+        #fjobs = client.compute(download_jobs)
+        #return [fjob.result() for fjob in fjobs]
 
-        print("Downloading mskimg", flush=True)
+
+    chunk_size_gb = args.chunk_size*(37+17)/1000
+    for i, quadrant_chunk in enumerate(quadrant_chunks):
+        print("Chunk {}, {} quadrants to download ({} GB)".format(i, len(quadrant_chunk), chunk_size_gb), flush=True)
         start_time = time.perf_counter()
-        downloaded_quadrants = io.get_file(quadrant_chunk, suffix="mskimg.fits", maxnprocess=args.j)
+        success = _download_quadrant_chunk(quadrant_chunk)
         elapsed_time = time.perf_counter() - start_time
-        print("Done. Dowloaded {} quadrants at {} MB/s".format(len(downloaded_quadrants), 15.*len(quadrant_chunk)/elapsed_time))
-        print("Elapsed time={}".format(elapsed_time))
+        quadrants_error = np.array(quadrant_chunk)[not success].tolist()
+        with open(args.error_filename, 'a') as f:
+            f.writelines([line + "\n" for line in quadrants_error])
 
         gc.collect()
 
-    for i, quadrant_chunk in enumerate(quadrant_chunks):
-        print("Chunk {}, {} quadrants to download ({} MB)".format(i, len(quadrant_chunk), ), flush=True)
-        continue_download = True
-        current_chunk = quadrant_chunk
-        while continue_download:
-            try:
-                _download_quadrant_chunk(current_chunk)
-            except PermissionError as e:
-                print("Permission error for file {}".format(str(e)))
-                to_remove = pathlib.Path(str(e)).with_suffix("").with_suffix("").with_suffix("").with_suffix(".fits").name
-                to_remove = to_remove.replace("mskimg", "sciimg")
-                print("Removing {} from chunk...".format(to_remove))
-                current_chunk.remove(to_remove)
-            except:
-                traceback.print_exc()
-                exit()
-            else:
-                continue_download = False
-
-
-        print("Done downloading chunk {}".format(i))
+        print("\tSuccessfuly downloaded {} quadrants".format(sum(success)))
+        print("\tElapsed time={} s, transfer rate={} MB/s".format(elapsed_time, chunk_size_gb*1000/elapsed_time))
 
     print("Done", flush=True)
 

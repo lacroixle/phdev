@@ -24,7 +24,7 @@ import matplotlib.pyplot as plt
 import dask
 from dask import delayed, compute
 from dask.distributed import Client, LocalCluster, wait, get_worker
-from dask_jobqueue import SLURMCluster, SGECluster
+from dask_jobqueue import SLURMCluster
 import ztfquery.io
 import numpy as np
 from skimage.morphology import label
@@ -319,8 +319,9 @@ def smphot(cwd, ztfname, filtercode, logger):
     gaia_cat = gaia_cat.assign(ra_error=pd.Series(np.full(len(gaia_cat), 1e-6)).values)
     gaia_cat = gaia_cat.assign(dec_error=pd.Series(np.full(len(gaia_cat), 1e-6)).values)
 
+    print(ztfname, filtercode, gaia_cat.columns)
     gaia_cat = gaia_cat.rename(columns={'pmde': 'pmdec', 'plx': 'parallax', 'e_pmra': 'pmra_error', 'e_pmde': 'pmdec_error', 'gmag': 'g', 'bpmag': 'bp', 'rpmag': 'rp', 'e_gmag': 'g_error', 'e_bpmag': 'bperror', 'e_bpmag': 'bp_error', 'e_rpmag': 'rp_error'})
-    gaia_cat = gaia_cat[['ra', 'dec', 'ra_error', 'dec_error', 'pmra', 'pmdec', 'parallax', 'pmra_error', 'pmdec_error', 'g', 'bp', 'rp', 'g_error', 'bp_error', 'rp_error']]
+    #gaia_cat = gaia_cat[['ra', 'dec', 'ra_error', 'dec_error', 'pmra', 'pmdec', 'parallax', 'pmra_error', 'pmdec_error', 'g', 'bp', 'rp', 'g_error', 'bp_error', 'rp_error']]
 
     gaia_path = args.wd.joinpath("{}/{}/gaia.npy".format(ztfname, filtercode))
     np.save(gaia_path, gaia_cat.to_records(index=False))
@@ -1138,7 +1139,7 @@ if __name__ == '__main__':
     if args.cluster_worker > 0:
         cluster = SLURMCluster(cores=args.n_jobs,
                                processes=args.n_jobs,
-                               memory="{}GB".format(3*n_jobs),
+                               memory="{}GB".format(3*args.n_jobs),
                                project="ztf",
                                walltime="12:00:00",
                                queue="htc",
