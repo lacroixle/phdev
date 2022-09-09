@@ -11,6 +11,12 @@ from astropy.wcs import WCS
 from astropy.coordinates import SkyCoord
 from astropy.time import Time
 import astropy.units as u
+import imageproc.composable_functions as compfuncs
+import saunerie.fitparameters as fp
+from scipy import sparse
+from croaks import DataProxy
+from sksparse import cholmod
+import matplotlib.pyplot as plt
 
 
 filtercodes = ['zg', 'zr', 'zi']
@@ -21,6 +27,18 @@ ztf_latitude = 33.3573 # deg E
 ztf_altitude = 1668. # m
 
 gaiarefmjd = Time(2015.5, format='byear').mjd
+
+filtercode2gaiaband = {'zg': 'bpmag',
+                       'zr': 'rpmag'}
+
+idx2markerstyle = ['*', 'x', '.', 'v', '^']
+
+
+def make_index_from_list(dp, index_list):
+    """
+    Calls make_index() of DataProxy dp on all index names in index_list
+    """
+    [dp.make_index(index) for index in index_list]
 
 
 def cat_to_ds9regions(cat, filename, radius=5., color='green'):
@@ -131,6 +149,11 @@ def get_ref_quadrant_from_driver(driver_path):
 
         if reference_quadrant:
             return pathlib.Path(reference_quadrant[:-1]).name
+
+
+def get_ref_quadrant_from_band_folder(band_path):
+    with open(band_path.joinpath("reference_quadrant")) as f:
+        return f.readline()
 
 
 def poly2d_from_file(filename):
@@ -249,7 +272,7 @@ def write_list(filename, header, df, df_desc, df_format):
             if column in df_desc.keys():
                 f.write("#{} : {}\n".format(column, df_desc[column]))
             else:
-                f.write("#{}".format(column))
+                f.write("#{}\n".format(column))
 
         if df_format is not None:
             f.write("# format {}\n".format(df_format))
@@ -260,7 +283,10 @@ def write_list(filename, header, df, df_desc, df_format):
 
 
 class ListTable:
-    def __init__(self, header, df, df_desc, df_format, filename=None):
+    def __init__(self, header, df, df_desc=None, df_format=None, filename=None):
+        if not df_desc:
+            df_desc = {}
+
         self.header = header
         self.df = df
         self.df_desc = df_desc
@@ -279,3 +305,85 @@ class ListTable:
 
     def write(self):
         self.write_to(self.filename)
+
+
+class BiPol2DModel():
+    def __init__(self, degree, space_count=1):
+        self.bipol2d = compfuncs.BiPol2D(deg=degree, key='space', n=space_count)
+
+        self.params = fp.FitParameters([*self.bipol2d.get_struct()])
+
+    def __get_coeffs(self):
+        return dict((key, self.params[key].full) for key in self.params._struct.slices.keys())
+
+    def __set_coeffs(self, coeffs):
+        for key in coeffs.keys():
+            self.params[key] = coeffs[key]
+
+    coeffs = property(__get_coeffs, __set_coeffs)
+
+    def __call__(self, x, p=None, space_index=None, jac=False):
+        if p is not None:
+            self.params.free = p
+
+        if space_index is None:
+            space_index = [0]*x.shape[1]
+
+        # Evaluate polynomials
+        if not jac:
+            return self.bipol2d(x, self.params, space=space_index)
+        else:
+            xy, _, (i, j, vals) = self.bipol2d.derivatives(x, self.params, space=space_index)
+
+            ii = np.hstack([i, i+x[0].shape[0]])
+            jj = np.tile(j, 2).ravel()
+            vv = np.hstack(vals).ravel()
+
+            J_model = sparse.coo_array((vv, (ii, jj)), shape=(2*xy.shape[1], len(self.params.free)))
+
+            return xy, J_model
+
+    def fit(self, x, y, space_index=None):
+        v, J = self.__call__(x, space_index=space_index, jac=True)
+        H = J.T @ J
+        B = J.T @ np.hstack(y)
+
+        fact = cholmod.cholesky(H.tocsc())
+        p = fact(B)
+        self.params.free = p
+        return p
+
+    def residuals(self, x, y, space_index=None):
+        y_fit = self.__call__(x, space_index=space_index)
+        return y_fit - y
+
+    def control_plots(self, x, y, folder, space_index=None):
+        res = self.residuals(x, y, space_index=space_index)
+        plt.subplots(ncols=2, nrows=1, figsize=(10., 5.))
+        plt.subplot(2, 1, 1)
+        plt.hist(res[0], bins='rice')
+        plt.grid()
+        plt.subplot(2, 1, 2)
+        plt.hist(res[1], bins='rice')
+        plt.grid()
+        plt.savefig(folder.joinpath("residual_distribution.png"), dpi=300.)
+        plt.close()
+
+
+def BiPol2D_fit(x, y, degree, space_index=None, control_plots=None):
+    if space_index is None:
+        space_count = 1
+    else:
+        space_count = len(set(space_index))
+    model = BiPol2DModel(degree, space_count=space_count)
+    model.fit(x, y, space_index=space_index)
+
+    if control_plots:
+        model.control_plots(x, y, control_plots, space_index=space_index)
+
+    return model
+
+
+def create_2D_mesh_grid(*meshgrid_space):
+    meshgrid = np.meshgrid(*meshgrid_space)
+    return np.array([meshgrid[0], meshgrid[1]]).T.reshape(-1, 2)

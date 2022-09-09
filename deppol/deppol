@@ -1,0 +1,292 @@
+#!/usr/bin/env python3
+
+import argparse
+import pathlib
+import logging
+import datetime
+import time
+import shutil
+import sys
+import socket
+import copy
+import traceback
+
+"""
+from astropy.io import fits
+from astropy.wcs import WCS
+from astropy.coordinates import SkyCoord
+import matplotlib
+import matplotlib.pyplot as plt
+import dask
+import ztfquery.io
+import numpy as np
+from skimage.morphology import label
+from saunerie.plottools import binplot
+from astropy.time import Time
+import imageproc.composable_functions as compfuncs
+import saunerie.fitparameters as fp
+from scipy import sparse
+from croaks import DataProxy
+"""
+
+from dask import delayed, compute
+from dask.distributed import Client, LocalCluster, wait, get_worker
+from dask_jobqueue import SLURMCluster
+import pandas as pd
+
+from deppol_utils import run_and_log, dump_timings
+
+ztf_filtercodes = ['zg', 'zr', 'zi', 'all']
+poloka_func = []
+
+
+import deppol_misc
+
+poloka_func.append({'map': deppol_misc.clean, 'reduce': deppol_misc.clean_reduce})
+poloka_func.append({'map': deppol_misc.match_gaia, 'reduce': deppol_misc.match_gaia_reduce})
+poloka_func.append({'map': deppol_misc.clean, 'reduce': deppol_misc.clean_reduce})
+poloka_func.append({'map': deppol_misc.stats, 'reduce': deppol_misc.stats_reduce})
+
+
+import deppol_preprocess
+
+poloka_func.append({'map': deppol_preprocess.make_catalog})
+poloka_func.append({'map': deppol_preprocess.mkcat2})
+poloka_func.append({'map': deppol_preprocess.makepsf})
+poloka_func.append({'map': deppol_preprocess.pipeline})
+
+
+import deppol_smphot
+
+poloka_func.append({'reduce': deppol_smphot.reference_quadrant})
+poloka_func.append({'reduce': deppol_smphot.smphot})
+poloka_func.append({'reduce': deppol_smphot.smphot_plot})
+
+
+import deppol_astrometry
+
+poloka_func.append({'reduce': deppol_astrometry.wcs_residuals})
+poloka_func.append({'reduce': deppol_astrometry.astrometry_fit})
+
+
+import deppol_photometry
+
+poloka_func.append({'reduce': deppol_photometry.photometry_fit})
+poloka_func.append({'reduce': deppol_photometry.photometry_fit_plot})
+
+
+poloka_func = dict(zip([list(func.values())[0].__name__ for func in poloka_func], poloka_func))
+
+
+scratch_files_to_ignore = ["output.log"]
+def map_op(quadrant, wd, ztfname, filtercode, func, args, scratch=None):
+    start_time = time.perf_counter()
+    quadrant_dir = wd.joinpath("{}/{}/{}".format(ztfname, filtercode, quadrant))
+
+    logger = None
+    if func != 'clean' or 'prepare':
+        logger = logging.getLogger(quadrant)
+        logger.addHandler(logging.FileHandler(str(quadrant_dir.joinpath("output.log")), mode='a'))
+        logger.setLevel(logging.INFO)
+        logger.info(datetime.datetime.today())
+        logger.info("Current directory: {}".format(quadrant_dir))
+        logger.info("Running {}".format(func))
+
+        logger.info("Quadrant directory: {}".format(quadrant_dir))
+
+        if scratch:
+            logger.info("Using scratch space {}".format(scratch))
+            logger.info(" Parent exists={}".format(scratch.parent.exists()))
+            quadrant_scratch = scratch.joinpath(quadrant)
+            quadrant_scratch.mkdir(exist_ok=True, parents=True)
+            logger.info("Successfully created quadrant working dir in scratch space")
+            files = list(quadrant_dir.glob("*"))
+
+
+            quadrant_dir = quadrant_scratch
+            logger.info("Successfully copyed files from sps to scratchspace")
+
+    result = False
+    try:
+        start_time = time.perf_counter()
+        result = poloka_func[func]['map'](quadrant_dir, logger, args)
+    except Exception as e:
+        logger.error("")
+        logger.error("In folder {}".format(quadrant_dir))
+        logger.error(traceback.format_exc())
+        print(traceback.format_exc())
+    finally:
+        end_time = time.perf_counter()
+        if args.dump_timings:
+            dump_timings(start_time, end_time, quadrant_dir.joinpath("timings_{}".format(func)))
+        if scratch and func != 'clean':
+            logger.info("Erasing quadrant data from scratchspace")
+            files = list(quadrant_dir.glob("*"))
+            [shutil.copy2(f, wd.joinpath("{}/{}/{}".format(ztfname, filtercode, quadrant))) for f in files]
+            [f.unlink() for f in files]
+            quadrant_dir.rmdir()
+
+    if func != 'clean':
+        logger.info("Done.")
+
+    return result, time.perf_counter(), start_time, get_worker().id
+
+
+def reduce_op(results, cwd, ztfname, filtercode, func, save_stats, args):
+    folder = args.wd.joinpath("{}/{}".format(ztfname, filtercode))
+
+    # If we want to agregate run statistics on the previous map operation
+    if save_stats and results is not None and any(results) and func != 'clean':
+        results_df = pd.DataFrame([result for result in results if result is not None], columns=['result', 'time_end', 'time_start', 'worker_id'])
+        results_df.to_csv(folder.joinpath("results_{}.csv".format(func)), index=False)
+
+    if not 'reduce' in poloka_func[func].keys():
+        return
+
+    logger = logging.getLogger("{}-{}".format(ztfname, filtercode))
+    logger.addHandler(logging.FileHandler(folder.joinpath("output.log"), mode='a'))
+    logger.setLevel(logging.INFO)
+    logger.info(datetime.datetime.today())
+    logger.info("Running reduction {}".format(args.func))
+
+    start_time = time.perf_counter()
+    try:
+        result = poloka_func[func]['reduce'](folder, ztfname, filtercode, logger, args)
+    except Exception as e:
+        logger.error("")
+        logger.error("In SN {}-{}".format(ztfname, filtercode))
+        logger.error(traceback.format_exc())
+        print(traceback.format_exc())
+    finally:
+        pass
+
+    end_time = time.perf_counter()
+    if args.dump_timings:
+        dump_timings(start_time, end_time, folder.joinpath("timings_{}".format(func)))
+
+
+if __name__ == '__main__':
+    argparser = argparse.ArgumentParser(description="")
+    argparser.add_argument('--ztfname', type=pathlib.Path, help="If provided, perform computation on one SN1a. If it points to a valid text file, will perform computation on all keys. If not provided, process the whole working directory.")
+    argparser.add_argument('-j', '--n_proc', dest='n_jobs', type=int, default=1)
+    argparser.add_argument('--wd', type=pathlib.Path, help="Working directory")
+    argparser.add_argument('--filtercode', choices=ztf_filtercodes, default='all', help="Only perform computations on one or all filters.")
+    argparser.add_argument('--func', type=str, choices=poloka_func.keys(), default='pipeline')
+    argparser.add_argument('--dry-run', dest='dry_run', action='store_true')
+    argparser.add_argument('--no-map', dest='no_map', action='store_true')
+    argparser.add_argument('--no-reduce', dest='no_reduce', action='store_true')
+    argparser.add_argument('--cluster-worker', type=int, default=0)
+    argparser.add_argument('--scratch', type=pathlib.Path)
+    argparser.add_argument('--lc-folder', dest='lc_folder', type=pathlib.Path)
+    argparser.add_argument('--log-results', action='store_true', default=True)
+    argparser.add_argument('--degree', type=int, default=3, help="Degree of polynomial for relative astrometric fit in pmfit.")
+    argparser.add_argument('--use-gaia-photom', action='store_true', help="Use photometric ratios computed using GAIA")
+    argparser.add_argument('--dump-timings', action='store_true')
+
+    args = argparser.parse_args()
+    args.wd = args.wd.expanduser().resolve()
+
+
+    filtercodes = ztf_filtercodes[:3]
+    if args.filtercode != 'all':
+        filtercodes = [args.filtercode]
+
+
+    ztfnames = None
+    if args.ztfname is not None:
+        if args.ztfname.stem == str(args.ztfname):
+            ztfnames = [str(args.ztfname)]
+        else:
+            args.ztfname = args.ztfname.expanduser().resolve()
+            if args.ztfname.exists():
+                with open(args.ztfname, 'r') as f:
+                    ztfnames = [ztfname[:-1] for ztfname in f.readlines()]
+            else:
+                pass
+
+    print("Found {} SN1a".format(len(ztfnames)))
+
+    if args.scratch:
+        args.scratch.mkdir(exist_ok=True, parents=True)
+
+        import signal
+        import atexit
+        def delete_scratch_at_exit(scratch_dir):
+            shutil.rmtree(scratch_dir)
+
+        atexit.register(delete_scratch_at_exit, scratch_dir=args.scratch)
+
+
+    if args.cluster_worker > 0:
+        cluster = SLURMCluster(cores=args.n_jobs,
+                               processes=args.n_jobs,
+                               memory="{}GB".format(3*args.n_jobs),
+                               project="ztf",
+                               walltime="12:00:00",
+                               queue="htc",
+                               job_extra=["-L sps"])
+
+        cluster.scale(jobs=args.cluster_worker)
+        client = Client(cluster)
+        print(client.dashboard_link, flush=True)
+        print(socket.gethostname(), flush=True)
+        print("Running {} workers with {} processes each ({} total).".format(args.cluster_worker, args.n_jobs, args.cluster_worker*args.n_jobs))
+        client.wait_for_workers(1)
+    else:
+        if args.n_jobs == 1:
+            pass
+            #dask.config.set(scheduler='synchronous')
+
+        localCluster = LocalCluster(n_workers=args.n_jobs, dashboard_address='localhost:8787', threads_per_worker=1, nanny=False)
+        client = Client(localCluster)
+        print("Dask dashboard at: {}".format(client.dashboard_link))
+
+
+    jobs = []
+    quadrant_count = 0
+    reduction_count = 0
+    for ztfname in ztfnames:
+        for filtercode in filtercodes:
+            print("Building job list for {}-{}... ".format(ztfname, filtercode), end="", flush=True)
+
+            quadrants_folder = args.wd.joinpath("{}/{}".format(ztfname, filtercode))
+            if not quadrants_folder.exists():
+                print("No quadrant found.")
+                continue
+
+            results = None
+
+            if 'map' in poloka_func[args.func].keys() and not args.no_map:
+                quadrants = list(map(lambda x: x.stem, filter(lambda x: x.is_dir(), quadrants_folder.glob("ztf*"))))
+                quadrant_count += len(quadrants)
+
+                results = [delayed(map_op)(quadrant, args.wd, ztfname, filtercode, args.func, args, scratch=args.scratch) for quadrant in quadrants]
+                print("Found {} quadrants. ".format(len(quadrants)), end="", flush=True)
+
+            if ('reduce' in poloka_func[args.func].keys() or args.log_results) and not args.no_reduce:
+                results = [delayed(reduce_op)(results, args.wd, ztfname, filtercode, args.func, True, args)]
+                reduction_count += 1
+                print("Found reduction.", end="", flush=True)
+
+            print("")
+
+            if results:
+                jobs.extend(results)
+
+    print("")
+    print("Running. ", end="")
+
+    if quadrant_count > 0:
+        print(" Processing {} quadrants.".format(quadrant_count))
+
+    if reduction_count > 0:
+        print(" Processing {} reductions.".format(reduction_count))
+
+    start_time = time.perf_counter()
+    fjobs = client.compute(jobs)
+    wait(fjobs)
+    print("Done. Elapsed time={}".format(time.perf_counter() - start_time))
+
+    print([traceback.print_tb(fjob.traceback()) for fjob in fjobs])
+
+    client.close()
