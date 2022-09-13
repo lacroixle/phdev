@@ -227,8 +227,6 @@ def stats_reduce(band_path, ztfname, filtercode, logger, args):
 def clean(quadrant_path, logger, args):
     # We want to delete all files in order to get back to the prepare_deppol stage
     files_to_keep = ["elixir.fits", "dead.fits.gz", ".dbstuff"]
-
-    #files_to_delete = [file_to_delete for file_to_delete in files if file_to_delete.name not in files_to_keep]
     files_to_delete = list(filter(lambda f: f.name not in files_to_keep, list(quadrant_path.glob("*"))))
 
     for file_to_delete in files_to_delete:

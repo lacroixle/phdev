@@ -18,6 +18,9 @@ def make_catalog(quadrant_folder, logger, args):
     return quadrant_folder.joinpath("se.list").exists()
 
 
+make_catalog_rm = ["low.fits.gz", "miniback.fits", "segmentation.cv.fits", "segmentation.fits"]
+
+
 def mkcat2(quadrant_path, logger, args):
     import matplotlib
     import matplotlib.pyplot as plt
@@ -43,10 +46,15 @@ def mkcat2(quadrant_path, logger, args):
         return False
 
 
+mkcat2_rm = []
+
 
 def makepsf(quadrant_path, logger, args):
     run_and_log(["makepsf", quadrant_path, "-f"], logger)
     return quadrant_path.joinpath("psfstars.list").exists()
+
+
+makepsf_rm = []
 
 
 def pipeline(quadrant_path, logger, args):
@@ -61,3 +69,5 @@ def pipeline(quadrant_path, logger, args):
 
     return True
 
+
+pipeline_rm = make_catalog_rm + mkcat2_rm + makepsf_rm
