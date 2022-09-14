@@ -149,8 +149,8 @@ class AstromModel():
             xy = self.tp_to_pix((self.dp.tpx, self.dp.tpy), p=self.params, quadrant=self.dp.quadrant_index)
 
             # Could be better implemented
-            xy[0] = xy[0] + k*np.tan(np.deg2rad(self.dp.z))*self.dp.parallactic_angle_x*centered_color
-            xy[1] = xy[1] + k*np.tan(np.deg2rad(self.dp.z))*self.dp.parallactic_angle_y*centered_color
+            # xy[0] = xy[0] + k*np.tan(np.deg2rad(self.dp.z))*self.dp.parallactic_angle_x*centered_color
+            # xy[1] = xy[1] + k*np.tan(np.deg2rad(self.dp.z))*self.dp.parallactic_angle_y*centered_color
 
             return xy
         else:
@@ -159,8 +159,8 @@ class AstromModel():
                                                               p=self.params, quadrant=self.dp.quadrant_index)
 
             # Could be better implemented
-            xy[0] = xy[0] + k*np.tan(np.deg2rad(self.dp.z))*self.dp.parallactic_angle_x*centered_color
-            xy[1] = xy[1] + k*np.tan(np.deg2rad(self.dp.z))*self.dp.parallactic_angle_y*centered_color
+            # xy[0] = xy[0] + k*np.tan(np.deg2rad(self.dp.z))*self.dp.parallactic_angle_x*centered_color
+            # xy[1] = xy[1] + k*np.tan(np.deg2rad(self.dp.z))*self.dp.parallactic_angle_y*centered_color
 
             ii = [np.hstack([i, i+len(self.dp.nt)])]
             jj = [np.tile(j, 2).ravel()]
@@ -260,6 +260,7 @@ def astrometry_fit(band_path, ztfname, filtercode, logger, args):
     plt.plot(tpx[0], tpy[0], '.')
     plt.axis('equal')
     plt.savefig(save_folder.joinpath("tangent_plane_positions.png"), dpi=300.)
+    plt.close()
 
     matched_stars_df['color'] = matched_stars_df['bpmag'] - matched_stars_df['rpmag']
 
@@ -282,7 +283,7 @@ def astrometry_fit(band_path, ztfname, filtercode, logger, args):
     # Tangent space to pixel space
 
     # Build model
-    tp2px_model = AstromModel(dp, degree=2)
+    tp2px_model = AstromModel(dp, degree=3)
     tp2px_model.init_params()
 
     # Model fitting
@@ -304,7 +305,7 @@ def astrometry_fit(band_path, ztfname, filtercode, logger, args):
     #
 
     print("Computing reference pixel space to tangent space transformation...")
-    grid_res = 250
+    grid_res = 30
     def _ref2tp_polymodel(degree=3):
         print("Reference quadrant={}".format(reference_quadrant))
         wcs = get_wcs_from_quadrant(band_path.joinpath(reference_quadrant))
@@ -315,32 +316,41 @@ def astrometry_fit(band_path, ztfname, filtercode, logger, args):
                                     [quadrant_width_px, 0.],
                                     [0., quadrant_height_px],
                                     [quadrant_width_px, quadrant_height_px]])
+        print(corner_points_px)
         corner_points_radec = wcs.pixel_to_world_values(corner_points_px)
-
+        print(corner_points_radec)
         corner_points_radec = np.vstack(corner_points_radec).T
+        print(corner_points_radec)
         [corner_points_tpx], [corner_points_tpy], _, _ = gnomonic.gnomonic_projection(np.deg2rad(corner_points_radec[0]), np.deg2rad(corner_points_radec[1]),
                                                                                       np.deg2rad(sn_parameters_df['sn_ra'].to_numpy()), np.deg2rad(sn_parameters_df['sn_dec'].to_numpy()),
                                                                                       np.zeros(4), np.zeros(4))
 
+        plt.plot(corner_points_tpx, corner_points_tpy, "o")
         print("====")
         print(np.min(corner_points_tpx), np.max(corner_points_tpx))
         print(np.min(corner_points_tpy), np.max(corner_points_tpy))
         print("  Creating 2D mesh of resolution {}x{}".format(grid_res, grid_res))
         grid_points_px = create_2D_mesh_grid(np.linspace(0., quadrant_width_px, grid_res), np.linspace(0., quadrant_height_px, grid_res))
 
-        # grid_points_tp = create_2D_mesh_grid(np.linspace(np.min(corner_points_tpx), np.max(corner_points_tpx), grid_res),
-        #                                      np.linspace(np.min(corner_points_tpy), np.max(corner_points_tpy), grid_res))
-        grid_points_tp = create_2D_mesh_grid(np.linspace(np.max(corner_points_tpx), np.min(corner_points_tpx), grid_res),
-                                             np.linspace(np.max(corner_points_tpy), np.min(corner_points_tpy), grid_res))
+        grid_points_tp = create_2D_mesh_grid(np.linspace(np.min(corner_points_tpx), np.max(corner_points_tpx), grid_res),
+                                             np.linspace(np.min(corner_points_tpy), np.max(corner_points_tpy), grid_res))
+        # grid_points_tp = create_2D_mesh_grid(np.linspace(np.max(corner_points_tpx), np.min(corner_points_tpx), grid_res),
+        #                                      np.linspace(np.max(corner_points_tpy), np.min(corner_points_tpy), grid_res))
+
+        plt.plot(grid_points_tp[:, 0], grid_points_tp[:, 1], 'x')
+        print(grid_points_tp)
         print("  Fitting using polynomial of degree {}".format(degree))
         band_path.joinpath("astrometry_plots/ref2tp_plots").mkdir(exist_ok=True)
         ref2tp_model = BiPol2D_fit(grid_points_px.T, grid_points_tp.T, degree, control_plots=band_path.joinpath("astrometry_plots/ref2tp_plots"))
+        totp = ref2tp_model(grid_points_px.T)
+        plt.plot(totp[0], totp[1], '.')
+        plt.savefig("out0.png", dpi=1000.)
+        plt.close()
         return ref2tp_model
 
     ref2tp_model = _ref2tp_polymodel(degree=3)
 
     print("Done")
-
 
     ################################################################################
     # Reference pixel space to pixel space
@@ -352,12 +362,21 @@ def astrometry_fit(band_path, ztfname, filtercode, logger, args):
 
     # Reference pixel space to tangent space
     ref_grid_tp = ref2tp_model(grid_points_px.T)
-    print(ref_grid_tp)
 
     # Reference tangent space to quadrant pixel space for each quadrant
     space_indices = np.concatenate([np.full(ref_grid_tp.shape[1], i) for i, _ in enumerate(dp.quadrant_set)])
 
     ref_grid_px = tp2px_model.tp_to_pix(np.tile(ref_grid_tp, (1, len(dp.quadrant_set))), tp2px_model.params, quadrant=space_indices)
+
+    plt.subplots(nrows=1, ncols=2, figsize=(10., 5.))
+    plt.subplot(1, 2, 1)
+    plt.plot(ref_grid_tp[0], ref_grid_tp[1], '.')
+    plt.plot(ref_grid_tp[0][:2], ref_grid_tp[1][:2], 'x')
+    plt.subplot(1, 2, 2)
+    plt.plot(ref_grid_px[0][0], ref_grid_px[1][0], '.')
+    plt.plot(grid_points_px[:, 0][0], grid_points_px[:, 1][0], 'x')
+    plt.savefig("out2.png", dpi=1000.)
+    plt.close()
     print("Done")
 
     ref_idx = dp.quadrant_map[reference_quadrant]
@@ -391,6 +410,17 @@ def astrometry_fit_init():
 
 
 def astrometry_fit_plot(cwd, ztfname, filtercode, logger, args):
+    from sksparse import cholmod
+    from imageproc import gnomonic
+    import pandas as pd
+    import numpy as np
+    import matplotlib as plt
+    from saunerie.plottools import binplot
+    import imageproc.composable_functions as compfuncs
+    import saunerie.fitparameters as fp
+    from scipy import sparse
+    from croaks import DataProxy
+
     ################################################################################
     # Control plots
 
@@ -654,15 +684,3 @@ def astrometry_fit_plot(cwd, ztfname, filtercode, logger, args):
     plt.close()
     ################################################################################
 
-
-def astrometry_fit_plot_init():
-    from sksparse import cholmod
-    from imageproc import gnomonic
-    import pandas as pd
-    import numpy as np
-    import matplotlib as plt
-    from saunerie.plottools import binplot
-    import imageproc.composable_functions as compfuncs
-    import saunerie.fitparameters as fp
-    from scipy import sparse
-    from croaks import DataProxy

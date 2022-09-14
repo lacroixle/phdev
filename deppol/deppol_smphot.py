@@ -90,27 +90,25 @@ def smphot(band_path, ztfname, filtercode, logger, args):
     return True
 
 
-def smphot_plot(cwd, ztfname, filtercode, logger, args):
-    logger.info("Running pmfit plots")
-    driver_path = cwd.joinpath("{}_driver_{}".format(ztfname, filtercode))
-    gaia_path = args.wd.joinpath("{}/{}/gaia.npy".format(ztfname, filtercode))
-    run_and_log(["pmfit", driver_path, "--gaia={}".format(gaia_path), "--outdir={}".format(cwd.joinpath("pmfit")), "--plot-dir={}".format(cwd.joinpath("pmfit_plot")), "--plot", "--mu-max=20."], logger=logger)
+def smphot_plot(band_path, ztfname, filtercode, logger, args):
+    # import matplotlib.pyplot as plt
+    # matplotlib.use('Agg')
 
-    logger.info("Running smphot plots")
-    with open(cwd.joinpath("smphot_output/lightcurve_sn.dat"), 'r') as f:
-        _, sn_flux_df = list_format.read_list(f)
+    # logger.info("Running pmfit plots")
+    # driver_path = band_path.joinpath("{}_driver_{}".format(ztfname, filtercode))
+    # gaia_path = band_path.joinpath("{}/{}/gaia.npy".format(ztfname, filtercode))
+    # run_and_log(["pmfit", driver_path, "--gaia={}".format(gaia_path), "--outdir={}".format(cwd.joinpath("pmfit")), "--plot-dir={}".format(cwd.joinpath("pmfit_plot")), "--plot", "--mu-max=20."], logger=logger)
 
-    plt.errorbar(sn_flux_df['mjd'], sn_flux_df['flux'], yerr=sn_flux_df['varflux'], fmt='.k')
-    plt.xlabel("MJD")
-    plt.ylabel("Flux")
-    plt.title("Calibrated lightcurve - {} - {}".format(ztfname, filtercode))
-    plt.grid()
-    plt.savefig(cwd.joinpath("{}-{}_smphot_lightcurve.png".format(ztfname, filtercode)), dpi=300)
-    plt.close()
+    # logger.info("Running smphot plots")
+    # with open(band_path.joinpath("smphot_output/lightcurve_sn.dat"), 'r') as f:
+    #     _, sn_flux_df = list_format.read_list(f)
+
+    # plt.errorbar(sn_flux_df['mjd'], sn_flux_df['flux'], yerr=sn_flux_df['varflux'], fmt='.k')
+    # plt.xlabel("MJD")
+    # plt.ylabel("Flux")
+    # plt.title("Calibrated lightcurve - {} - {}".format(ztfname, filtercode))
+    # plt.grid()
+    # plt.savefig(band_path.joinpath("{}-{}_smphot_lightcurve.png".format(ztfname, filtercode)), dpi=300)
+    # plt.close()
 
     return True
-
-
-def smphot_plot_init():
-    import matplotlib.pyplot as plt
-    matplotlib.use('Agg')

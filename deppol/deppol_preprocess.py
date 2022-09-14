@@ -54,7 +54,7 @@ def makepsf(quadrant_path, logger, args):
     return quadrant_path.joinpath("psfstars.list").exists()
 
 
-makepsf_rm = []
+makepsf_rm = ["psf_resid_tuple.fit", "psf_res_stack.fits"]
 
 
 def pipeline(quadrant_path, logger, args):
