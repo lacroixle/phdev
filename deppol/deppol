@@ -10,25 +10,6 @@ import sys
 import socket
 import copy
 import traceback
-from distutils.dir_util import copy_tree
-
-"""
-from astropy.io import fits
-from astropy.wcs import WCS
-from astropy.coordinates import SkyCoord
-import matplotlib
-import matplotlib.pyplot as plt
-import dask
-import ztfquery.io
-import numpy as np
-from skimage.morphology import label
-from saunerie.plottools import binplot
-from astropy.time import Time
-import imageproc.composable_functions as compfuncs
-import saunerie.fitparameters as fp
-from scipy import sparse
-from croaks import DataProxy
-"""
 
 from dask import delayed, compute
 from dask.distributed import Client, LocalCluster, wait, get_worker
@@ -37,8 +18,10 @@ import pandas as pd
 
 from deppol_utils import run_and_log, dump_timings
 
+
 ztf_filtercodes = ['zg', 'zr', 'zi', 'all']
 poloka_func = []
+
 
 import deppol_misc
 
