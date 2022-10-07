@@ -344,5 +344,5 @@ if __name__ == '__main__':
         print("Moving data back from scratch folder into working directory.")
         print("Scratch folder: {}".format(args.scratch))
         print("Working directory: {}".format(args.wd))
-        shutil.copytree(args.scratch, args.wd, dirs_exist_ok=True)
+        shutil.copytree(args.scratch, args.wd, dirs_exist_ok=True, ignore=shutil.ignore_patterns("elixir.fits", "dead.fits.gz"))
         shutil.rmtree(args.scratch)
