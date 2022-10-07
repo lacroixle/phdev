@@ -103,10 +103,7 @@ def _filter_noisy_stars(model, y_model, threshold, logger):
     return ZPModel(model.dp)
 
 
-def _dump_photoratios(model, y_model, ref_quadrant, band_path):
-    with open(band_path.joinpath("reference_quadrant")) as f:
-        reference_quadrant = f.readline()
-
+def _dump_photoratios(model, y_model, reference_quadrant, save_folder_path):
     zp_ref = model.params['zp'].full[model.dp.quadrant_map[reference_quadrant]]
 
     alphas = {}
@@ -122,17 +119,18 @@ def _dump_photoratios(model, y_model, ref_quadrant, band_path):
     chi2 = np.sum((y_model - (model.dp.mag - model.dp.gaia_mag))**2/np.sqrt(model.dp.emag**2+model.dp.gaia_emag**2))
 
     photom_ratios_table = ListTable({'CHI2': chi2, 'NDOF': ndof, 'RCHI2': chi2/ndof, 'REF': reference_quadrant}, alphas_df)
-
-    photom_ratios_table.write_to(band_path.joinpath("relative_photometry/photom_ratios.ntuple"))
+    photom_ratios_table.write_to(save_folder_path.joinpath("photom_ratios.ntuple"))
 
 
 def photometry_fit(band_path, ztfname, filtercode, logger, args):
     import pandas as pd
     from croaks import DataProxy
-    from utils import filtercode2gaiaband, make_index_from_list
+    from utils import filtercode2gaiaband, make_index_from_list, get_ref_quadrant_from_band_folder
     import pickle
 
-    band_path.joinpath("relative_photometry").mkdir(exist_ok=True)
+    save_folder_path = band_path.joinpath("photometry")
+    save_folder_path.mkdir(exist_ok=True)
+    save_folder_path.joinpath("mappings").mkdir(exist_ok=True)
 
     logger.info("Building DataProxy")
     # Build a dataproxy from measures and augment it
@@ -158,7 +156,7 @@ def photometry_fit(band_path, ztfname, filtercode, logger, args):
     _fit_photometry(model, logger)
     y_model = model(model.params.free)
 
-    with open(band_path.joinpath("relative_photometry/model.pickle"), 'wb') as f:
+    with open(save_folder_path.joinpath("model.pickle"), 'wb') as f:
         pickle.dump(model, f)
 
     new_model = _filter_noisy_stars(model, y_model, 0.001, logger)
@@ -166,167 +164,11 @@ def photometry_fit(band_path, ztfname, filtercode, logger, args):
     _fit_photometry(new_model, logger)
     y_new_model = new_model(new_model.params.free)
 
-    with open(band_path.joinpath("relative_photometry/filtered_model.pickle"), 'wb') as f:
+    with open(save_folder_path.joinpath("filtered_model.pickle"), 'wb') as f:
         pickle.dump(new_model, f)
 
     logger.info("Computing photometric ratios")
-    _dump_photoratios(new_model, y_new_model, new_model.dp.quadrant_set[0], band_path)
-
-
-def _do_plots(model, save_folder=None, plot_ext=".png"):
-    y_model = model(model.params.free)
-    def _show(filename):
-        if save_folder is not None:
-            plt.savefig(save_folder.joinpath("{}{}".format(filename, plot_ext)), dpi=250.)
-        else:
-            plt.show()
-
-        plt.close()
-
-    k_i = [model.params['k_{}'.format(k+1)].full[0] for k in range(model.degree)]
-    zp = model.params['zp'].full[:]
-    res = y_model - (model.dp.mag - model.dp.gaia_mag)
-    chi2 = np.bincount(model.dp.gaiaid_index, weights=res**2)/np.bincount(model.dp.gaiaid_index)
-    measurement_chi2 = np.array([chi2[model.dp.gaiaid_map[gaiaid]] for gaiaid in model.dp.gaiaid])
-
-
-    plt.plot([model.dp.gaiaid_map[gaiaid] for gaiaid in model.dp.gaiaid_set], np.sqrt(chi2), '.', color='black')
-    plt.grid()
-    plt.xlabel("Star index")
-    plt.ylabel("RMS Res")
-    _show("chi2_star")
-
-    plt.plot(model.dp.mag, 1./model.sigma()**2, '.', color='black')
-    plt.xlabel("$m$")
-    plt.ylabel("$1/\\sigma**2$")
-    plt.grid()
-    _show("sigma_mag")
-
-    rms = [np.std(model.dp.mag[model.dp.gaiaid==gaiaid]-model.params['zp'].full[model.dp.quadrant_index[model.dp.gaiaid==gaiaid]], ddof=1) for gaiaid in model.dp.gaiaid_set]
-
-    plt.plot(range(len(model.dp.gaiaid_set)), rms, '.', color='xkcd:light blue')
-    plt.xlabel("Gaia star #")
-    plt.ylabel("Lightcurve RMS")
-    plt.grid()
-    _show("rms_star")
-
-    plt.plot(model.dp.gaia_mag_set, rms, '.', color='xkcd:light blue')
-    plt.xlabel("$g_G$")
-    plt.ylabel("Lightcurve RMS")
-    plt.grid()
-    _show("rms_mag")
-
-    # bins=50
-    # pull_hist = np.histogram2d(model.dp.ra, model.dp.dec, weights=res/model.sigma(), bins=bins)[0]/np.histogram2d(model.dp.ra, model.dp.dec, weights=1./model.sigma(), bins=bins)[0]
-    # plt.imshow(pull_hist)
-    # plt.xlabel("ra")
-    # plt.ylabel("dec")
-    # _show("pull_radec")
-
-    plt.subplots(nrows=1, ncols=2, gridspec_kw={'width_ratios': [4, 1]}, figsize=(10., 5.))
-    pull = res/model.sigma(pedestal=0.01)
-    m = np.mean(pull)
-    s = np.std(pull)
-    n = 4. # Limit multiplier for more consistant plots
-
-    plt.subplot(1, 2, 1)
-    #plt.plot(model.dp.mag, pull, ',', color='black')
-    for i, rcid in enumerate(model.dp.rcid_set):
-        mask = (model.dp.rcid == rcid)
-        plt.scatter(model.dp.mag[mask], pull[mask], c=measurement_chi2[mask], s=0.05, marker=idx2markerstyle[i], label="{}".format(rcid))
-    cbar = plt.colorbar()
-    cbar.set_label("$\\chi^2_p$")
-    plt.legend()
-    plt.ylim(-n*s, n*s)
-    plt.xlabel("m")
-    plt.ylabel("pull")
-    plt.grid()
-
-    ax = plt.subplot(1, 2, 2)
-    plt.hist(pull, range=[-n*s, n*s], bins=50, orientation='horizontal', histtype='step', color='black', density=True)
-    x = np.linspace(-n*s, n*s, 100)
-    plt.plot(norm.pdf(x, loc=m, scale=s), x)
-    plt.text(0., -0.1, "$\\sigma={:.5f}, \\mu={:.5f}$".format(s, m), transform=ax.transAxes)
-    plt.xticks([])
-    plt.yticks([])
-    _show("pull_mag")
-
-    xbinned_mag, yplot_pull, pull_dispersion = binplot(model.dp.mag, pull, data=True, rms=True, scale=False)
-    plt.xlabel("$m$")
-    plt.ylabel("pull")
-    _show("pull_profile")
-
-    plt.plot(xbinned_mag, pull_dispersion, color='black')
-    plt.grid()
-    plt.xlabel("m")
-    plt.ylabel("pull RMS")
-    _show("pull_rms")
-
-    for rcid in model.dp.rcid_set:
-        mask = model.dp.rcid == rcid
-        plt.hist2d(model.dp.x[mask], model.dp.y[mask], weights=res[mask], bins=100, vmin=-0.5, vmax=0.5)
-        plt.title("Residuals, rcid={}, n_measurements={}".format(rcid, len(res[mask])))
-        plt.axis('equal')
-        plt.axis('off')
-        plt.xlabel("$x$")
-        plt.ylabel("$y$")
-        plt.colorbar()
-        _show("quad_{}".format(rcid))
-
-    # ZP distribution
-    plt.hist(zp, bins=40, histtype='step', color='black')
-    plt.grid()
-    plt.xlabel("ZP")
-    plt.ylabel("Count")
-    _show("zp_dist")
-
-    # Residuals distribution
-    plt.hist(res, bins=100, histtype='step', color='black')
-    plt.grid()
-    plt.xlabel("Residuals")
-    plt.ylabel("Count")
-    _show("res_dist")
-
-    # Residuals/day
-    plt.plot(model.dp.mjd, res, ',', color='red')
-    plt.grid()
-    plt.xlabel("MJD")
-    plt.ylabel("Residual")
-    _show("res_day")
-
-    plt.plot(model.dp.mjd_index, res, ',', color='red')
-    plt.grid()
-    plt.xlabel("MJD")
-    plt.ylabel("Residual")
-    _show("res_day_index")
-
-    #Residuals/star
-    plt.plot(model.dp.gaiaid_index, res, ',', color='red')
-    plt.grid()
-    plt.xlabel("Star")
-    plt.ylabel("Residual")
-    _show("res_star")
-
-    # Residuals/airmass
-    plt.plot(model.dp.airmass, res, ',', color='red')
-    plt.xlabel('Airmass')
-    plt.ylabel('Residual')
-    plt.grid()
-    _show("res_airmass")
-
-    # Residuals/color
-    plt.plot(model.dp.bpmag - model.dp.rpmag, res, ',', color='red')
-    plt.xlabel("$B_p-R_p$")
-    plt.ylabel("Residual")
-    plt.grid()
-    _show("res_color")
-
-    # Residuals/mag
-    plt.plot(model.dp.mag, res, ',', color='red')
-    plt.xlabel("$m$")
-    plt.ylabel("Residual")
-    plt.grid()
-    _show("res_mag")
+    _dump_photoratios(new_model, y_new_model, get_ref_quadrant_from_band_folder(band_path), band_path.joinpath("mappings"))
 
 
 def photometry_fit_plot(band_path, ztfname, filtercode, logger, args):
@@ -339,15 +181,171 @@ def photometry_fit_plot(band_path, ztfname, filtercode, logger, args):
 
     from utils import idx2markerstyle
 
+    def _do_plots(model, save_folder=None, plot_ext=".png"):
+        y_model = model(model.params.free)
+        def _show(filename):
+            if save_folder is not None:
+                plt.savefig(save_folder.joinpath("{}{}".format(filename, plot_ext)), dpi=250.)
+            else:
+                plt.show()
+
+            plt.close()
+
+        k_i = [model.params['k_{}'.format(k+1)].full[0] for k in range(model.degree)]
+        zp = model.params['zp'].full[:]
+        res = y_model - (model.dp.mag - model.dp.gaia_mag)
+        chi2 = np.bincount(model.dp.gaiaid_index, weights=res**2)/np.bincount(model.dp.gaiaid_index)
+        measurement_chi2 = np.array([chi2[model.dp.gaiaid_map[gaiaid]] for gaiaid in model.dp.gaiaid])
+
+        plt.plot([model.dp.gaiaid_map[gaiaid] for gaiaid in model.dp.gaiaid_set], np.sqrt(chi2), '.', color='black')
+        plt.grid()
+        plt.xlabel("Star index")
+        plt.ylabel("RMS Res")
+        _show("chi2_star")
+
+        plt.plot(model.dp.mag, 1./model.sigma()**2, '.', color='black')
+        plt.xlabel("$m$")
+        plt.ylabel("$1/\\sigma**2$")
+        plt.grid()
+        _show("sigma_mag")
+
+        rms = [np.std(model.dp.mag[model.dp.gaiaid==gaiaid]-model.params['zp'].full[model.dp.quadrant_index[model.dp.gaiaid==gaiaid]], ddof=1) for gaiaid in model.dp.gaiaid_set]
+
+        plt.plot(range(len(model.dp.gaiaid_set)), rms, '.', color='xkcd:light blue')
+        plt.xlabel("Gaia star #")
+        plt.ylabel("Lightcurve RMS")
+        plt.grid()
+        _show("rms_star")
+
+        plt.plot(model.dp.gaia_mag_set, rms, '.', color='xkcd:light blue')
+        plt.xlabel("$g_G$")
+        plt.ylabel("Lightcurve RMS")
+        plt.grid()
+        _show("rms_mag")
+
+        # bins=50
+        # pull_hist = np.histogram2d(model.dp.ra, model.dp.dec, weights=res/model.sigma(), bins=bins)[0]/np.histogram2d(model.dp.ra, model.dp.dec, weights=1./model.sigma(), bins=bins)[0]
+        # plt.imshow(pull_hist)
+        # plt.xlabel("ra")
+        # plt.ylabel("dec")
+        # _show("pull_radec")
+
+        plt.subplots(nrows=1, ncols=2, gridspec_kw={'width_ratios': [4, 1]}, figsize=(10., 5.))
+        pull = res/model.sigma(pedestal=0.01)
+        m = np.mean(pull)
+        s = np.std(pull)
+        n = 4. # Limit multiplier for more consistant plots
+
+        plt.subplot(1, 2, 1)
+        #plt.plot(model.dp.mag, pull, ',', color='black')
+        for i, rcid in enumerate(model.dp.rcid_set):
+            mask = (model.dp.rcid == rcid)
+            plt.scatter(model.dp.mag[mask], pull[mask], c=measurement_chi2[mask], s=0.05, marker=idx2markerstyle[i], label="{}".format(rcid))
+        cbar = plt.colorbar()
+        cbar.set_label("$\\chi^2_p$")
+        plt.legend()
+        plt.ylim(-n*s, n*s)
+        plt.xlabel("m")
+        plt.ylabel("pull")
+        plt.grid()
+
+        ax = plt.subplot(1, 2, 2)
+        plt.hist(pull, range=[-n*s, n*s], bins=50, orientation='horizontal', histtype='step', color='black', density=True)
+        x = np.linspace(-n*s, n*s, 100)
+        plt.plot(norm.pdf(x, loc=m, scale=s), x)
+        plt.text(0., -0.1, "$\\sigma={:.5f}, \\mu={:.5f}$".format(s, m), transform=ax.transAxes)
+        plt.xticks([])
+        plt.yticks([])
+        _show("pull_mag")
+
+        xbinned_mag, yplot_pull, pull_dispersion = binplot(model.dp.mag, pull, data=True, rms=True, scale=False)
+        plt.xlabel("$m$")
+        plt.ylabel("pull")
+        _show("pull_profile")
+
+        plt.plot(xbinned_mag, pull_dispersion, color='black')
+        plt.grid()
+        plt.xlabel("m")
+        plt.ylabel("pull RMS")
+        _show("pull_rms")
+
+        for rcid in model.dp.rcid_set:
+            mask = model.dp.rcid == rcid
+            plt.hist2d(model.dp.x[mask], model.dp.y[mask], weights=res[mask], bins=100, vmin=-0.5, vmax=0.5)
+            plt.title("Residuals, rcid={}, n_measurements={}".format(rcid, len(res[mask])))
+            plt.axis('equal')
+            plt.axis('off')
+            plt.xlabel("$x$")
+            plt.ylabel("$y$")
+            plt.colorbar()
+            _show("quad_{}".format(rcid))
+
+        # ZP distribution
+        plt.hist(zp, bins=40, histtype='step', color='black')
+        plt.grid()
+        plt.xlabel("ZP")
+        plt.ylabel("Count")
+        _show("zp_dist")
+
+        # Residuals distribution
+        plt.hist(res, bins=100, histtype='step', color='black')
+        plt.grid()
+        plt.xlabel("Residuals")
+        plt.ylabel("Count")
+        _show("res_dist")
+
+        # Residuals/day
+        plt.plot(model.dp.mjd, res, ',', color='red')
+        plt.grid()
+        plt.xlabel("MJD")
+        plt.ylabel("Residual")
+        _show("res_day")
+
+        plt.plot(model.dp.mjd_index, res, ',', color='red')
+        plt.grid()
+        plt.xlabel("MJD")
+        plt.ylabel("Residual")
+        _show("res_day_index")
+
+        #Residuals/star
+        plt.plot(model.dp.gaiaid_index, res, ',', color='red')
+        plt.grid()
+        plt.xlabel("Star")
+        plt.ylabel("Residual")
+        _show("res_star")
+
+        # Residuals/airmass
+        plt.plot(model.dp.airmass, res, ',', color='red')
+        plt.xlabel('Airmass')
+        plt.ylabel('Residual')
+        plt.grid()
+        _show("res_airmass")
+
+        # Residuals/color
+        plt.plot(model.dp.bpmag - model.dp.rpmag, res, ',', color='red')
+        plt.xlabel("$B_p-R_p$")
+        plt.ylabel("Residual")
+        plt.grid()
+        _show("res_color")
+
+        # Residuals/mag
+        plt.plot(model.dp.mag, res, ',', color='red')
+        plt.xlabel("$m$")
+        plt.ylabel("Residual")
+        plt.grid()
+        _show("res_mag")
+
+    save_folder_path = band_path.joinpath("photometry")
+
     # First do residuals plot of the relative photometry models (non filtered and filtered)
-    with open(band_path.joinpath("relative_photometry/model.pickle"), 'rb') as f:
+    with open(save_folder_path.joinpath("model.pickle"), 'rb') as f:
         model = pickle.load(f)
 
-    with open(band_path.joinpath("relative_photometry/filtered_model.pickle"), 'rb') as f:
+    with open(save_folder_path.joinpath("filtered_model.pickle"), 'rb') as f:
         filtered_model = pickle.load(f)
 
-    plot_no_filter_folder = band_path.joinpath("relative_photometry/no_filter")
-    plot_filter_folder = band_path.joinpath("relative_photometry/filter")
+    plot_no_filter_folder = save_folder_path.joinpath("no_filter")
+    plot_filter_folder = save_folder_path.joinpath("filter")
 
     plot_no_filter_folder.mkdir(exist_ok=True)
     plot_filter_folder.mkdir(exist_ok=True)

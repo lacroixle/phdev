@@ -73,19 +73,21 @@ def reference_quadrant(band_path, ztfname, filtercode, logger, args):
         f.write("PHOREF\n")
         f.write("{}\n".format(idxmin))
         f.write("PMLIST\n")
-        f.write(str(band_path.joinpath("astrometry_fit/pmcatalog.list")))
+        f.write(str(band_path.joinpath("astrometry/pmcatalog.list")))
 
     with open(band_path.joinpath("reference_quadrant"), 'w') as f:
         f.write(str(idxmin.name))
 
 
 def smphot(band_path, ztfname, filtercode, logger, args):
+    from deppol_utils import run_and_log
+
     logger.info("Running scene modeling")
 
     smphot_output = band_path.joinpath("smphot_output")
     smphot_output.mkdir(exist_ok=True)
 
-    run_and_log(["mklc", "-t", band_path.joinpath("relative_astrometry"), "-O", smphot_output, "-v", band_path.joinpath("{}_driver_{}".format(ztfname, filtercode))], logger=logger)
+    run_and_log(["mklc", "-t", band_path.joinpath("mappings"), "-O", smphot_output, "-v", band_path.joinpath("{}_driver_{}".format(ztfname, filtercode))], logger=logger)
 
     return True
 

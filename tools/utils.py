@@ -190,6 +190,41 @@ def poly2d_from_file(filename):
     return _apply_pol
 
 
+def poly2d_to_file(poly2d, quadrant_set, outdir):
+    """
+    dump the fitted transformations (in the poloka format)
+    so that they can be understood by mklc
+    """
+
+    outdir.mkdir(exist_ok=True)
+
+    for i, quadrant in enumerate(quadrant_set):
+        #with open(outdir + os.sep + 'transfoTo' + expid + 'p' + ccd + '.dat', 'w') as f:
+        with open(outdir.joinpath("transfoTo{}.dat".format(quadrant)), 'w') as f:
+            deg = poly2d.bipol2d.deg
+            f.write("GtransfoPoly 1\ndegree %d\n" % deg)
+
+            coeff_name = dict(list(zip(poly2d.bipol2d.coeffs, [x for x in poly2d.bipol2d.coeffnames if 'alpha' in x])))
+            for d in range(deg+1):
+                p,q = d,0
+                while p>=0:
+                    nm = coeff_name[(p,q)]
+                    scaled_par = poly2d.params[nm].full[i]
+                    f.write(" %15.20E " % scaled_par)
+                    p -= 1
+                    q += 1
+            coeff_name = dict(list(zip(poly2d.bipol2d.coeffs, [x for x in poly2d.bipol2d.coeffnames if 'beta' in x])))
+            for d in range(deg+1):
+                p,q = d,0
+                while p>=0:
+                    nm = coeff_name[(p,q)]
+                    scaled_par = poly2d.params[nm].full[i]
+                    f.write(" %15.20E " % scaled_par)
+                    p -= 1
+                    q += 1
+            f.write('\n')
+
+
 def read_list(f):
     if isinstance(f, str) or isinstance(f, pathlib.Path):
         with open(f, 'r') as fi:
@@ -255,7 +290,7 @@ def read_list_ext(f):
 
         line = f.readline()
 
-    df = pd.read_csv(f, sep=" ", names=columns, index_col=False, skipinitialspace=True)
+    df = pd.read_csv(f, delim_whitespace=True, names=columns, index_col=False, skipinitialspace=True)
 
     return header, df, df_desc, df_format
 
@@ -272,7 +307,7 @@ def write_list(filename, header, df, df_desc, df_format):
             if column in df_desc.keys():
                 f.write("#{} : {}\n".format(column, df_desc[column]))
             else:
-                f.write("#{}\n".format(column))
+                f.write("#{} :\n".format(column))
 
         if df_format is not None:
             f.write("# format {}\n".format(df_format))
@@ -322,29 +357,33 @@ class BiPol2DModel():
 
     coeffs = property(__get_coeffs, __set_coeffs)
 
-    def __call__(self, x, p=None, space_index=None, jac=False):
+    def __call__(self, x, p=None, space_indices=None, jac=False):
         if p is not None:
             self.params.free = p
 
-        if space_index is None:
-            space_index = [0]*x.shape[1]
+        if space_indices is None:
+            space_indices = [0]*x.shape[1]
 
         # Evaluate polynomials
         if not jac:
-            return self.bipol2d(x, self.params, space=space_index)
+            return self.bipol2d(x, self.params, space=space_indices)
         else:
-            xy, _, (i, j, vals) = self.bipol2d.derivatives(x, self.params, space=space_index)
+            xy, _, (i, j, vals) = self.bipol2d.derivatives(x, self.params, space=space_indices)
 
             ii = np.hstack([i, i+x[0].shape[0]])
             jj = np.tile(j, 2).ravel()
             vv = np.hstack(vals).ravel()
 
+            ii = np.hstack(ii)
+            jj = np.hstack(jj)
+            vv = np.hstack(vv)
+
             J_model = sparse.coo_array((vv, (ii, jj)), shape=(2*xy.shape[1], len(self.params.free)))
 
             return xy, J_model
 
-    def fit(self, x, y, space_index=None):
-        v, J = self.__call__(x, space_index=space_index, jac=True)
+    def fit(self, x, y, space_indices=None):
+        _, J = self.__call__(x, space_indices=space_indices, jac=True)
         H = J.T @ J
         B = J.T @ np.hstack(y)
 
@@ -353,33 +392,48 @@ class BiPol2DModel():
         self.params.free = p
         return p
 
-    def residuals(self, x, y, space_index=None):
-        y_fit = self.__call__(x, space_index=space_index)
-        return y_fit - y
+    def residuals(self, x, y, space_indices=None):
+        y_model = self.__call__(x, space_indices=space_indices)
+        return y_model - y
 
-    def control_plots(self, x, y, folder, space_index=None):
-        res = self.residuals(x, y, space_index=space_index)
+    def control_plots(self, x, y, folder, space_indices=None):
+        res = self.residuals(x, y, space_indices=space_indices)
         plt.subplots(ncols=2, nrows=1, figsize=(10., 5.))
         plt.subplot(2, 1, 1)
-        plt.hist(res[0], bins='rice')
+        #plt.hist(res[0], bins='sturges')
+        plt.hist(res[0], range=[-0.00005, 0.00005], bins=100)
         plt.grid()
         plt.subplot(2, 1, 2)
-        plt.hist(res[1], bins='rice')
+        #plt.hist(res[1], bins='sturges')
+        plt.hist(res[1], range=[-0.00005, 0.00005], bins=100)
         plt.grid()
         plt.savefig(folder.joinpath("residual_distribution.png"), dpi=300.)
         plt.close()
 
 
-def BiPol2D_fit(x, y, degree, space_index=None, control_plots=None):
-    if space_index is None:
+def BiPol2D_fit(x, y, degree, space_indices=None, control_plots=None, simultaneous_fit=True):
+    if space_indices is None:
         space_count = 1
     else:
-        space_count = len(set(space_index))
-    model = BiPol2DModel(degree, space_count=space_count)
-    model.fit(x, y, space_index=space_index)
+        space_count = len(set(space_indices))
+
+    if simultaneous_fit:
+        model = BiPol2DModel(degree, space_count=space_count)
+        model.fit(x, y, space_indices=space_indices)
+    else:
+        space_models_coeffs = []
+        for space_index in range(space_count):
+            space_model = BiPol2DModel(degree, space_count=1)
+            space_model.fit(x[:, space_indices==space_index], y[:, space_indices==space_index])
+            space_models_coeffs.append(space_model.coeffs)
+
+        model = BiPol2DModel(degree, space_count=space_count)
+        for space_index in range(space_count):
+            for coeff in model.coeffs.keys():
+                model.coeffs[coeff][space_index] = space_models_coeffs[space_index][coeff]
 
     if control_plots:
-        model.control_plots(x, y, control_plots, space_index=space_index)
+        model.control_plots(x, y, control_plots, space_indices=space_indices)
 
     return model
 
