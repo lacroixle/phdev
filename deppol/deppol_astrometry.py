@@ -473,10 +473,10 @@ def astrometry_fit_plot(band_path, ztfname, filtercode, logger, args):
     #
 
     logger.info("Plotting control plots for the ref2px model")
-    # First get stars that exist in both reference quadrant and other quadrants
 
+    # First get stars that exist in both reference quadrant and other quadrants
     gaiaid_in_ref = dp.gaiaid[dp.quadrant_index == reference_index]
-    measure_mask = np.isin(dp.gaiaid, gaiaid_in_ref)
+    measure_mask = np.where(dp.quadrant_index != reference_index, np.isin(dp.gaiaid, gaiaid_in_ref), False)
     in_ref = np.hstack([np.where(gaiaid == gaiaid_in_ref) for gaiaid in dp.gaiaid[measure_mask]]).flatten()
 
     ref2px_residuals = ref2px_model.residuals(np.array([dp.x[dp.quadrant_index==reference_index][in_ref], dp.y[dp.quadrant_index==reference_index][in_ref]]),
