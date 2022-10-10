@@ -160,7 +160,6 @@ def psf_study(quadrant_path, logger, args):
 
 
 def psf_study_reduce(band_path, ztfname, filtercode, logger, args):
-
     pass
 
 
@@ -217,8 +216,9 @@ def match_gaia_reduce(band_path, ztfname, filtercode, logger, args):
     import pandas as pd
     import numpy as np
     from utils import get_header_from_quadrant_path
+    from deppol_utils import quadrants_from_band_path
 
-    quadrant_paths = [quadrant_path for quadrant_path in list(band_path.glob("ztf_*")) if quadrant_path.is_dir() and quadrant_path.joinpath("psfstars.list").exists()]
+    quadrant_paths = quadrants_from_band_path(band_path, logger, check_files="psfstars.list")
 
     matched_stars_list = []
     quadrants_dict = {}
@@ -362,15 +362,17 @@ def stats_reduce(band_path, ztfname, filtercode, logger, args):
     import pandas as pd
     import matplotlib
     import matplotlib.pyplot as plt
+    from deppol_utils import quadrants_from_band_path
     matplotlib.use('Agg')
 
     # Seeing histogram
     folders = [folder for folder in band_path.glob("*") if folder.is_dir()]
+    quadrant_paths = quadrants_from_band_path(band_path, logger)
 
     logger.info("Plotting fitted seeing histogram")
     seseeings = []
-    for folder in folders:
-        hdfstore_path = folder.joinpath("lists.hdf5")
+    for quadrant_path in quadrant_paths:
+        hdfstore_path = quadrant_path.joinpath("lists.hdf5")
 
         if hdfstore_path.exists():
             with pd.HDFStore(hdfstore_path, mode='r') as hdfstore:
@@ -389,8 +391,8 @@ def stats_reduce(band_path, ztfname, filtercode, logger, args):
         # Failure rates
         def _failure_rate(listname, func):
             success_count = 0
-            for folder in folders:
-                if folder.joinpath("{}.list".format(listname)).exists():
+            for quadrant_path in quadrant_paths:
+                if quadrant_path.joinpath("{}.list".format(listname)).exists():
                     success_count += 1
 
             f.writelines(["For {}:\n".format(func),
@@ -444,3 +446,32 @@ def clean_reduce(band_path, ztfname, filtercode, logger, args):
     rmtree(band_path.joinpath("pmfit_plot"), ignore_errors=True)
     rmtree(band_path.joinpath("smphot_output"), ignore_errors=True)
     rmtree(band_path.joinpath("wcs_residuals_plots"), ignore_errors=True)
+
+
+def filter_seeing(band_path, ztfname, filtercode, logger, args):
+    from utils import get_header_from_quadrant_path
+    from deppol_utils import quadrants_from_band_path, noprocess_quadrants
+
+    quadrant_paths = quadrants_from_band_path(band_path, logger)
+
+    flagged_count = 0
+    quadrants_to_flag = []
+    noprocess = noprocess_quadrants(band_path)
+
+    for quadrant_path in quadrant_paths:
+        quadrant = quadrant_path.name
+        seeing = get_header_from_quadrant_path(quadrant_path)['SEEING']
+
+        if seeing > args.max_seeing:
+            flagged_count += 1
+
+            if quadrant not in noprocess:
+                quadrants_to_flag.append(quadrant)
+
+    if quadrants_to_flag:
+        with open(band_path.joinpath("noprocess"), 'a') as f:
+            for quadrant_to_flag in quadrants_to_flag:
+                f.write("{}\n".format(quadrant_to_flag))
+
+    logger.info("{} quadrants flagged as having seeing > {}".format(flagged_count, args.max_seeing))
+    logger.info("{} quadrants added to the noprocess list".format(len(quadrants_to_flag)))

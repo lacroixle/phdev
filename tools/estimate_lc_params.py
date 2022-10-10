@@ -52,10 +52,14 @@ else:
     exit(-1)
 
 
-salt_df = pd.read_csv(cosmo_dr_folder.joinpath("params/DR2_SALT2fit_params.csv"), delimiter=",", index_col="name")
-redshift_df = pd.read_csv(cosmo_dr_folder.joinpath("params/DR2_redshifts.csv"), delimiter=",", index_col="ztfname")
-lightcurve_folder = cosmo_dr_folder.joinpath("lightcurves/").expanduser().resolve()
-coords_df = pd.read_csv(cosmo_dr_folder.joinpath("ztfdr2_coords.csv"), delimiter=" ", index_col="ztfname")
+salt_df = pd.read_csv(cosmo_dr_folder.joinpath("tables/archived/2021oct26/DR2_SALT2fit_params.csv"), delimiter=",", index_col="name")
+redshift_df = pd.read_csv(cosmo_dr_folder.joinpath("tables/archived/2021oct26/DR2_redshifts.csv"), delimiter=",", index_col="ztfname")
+coords_df = pd.read_csv(cosmo_dr_folder.joinpath("tables/archived/2021oct26/ztfdr2_coords.csv"), delimiter=" ", index_col="ztfname")
+
+lightcurve_folder = cosmo_dr_folder.joinpath("lightcurves/previous_versions/2021oct26").expanduser().resolve()
+# salt_df = pd.read_csv(cosmo_dr_folder.joinpath("tables/ztfdr2_salt2_params.csv"))
+# redshift_df = pd.read_csv(cosmo_dr_folder.joinpath("tables/ztfdr2_redshifts.csv"))
+# coords_df = pd.read_csv(cosmo_dr_folder.joinpath("tables/ztfdr2_coordinates.csv"))
 
 
 ztfnames = []
@@ -93,7 +97,7 @@ def estimate_lc_params(ztfname):
 
     def extract_interval(ztfname, t0_inf, t0_sup, off_mul, do_sql_request=True):
         # First load forced photometry lightcurve (useful for plotting)
-        fp_lc_df = pd.read_csv(lightcurve_folder.joinpath("{}_LC.csv".format(ztfname)), delimiter="\s+", index_col="mjd")
+        # fp_lc_df = pd.read_csv(lightcurve_folder.joinpath("{}_LC.csv".format(ztfname)), delimiter="\s+", index_col="mjd")
 
         # Then retrieve available quadrants covering the host gallaxy position
         sql_lc_df = None
@@ -203,8 +207,12 @@ def estimate_lc_params(ztfname):
             t_min = lc_f_df.iloc[idx_min].name
             t_max = lc_f_df.iloc[idx_max].name
 
+            # return {'sql_lc': lc_f_df.loc[t_min:t_max],
+            #         'fp_lc': fp_lc_df.loc[fp_lc_df['filter'] == 'ztf{}'.format(filtercode[1])].loc[t_min:t_max],
+            #         't_min': t_min,
+            #         't_max': t_max}
             return {'sql_lc': lc_f_df.loc[t_min:t_max],
-                    'fp_lc': fp_lc_df.loc[fp_lc_df['filter'] == 'ztf{}'.format(filtercode[1])].loc[t_min:t_max],
+                    'fp_lc': None,
                     't_min': t_min,
                     't_max': t_max}
 
@@ -237,7 +245,7 @@ def estimate_lc_params(ztfname):
 
     def plot_lightcurve(ax, zfilter):
         if lc_dict[zfilter]:
-            lc_dict[zfilter]['fp_lc']['flux'].plot(ax=ax, yerr=lc_dict[zfilter]['fp_lc']['flux_err'], linestyle='None', marker='.', color=zfilter_plot_color[zfilter])
+            # lc_dict[zfilter]['fp_lc']['flux'].plot(ax=ax, yerr=lc_dict[zfilter]['fp_lc']['flux_err'], linestyle='None', marker='.', color=zfilter_plot_color[zfilter])
             plot_obs_count(ax, lc_dict[zfilter]['sql_lc'], t_0, t_inf, t_sup)
             ax.grid(ls='--', linewidth=0.8)
             ax.set_xlabel("MJD")
@@ -286,10 +294,10 @@ def estimate_lc_params(ztfname):
                     mode = 'a'
 
                 df_lc[zfilter]['sql_lc'].to_csv(output_folder.joinpath("{}_{}.csv".format(ztfname, zfilter)), sep=",")
-                df_lc[zfilter]['fp_lc'].to_csv(output_folder.joinpath("{}_{}_fp.csv".format(ztfname, zfilter)), sep=",")
+                # df_lc[zfilter]['fp_lc'].to_csv(output_folder.joinpath("{}_{}_fp.csv".format(ztfname, zfilter)), sep=",")
                 generate_params_df(df_lc, zfilter).to_csv(output_folder.joinpath("{}_{}_params.csv".format(ztfname, zfilter)), sep=",")
                 df_lc[zfilter]['sql_lc'].to_hdf(output_folder.joinpath("{}.hd5".format(ztfname)), key='lc_{}'.format(zfilter), mode=mode)
-                df_lc[zfilter]['fp_lc'].to_hdf(output_folder.joinpath("{}.hd5".format(ztfname)), key='lc_fp_{}'.format(zfilter))
+                # df_lc[zfilter]['fp_lc'].to_hdf(output_folder.joinpath("{}.hd5".format(ztfname)), key='lc_fp_{}'.format(zfilter))
                 generate_params_df(lc_dict, zfilter).to_hdf(output_folder.joinpath("{}.hd5".format(ztfname)), key='params_{}'.format(zfilter))
 
         _save_df_filter('zg', first=True)

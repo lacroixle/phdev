@@ -13,12 +13,12 @@ def reference_quadrant(band_path, ztfname, filtercode, logger, args):
     from astropy.io import fits
     from astropy.coordinates import SkyCoord
     from utils import get_header_from_quadrant_path, read_list
+    from deppol_utils import quadrants_from_band_path
 
     # Determination of the best seeing quadrant
     # First determine the most represented field
     logger.info("Determining best seeing quadrant...")
-    quadrant_paths = [folder for folder in band_path.glob("ztf_*".format(ztfname, filtercode)) if folder.is_dir()]
-    quadrant_paths = list(filter(lambda x: x.joinpath("psfstars.list").exists(), quadrant_paths))
+    quadrant_paths = quadrants_from_band_path(band_path, logger, check_files="psfstars.list")
 
     seeings = {}
     for quadrant_path in quadrant_paths:
@@ -29,6 +29,7 @@ def reference_quadrant(band_path, ztfname, filtercode, logger, args):
     fieldids_count = [sum([1 for f in seeings.values() if f[1]==fieldid]) for fieldid in fieldids]
     maxcount_field = fieldids[np.argmax(fieldids_count)]
 
+    logger.info("Computing reference quadrants from {} quadrants".format(len(quadrant_paths)))
     logger.info("{} different field ids".format(len(fieldids)))
     logger.info("Field ids: {}".format(fieldids))
     logger.info("Count: {}".format(fieldids_count))

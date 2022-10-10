@@ -17,7 +17,6 @@ def wcs_residuals(band_path, ztfname, filtercode, logger, args):
     """
 
     """
-
     import pandas as pd
     import numpy as np
     import matplotlib
@@ -209,6 +208,8 @@ def astrometry_fit(band_path, ztfname, filtercode, logger, args):
     import matplotlib.pyplot as plt
     from croaks import DataProxy
     from utils import get_ref_quadrant_from_band_folder, ztf_latitude, BiPol2D_fit, create_2D_mesh_grid, poly2d_to_file, ListTable, get_mjd_from_quadrant_path
+
+    matplotlib.use('Agg')
 
     reference_quadrant = get_ref_quadrant_from_band_folder(band_path)
 
@@ -433,8 +434,6 @@ def astrometry_fit(band_path, ztfname, filtercode, logger, args):
     with open(save_folder_path.joinpath("models.pickle"), 'wb') as f:
         pickle.dump({'tp2px': tp2px_model, 'ref2tp': ref2tp_model, 'ref2px': ref2px_model, 'dp': dp}, f)
 
-    return
-
 
 def astrometry_fit_plot(band_path, ztfname, filtercode, logger, args):
     import pickle
@@ -443,6 +442,7 @@ def astrometry_fit_plot(band_path, ztfname, filtercode, logger, args):
     from imageproc import gnomonic
     import pandas as pd
     import numpy as np
+    import matplotlib
     import matplotlib.pyplot as plt
     from saunerie.plottools import binplot
     import imageproc.composable_functions as compfuncs
@@ -451,7 +451,9 @@ def astrometry_fit_plot(band_path, ztfname, filtercode, logger, args):
     from croaks import DataProxy
     from utils import get_ref_quadrant_from_band_folder
 
-    save_folder_path= band_path.joinpath("astrometry")
+    matplotlib.use('Agg')
+
+    save_folder_path = band_path.joinpath("astrometry")
     with open(save_folder_path.joinpath("models.pickle"), 'rb') as f:
         models = pickle.load(f)
 
@@ -684,7 +686,6 @@ def astrometry_fit_plot(band_path, ztfname, filtercode, logger, args):
     plt.close()
     ################################################################################
 
-
     ################################################################################
     # Residuals / distance to origin
     plt.subplots(nrows=1, ncols=2, figsize=(10., 5.))
@@ -715,15 +716,7 @@ def astrometry_fit_plot(band_path, ztfname, filtercode, logger, args):
     plt.xlim(0., max(pm))
     plt.savefig(save_folder_path.joinpath("proper_motion_distribution.png"), dpi=300.)
     plt.close()
-
-    # plt.figure()
-    # plt.plot(pm, ref2px_chi_gaiaid, ".")
-    # plt.show()
-
-    # plt.close()
     ################################################################################
-
-
 
     ################################################################################
     # Residual vectors / quadrant
@@ -1035,7 +1028,7 @@ def astrometry_fit_plot(band_path, ztfname, filtercode, logger, args):
     #     plt.savefig(save_folder_path.joinpath("parallactic_angle_quadrant/parallactic_angle_{}.png".format(quadrant)), dpi=150.)
     #     plt.close()
 
-    # ################################################################################
+    ################################################################################
     # # Color distribution
     plt.hist(dp.centered_color, bins=25, histtype='step', color='black')
     plt.xlabel("$B_p-R_p-\\left<B_p-R_p\\right>$ [mag]")

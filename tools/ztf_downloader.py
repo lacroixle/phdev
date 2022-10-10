@@ -51,15 +51,14 @@ if __name__ == '__main__':
     def _download_quadrant(quadrant):
         warnings.filterwarnings("ignore")
         try:
-            #science.ScienceQuadrant.from_filename(lc_filename).get_data('clean')
             downloaded_quadrant_sciimg = io.get_file(quadrant)
-            #gc.collect()
             downloaded_quadrant_mskimg = io.get_file(quadrant, suffix="mskimg.fits")
             gc.collect()
         except PermissionError as e:
+            traceback.print_exc()
             return False
         except:
-            #traceback.print_exc()
+            traceback.print_exc()
             return False
         finally:
             return True

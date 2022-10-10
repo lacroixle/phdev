@@ -28,8 +28,6 @@ from dask.distributed import Client, LocalCluster, wait, get_worker
 from dask_jobqueue import SLURMCluster, SGECluster
 import ztfquery.io
 from ztfimg.science import ScienceQuadrant
-from imageproc.composable_functions import BiPol2D
-from ztfimg.stamps import stamp_it
 import numpy as np
 import pyloka
 import utils
@@ -72,6 +70,8 @@ if __name__ == '__main__':
     argparser.add_argument('--lc-folder', type=pathlib.Path, required=True)
     argparser.add_argument('--stamp-size', type=int, default=32)
     argparser.add_argument('--output', type=pathlib.Path, required=True)
+    argparser.add_argument('--no-fp', action='store_true', help="Set to disable forced photometry comparison (e.g. when not available).")
+    argparser.add_argument('--mag', action='store_true', help="If set, plot lightcurve in mag unit, else in ADU.")
 
     args = argparser.parse_args()
     args.wd = args.wd.expanduser().resolve()
@@ -141,8 +141,6 @@ if __name__ == '__main__':
             fit_ra, fit_dec = fit_skycoord.ra, fit_skycoord.dec
             loka_radec = pyloka.pix2radec(str(sn_folder.joinpath("{}/calibrated.fits".format(ref_exp))), [fit_px[0]], [fit_px[1]])
 
-            # lc_info['fit_px'] = fit_px
-            # lc_info['fit_radec'] = fit_skycoord
             lc_info['fit_px'] = fit_px
             lc_info['fit_radec'] = fit_skycoord
 
@@ -161,13 +159,6 @@ if __name__ == '__main__':
             lc_info['t0_exp'] = fit_df.iloc[t0_idx]['Date']
             lc_info['t0_exp_file'] = fit_df.iloc[t0_idx]['name']
 
-            try:
-                pol = utils.poly2d_from_file(sn_folder.joinpath("pmfit/transfoTo{}.dat".format(lc_info['t0_exp_file'])))
-            except FileNotFoundError:
-                return
-
-            fit_px_t0 = pol(*fit_px)
-            init_px_t0 = pol(*init_px)
 
             # Close view of the SN
             with fits.open(sn_folder.joinpath("smphot_output/{}.fits".format(lc_info['t0_exp_file']))) as hdul:
@@ -176,12 +167,13 @@ if __name__ == '__main__':
             z = ScienceQuadrant.from_filename(lc_info['t0_exp_file']+"_sciimg.fits")
             t0_quadrant = z.get_dataclean()
 
-            sn_host_stamp = np.array(stamp_it(t0_quadrant, fit_px_t0[0], fit_px_t0[1], args.stamp_size, asarray=True))
-            lc_info['t0_exp_host_stamp'] = sn_host_stamp
+            # sn_host_stamp = np.array(stamp_it(t0_quadrant, fit_px_t0[0], fit_px_t0[1], args.stamp_size, asarray=True))
+            # lc_info['t0_exp_host_stamp'] = sn_host_stamp
 
-            # Get forced photometry lightcurve
-            lc_info['lc_fp'] = pd.read_hdf(args.lc_folder.joinpath("{}.hd5".format(ztfname)), key='lc_fp_{}'.format(filtercode))
-            lc_info['lc_fp'] = lc_info['lc_fp'].loc[lc_info['lc_fp'].index.to_series().between(lc_info['t_inf'][0], lc_info['t_sup'][0])]
+            # Get forced photometry lightcurve if ordered
+            if not args.no_fp:
+                lc_info['lc_fp'] = pd.read_hdf(args.lc_folder.joinpath("{}.hd5".format(ztfname)), key='lc_fp_{}'.format(filtercode))
+                lc_info['lc_fp'] = lc_info['lc_fp'].loc[lc_info['lc_fp'].index.to_series().between(lc_info['t_inf'][0], lc_info['t_sup'][0])]
 
             return lc_info
 
@@ -204,28 +196,31 @@ if __name__ == '__main__':
 
 
         def _plot_lc_info(lc_info, i, first):
-            plt.subplot(3, 3, i*3+1)
+            plt.subplot(3, 2, i*2+1)
             plt.xlabel("$x$ [pixel]")
             plt.ylabel("$y$ [pixel] - {}".format(lc_info['filtercode']))
-            if first:
-                plt.title("Host galaxy")
-            plt.imshow(np.log(np.fmax(lc_info['t0_exp_host_stamp'], 1.)), cmap='gray', origin='upper',
-                       extent=[lc_info['init_px'][0]-args.stamp_size/2,
-                               lc_info['init_px'][0]+args.stamp_size/2,
-                               lc_info['init_px'][1]-args.stamp_size/2,
-                               lc_info['init_px'][1]+args.stamp_size/2])
-            plt.plot(lc_info['fit_px'][0], lc_info['fit_px'][1], '.')
+            # if first:
+            #     plt.title("Host galaxy")
+            # plt.imshow(np.log(np.fmax(lc_info['t0_exp_host_stamp'], 1.)), cmap='gray', origin='upper',
+            #            extent=[lc_info['init_px'][0]-args.stamp_size/2,
+            #                    lc_info['init_px'][0]+args.stamp_size/2,
+            #                    lc_info['init_px'][1]-args.stamp_size/2,
+            #                    lc_info['init_px'][1]+args.stamp_size/2])
+            # plt.plot(lc_info['fit_px'][0], lc_info['fit_px'][1], '.')
 
-            plt.subplot(3, 3, i*3+2)
-            plt.xlabel("$x$ [pixel]")
-            plt.ylabel("$y$ [pixel]")
+            # plt.subplot(3, 3, i*3+2)
+            # plt.xlabel("$x$ [pixel]")
+            # plt.ylabel("$y$ [pixel]")
             if first:
                 plt.title("Close view")
             plt.imshow(lc_info['t0_sn_stamp'], cmap='gray')
 
-            plt.subplot(3, 3, i*3+3)
+            plt.subplot(3, 2, i*2+2)
             for j, fieldid in enumerate(lc_info['fieldids']):
                 sn_flux = lc_info['sn_flux'][lc_info['sn_flux']['fieldid'] == fieldid]
+                if args.mag:
+                    sn_flux['flux'] = -2.5*np.log10(sn_flux['flux']+sn_flux['flux'].min())
+
                 plt.errorbar(sn_flux['mjd'], sn_flux['flux'], yerr=sn_flux['varflux'], color='black', ms=5., lw=0., marker=idx_to_marker[j], ls='', label=str(fieldid), elinewidth=1.)
 
             t = np.linspace(lc_info['sn_flux']['mjd'].min(), lc_info['sn_flux']['mjd'].max(), 500)
@@ -233,7 +228,11 @@ if __name__ == '__main__':
             plt.xlim([lc_info['t_inf'], lc_info['t_sup']])
             plt.axvline(lc_info['t0'], color='black')
             plt.xlabel("MJD")
-            plt.ylabel("Flux")
+            if args.mag:
+                plt.ylabel("$m$")
+            else:
+                plt.ylabel("Flux [ADU]")
+
             plt.legend(title="Field ID")
             if first:
                 plt.title("Lightcurve")
@@ -297,7 +296,7 @@ if __name__ == '__main__':
             plt.xlim(lc_info['t_inf'], lc_info['t_sup'])
 
         # Do plots
-        plt.subplots(ncols=3, nrows=3, constrained_layout=True, figsize=(15., 9.), gridspec_kw={'width_ratios': [1., 1., 3.], 'height_ratios': [1., 1., 1.]})
+        plt.subplots(ncols=2, nrows=3, constrained_layout=True, figsize=(15., 9.), gridspec_kw={'width_ratios': [1., 5.], 'height_ratios': [1., 1., 1.]})
         first = True
         for i, filtercode in enumerate(filtercodes):
             if filtercode in lc_infos:
@@ -317,23 +316,24 @@ if __name__ == '__main__':
         plt.savefig(args.output.joinpath("{}_pos.png".format(ztfname)), dpi=200.)
         plt.close()
 
-        plt.subplots(ncols=2, nrows=3, constrained_layout=True, figsize=(15., 9.))
-        first = True
-        for i, filtercode in enumerate(filtercodes):
-            if filtercode in lc_infos.keys():
-                _plot_fp_diff(lc_infos[filtercode], i, first)
-                mode = 'a'
-                if first:
-                    mode = 'w'
-                lc_infos[filtercode]['sn_flux'].to_hdf(args.output.joinpath("SMP_{}.hd5".format(ztfname)), key=filtercode, mode=mode)
+        if not args.no_fp:
+            plt.subplots(ncols=2, nrows=3, constrained_layout=True, figsize=(15., 9.))
+            first = True
+            for i, filtercode in enumerate(filtercodes):
+                if filtercode in lc_infos.keys():
+                    _plot_fp_diff(lc_infos[filtercode], i, first)
+                    mode = 'a'
+                    if first:
+                        mode = 'w'
+                    lc_infos[filtercode]['sn_flux'].to_hdf(args.output.joinpath("SMP_{}.hd5".format(ztfname)), key=filtercode, mode=mode)
 
-                first = False
+                    first = False
 
-                # Save
-            else:
-                ax = plt.subplot(3, 1, i+1)
-                ax.text(0.5, 0.5, "No data", fontsize=30, transform=ax.transAxes, horizontalalignment='center', verticalalignment='center')
-                ax.axis('off')
+                    # Save
+                else:
+                    ax = plt.subplot(3, 1, i+1)
+                    ax.text(0.5, 0.5, "No data", fontsize=30, transform=ax.transAxes, horizontalalignment='center', verticalalignment='center')
+                    ax.axis('off')
 
-        plt.savefig(args.output.joinpath("{}_fp_diff.png".format(ztfname)), dpi=200.)
-        plt.close()
+            plt.savefig(args.output.joinpath("{}_fp_diff.png".format(ztfname)), dpi=200.)
+            plt.close()

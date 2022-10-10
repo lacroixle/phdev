@@ -83,10 +83,11 @@ if __name__ == '__main__':
                 try:
                     # Check files exist
                     sciimg_path = pathlib.Path(ztfquery.io.get_file(sciimg_filename, downloadit=False, suffix='sciimg.fits'))
-                    mskimg_path = pathlib.Path(ztfquery.io.get_file(sciimg_filename, downloadit=False, suffix='mskimg.fits.gz'))
+                    mskimg_path = pathlib.Path(ztfquery.io.get_file(sciimg_filename, downloadit=False, suffix='mskimg.fits'))
+                    mskimg_path_gz = pathlib.Path(ztfquery.io.get_file(sciimg_filename, downloadit=False, suffix='mskimg.fits.gz'))
 
-                    if not sciimg_path.exists() or not mskimg_path.exists():
-                        # Much faster than relying on ScienceQuadrant.from_filename() throwing error
+                    # Much faster than relying on ScienceQuadrant.from_filename() throwing error
+                    if not sciimg_path.exists() or not (mskimg_path.exists() or maskimg_path_gz.exists()):
                         raise FileNotFoundError(sciimg_path)
 
                     # Dead mask

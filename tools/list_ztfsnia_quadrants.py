@@ -11,11 +11,15 @@ import utils
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser(description="")
     argparser.add_argument('--lc-folder', type=pathlib.Path)
+    argparser.add_argument('--ztfname', type=str)
 
     args = argparser.parse_args()
     args.lc_folder = args.lc_folder.expanduser().resolve()
 
-    lc_files = args.lc_folder.glob("*.hd5")
+    if args.ztfname:
+        lc_files = [args.lc_folder.joinpath("{}.hd5".format(args.ztfname))]
+    else:
+        lc_files = [args.lc_folder.glob("*.hd5")]
 
     quadrant_list = []
     for lc_file in lc_files:

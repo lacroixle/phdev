@@ -130,7 +130,7 @@ def photometry_fit(band_path, ztfname, filtercode, logger, args):
 
     save_folder_path = band_path.joinpath("photometry")
     save_folder_path.mkdir(exist_ok=True)
-    save_folder_path.joinpath("mappings").mkdir(exist_ok=True)
+    band_path.joinpath("mappings").mkdir(exist_ok=True)
 
     logger.info("Building DataProxy")
     # Build a dataproxy from measures and augment it
@@ -159,7 +159,7 @@ def photometry_fit(band_path, ztfname, filtercode, logger, args):
     with open(save_folder_path.joinpath("model.pickle"), 'wb') as f:
         pickle.dump(model, f)
 
-    new_model = _filter_noisy_stars(model, y_model, 0.001, logger)
+    new_model = _filter_noisy_stars(model, y_model, args.photom_max_star_chi2, logger)
 
     _fit_photometry(new_model, logger)
     y_new_model = new_model(new_model.params.free)
