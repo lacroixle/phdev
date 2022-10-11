@@ -257,7 +257,7 @@ if __name__ == '__main__':
         print("Running {} workers with {} processes each ({} total).".format(args.cluster_worker, args.n_jobs, args.cluster_worker*args.n_jobs))
         client.wait_for_workers(1)
     elif not args.synchronous_compute:
-        localCluster = LocalCluster(n_workers=args.n_jobs, dashboard_address='localhost:8787', threads_per_worker=1)
+        localCluster = LocalCluster(n_workers=args.n_jobs, dashboard_address='localhost:8787', threads_per_worker=1, memory_limit=1.)
         client = Client(localCluster)
 
         print("Running a local cluster with {} processes.".format(args.n_jobs))
