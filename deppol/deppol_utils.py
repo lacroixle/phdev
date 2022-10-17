@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import pathlib
 import subprocess
 import time
 from collections.abc import Iterable
@@ -44,8 +45,12 @@ def lc_folder_args(args):
     return args.lc_folder.expanduser().resolve()
 
 
-def quadrants_from_band_path(band_path, logger, check_files=None, paths=True):
-    noprocess = noprocess_quadrants(band_path)
+def quadrants_from_band_path(band_path, logger, check_files=None, paths=True, ignore_noprocess=False):
+    if not ignore_noprocess:
+        noprocess = noprocess_quadrants(band_path)
+    else:
+        noprocess = []
+
     quadrant_paths = [quadrant_path for quadrant_path in list(band_path.glob("ztf_*")) if quadrant_path.name not in noprocess]
 
     if check_files:

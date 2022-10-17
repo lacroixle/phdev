@@ -363,28 +363,57 @@ def stats_reduce(band_path, ztfname, filtercode, logger, args):
     import matplotlib
     import matplotlib.pyplot as plt
     from deppol_utils import quadrants_from_band_path
+    from utils import get_header_from_quadrant_path, ListTable
     matplotlib.use('Agg')
 
     # Seeing histogram
     folders = [folder for folder in band_path.glob("*") if folder.is_dir()]
-    quadrant_paths = quadrants_from_band_path(band_path, logger)
+    quadrant_paths = quadrants_from_band_path(band_path, logger, ignore_noprocess=True)
 
     logger.info("Plotting fitted seeing histogram")
-    seseeings = []
+    seeings = []
     for quadrant_path in quadrant_paths:
-        hdfstore_path = quadrant_path.joinpath("lists.hdf5")
+        if quadrant_path.joinpath("calibrated.fits").exists():
+           hdr = get_header_from_quadrant_path(quadrant_path)
+           seeings.append(hdr['seeing'])
 
-        if hdfstore_path.exists():
-            with pd.HDFStore(hdfstore_path, mode='r') as hdfstore:
-                if '/calibrated' in hdfstore.keys():
-                    calibrated_df = hdfstore.get('/calibrated')
-                    seseeings.append(float(calibrated_df['seseeing']))
-
-    plt.hist(seseeings, bins=int(len(seseeings)/4), range=[0.5, 3], color='xkcd:dark grey', histtype='step')
+    ax = plt.axes()
+    plt.suptitle("Seeing distribution (computed by the ZTF pipeline)")
+    plt.hist(seeings, bins=int(len(seeings)/4), color='xkcd:dark grey', histtype='step')
+    if args.max_seeing:
+        removed_quadrants = len(list(filter(lambda x: x >= args.max_seeing, seeings)))
+        plt.axvline(args.max_seeing)
+        plt.text(0.2, 0.9, "{:.02f}% quadrants with seeing > {} ({} quadrants)".format(removed_quadrants/len(seeings)*100, args.max_seeing, len(seeings)), transform=ax.transAxes)
     plt.grid()
-    plt.xlabel("Seeing")
+    plt.xlabel("Seeing FWHM [pixel]")
     plt.ylabel("Count")
-    plt.savefig(band_path.joinpath("{}-{}_seseeing_dist.png".format(ztfname, filtercode)), dpi=300)
+    plt.savefig(band_path.joinpath("{}-{}_seeing_dist.png".format(ztfname, filtercode)), dpi=300)
+    plt.close()
+
+    quadrant_paths = quadrants_from_band_path(band_path, logger, check_files=['psfstars.list', 'calibrated.fits'], ignore_noprocess=True)
+    logger.info("Plotting psfstars count vs seeing")
+
+    seeings = []
+    psfstars_counts = []
+    for quadrant_path in quadrant_paths:
+        hdr = get_header_from_quadrant_path(quadrant_path)
+        seeings.append(hdr['seeing'])
+
+        psfstars_list = ListTable.from_filename(quadrant_path.joinpath("psfstars.list"))
+        psfstars_counts.append(len(psfstars_list.df))
+
+    ax = plt.axes()
+    plt.plot(seeings, psfstars_counts, '.')
+
+    if args.min_psfstars:
+        filtered_psfstars_count = len(list(filter(lambda x: x < args.min_psfstars, psfstars_counts)))
+        plt.axhline(args.min_psfstars)
+        plt.text(0.2, 0.1, "{:.02f}% quadrants ({}) with PSF stars count < {}".format(filtered_psfstars_count/len(quadrant_paths)*100., filtered_psfstars_count, args.min_psfstars), transform=ax.transAxes)
+
+    plt.grid()
+    plt.xlabel("Seeing FWHM [pixel]")
+    plt.ylabel("PSF stars count")
+    plt.savefig(band_path.joinpath("{}-{}_psfstars_seeing.png".format(ztfname, filtercode)), dpi=300.)
     plt.close()
 
     with open(band_path.joinpath("{}-{}_failures.txt".format(ztfname, filtercode)), 'w') as f:
@@ -442,10 +471,29 @@ def clean_reduce(band_path, ztfname, filtercode, logger, args):
     [f.unlink() for f in files_to_delete]
 
     # Delete output folders
-    rmtree(band_path.joinpath("pmfit"), ignore_errors=True)
-    rmtree(band_path.joinpath("pmfit_plot"), ignore_errors=True)
-    rmtree(band_path.joinpath("smphot_output"), ignore_errors=True)
-    rmtree(band_path.joinpath("wcs_residuals_plots"), ignore_errors=True)
+    folders_to_delete = ["astrometry", "photometry", "mappings", "moments", "psf_residuals", "smphot_output"]
+    [rmtree(folder) for folders in folders_to_delete]
+
+
+def filter_psfstars_count(band_path, ztfname, fitlercode, logger, args):
+    from deppol_utils import quadrants_from_band_path, noprocess_quadrants
+    from utils import ListTable
+
+    quadrant_paths = quadrants_from_band_path(band_path, logger, ignore_noprocess=True)
+    quadrants_to_flag = []
+
+    for quadrant_path in quadrant_paths:
+        if quadrant_path.joinpath("psfstars.list").exists():
+            psfstars_list = ListTable.from_filename(quadrant_path.joinpath("psfstars.list"))
+            psfstars_count = len(psfstars_list.df)
+
+            if psfstars_count <= args.min_psfstars:
+                quadrants_to_flag.append(quadrant_path.name)
+
+    if quadrants_to_flag:
+        with open(band_path.joinpath("noprocess"), 'a') as f:
+            for quadrant_to_flag in quadrants_to_flag:
+                f.write("{}\n".format(quadrant_to_flag))
 
 
 def filter_seeing(band_path, ztfname, filtercode, logger, args):

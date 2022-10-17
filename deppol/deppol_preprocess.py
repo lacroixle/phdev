@@ -18,7 +18,7 @@ def make_catalog(quadrant_folder, logger, args):
     return quadrant_folder.joinpath("se.list").exists()
 
 
-make_catalog_rm = ["low.fits.gz", "miniback.fits", "segmentation.cv.fits", "segmentation.fits"]
+make_catalog_rm = ["low.fits.gz", "miniback.fits", "segmentation.cv.fits", "segmentation.fits", "weight.fz"]
 
 
 def mkcat2(quadrant_path, logger, args):
