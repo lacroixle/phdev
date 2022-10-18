@@ -7,11 +7,12 @@ def make_catalog(quadrant_folder, ztfname, filtercode, logger, args):
     from shutil import copyfile
 
     logger.info("Retrieving calibrated.fits...")
-    sciimg_path = get_file(quadrant_folder.name + "_sciimg.fits", downloadit=False)
+    if not args.use_raw:
+        image_path = get_file(quadrant_folder.name + "_sciimg.fits", downloadit=False)
 
-    logger.info("Located at {}".format(sciimg_path))
+    logger.info("Located at {}".format(image_path))
 
-    copyfile(sciimg_path, quadrant_folder.joinpath("calibrated.fits"))
+    copyfile(image_path, quadrant_folder.joinpath("calibrated.fits"))
 
     run_and_log(["make_catalog", quadrant_folder, "-O", "-S"], logger)
 

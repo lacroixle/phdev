@@ -189,6 +189,7 @@ if __name__ == '__main__':
     argparser.add_argument('--max-seeing', type=float, default=4.)
     argparser.add_argument('--photom-max-star-chi2', type=float, default=1.)
     argparser.add_argument('--min-psfstars', type=int, default=150)
+    argparser.add_argument('--use-raw', action='store_true', help="If set, uses raw images instead of science images.")
 
     logger = logging.getLogger("main")
     logger.addHandler(logging.StreamHandler())
