@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 
-def psf_study(quadrant_path, logger, args):
+def psf_study(quadrant_path, ztfname, filtercode, logger, args):
     from utils import ListTable, match_pixel_space
     import numpy as np
     from saunerie.plottools import binplot
@@ -163,13 +163,11 @@ def psf_study_reduce(band_path, ztfname, filtercode, logger, args):
     pass
 
 
-def match_gaia(quadrant_path, logger, args):
+def match_gaia(quadrant_path, ztfname, filtercode, logger, args):
     from utils import read_list, get_wcs_from_quadrant, get_mjd_from_quadrant_path, contained_in_exposure, match_pixel_space, gaiarefmjd
     import pandas as pd
     import numpy as np
     from astropy.coordinates import SkyCoord
-
-    ztfname = quadrant_path.parts[-3]
 
     if not quadrant_path.joinpath("psfstars.list").exists():
         return
@@ -220,10 +218,13 @@ def match_gaia_reduce(band_path, ztfname, filtercode, logger, args):
 
     quadrant_paths = quadrants_from_band_path(band_path, logger, check_files="psfstars.list")
 
+    logger.info("Concatenating matched stars measurements from {} quadrants.".format(len(quadrant_paths)))
+
     matched_stars_list = []
     quadrants_dict = {}
 
     for quadrant_path in quadrant_paths:
+        logger.info(quadrant_path.name)
         matched_gaia_stars_df = pd.read_hdf(quadrant_path.joinpath("matched_stars.hd5"), key='matched_gaia_stars')
         matched_stars_df = pd.read_hdf(quadrant_path.joinpath("matched_stars.hd5"), key='matched_stars')
 
@@ -248,12 +249,16 @@ def match_gaia_reduce(band_path, ztfname, filtercode, logger, args):
         quadrant_dict['z'] = 90. - header['elvation']
         quadrant_dict['telra'] = header['telrad']
         quadrant_dict['teldec'] = header['teldecd']
-        quadrant_dict['rcid'] = header['rcid']
+        quadrant_dict['rcid'] = header['dbrcid']
+        quadrant_dict['field'] = header['dbfield']
         quadrant_dict['temperature'] = header['tempture']
         quadrant_dict['head_temperature'] = header['headtemp']
         quadrant_dict['wind_speed'] = header['windspd']
         quadrant_dict['wind_dir'] = header['winddir']
         quadrant_dict['dewpoint'] = header['dewpoint']
+        quadrant_dict['humidity'] = header['humidity']
+        quadrant_dict['wetness'] = header['wetness']
+        quadrant_dict['pressure'] = header['pressure']
 
         for key in quadrant_dict.keys():
             matched_stars_df[key] = quadrant_dict[key]
@@ -267,10 +272,11 @@ def match_gaia_reduce(band_path, ztfname, filtercode, logger, args):
     gaia_stars_df = pd.read_hdf(args.lc_folder.joinpath("{}.hd5".format(ztfname)), key='gaia_cal')
     gaia_stars_df.rename({'pmde': 'pmdec'}, axis='columns', inplace=True)
     gaia_stars_df['gaiaid'] = gaia_stars_df.index
+    gaia_stars_df = gaia_stars_df[~gaia_stars_df.index.duplicated(keep='first')]
+
     gaia_stars = []
     for gaiaid in set(matched_stars_df['gaiaid']):
-        #gaia_stars.append({gaiaid: gaia_stars_df.loc[gaiaid].to_dict()})
-        gaia_stars.append(pd.Series(gaia_stars_df.loc[gaiaid], name=gaiaid))
+        gaia_stars.append(pd.Series(gaia_stars_df.drop(['rcid', 'field'], axis='columns').loc[gaiaid], name=gaiaid))
 
     gaia_stars_df = pd.DataFrame(data=gaia_stars)
     gaia_stars_df.rename({'pmde': 'pmdec'}, axis='columns', inplace=True)
@@ -301,7 +307,7 @@ def match_gaia_reduce(band_path, ztfname, filtercode, logger, args):
 
 
 # Extract data from standalone stars and plot several distributions
-def stats(quadrant_path, logger, args):
+def stats(quadrant_path, ztfname, filtercode, logger, args):
     import warnings
     import pandas as pd
     from utils import read_list
@@ -448,7 +454,7 @@ def stats_reduce(band_path, ztfname, filtercode, logger, args):
         plt.close()
 
 
-def clean(quadrant_path, logger, args):
+def clean(quadrant_path, ztfname, filtercode, logger, args):
     # We want to delete all files in order to get back to the prepare_deppol stage
     files_to_keep = ["elixir.fits", "dead.fits.gz", ".dbstuff"]
     files_to_delete = list(filter(lambda f: f.name not in files_to_keep, list(quadrant_path.glob("*"))))
@@ -480,20 +486,30 @@ def filter_psfstars_count(band_path, ztfname, fitlercode, logger, args):
     from utils import ListTable
 
     quadrant_paths = quadrants_from_band_path(band_path, logger, ignore_noprocess=True)
+    noprocess = noprocess_quadrants(band_path)
+    flagged_count = 0
     quadrants_to_flag = []
 
     for quadrant_path in quadrant_paths:
         if quadrant_path.joinpath("psfstars.list").exists():
+            quadrant = quadrant_path.name
             psfstars_list = ListTable.from_filename(quadrant_path.joinpath("psfstars.list"))
             psfstars_count = len(psfstars_list.df)
 
             if psfstars_count <= args.min_psfstars:
-                quadrants_to_flag.append(quadrant_path.name)
+                flagged_count += 1
+
+                if quadrant not in noprocess:
+                    quadrants_to_flag.append(quadrant)
 
     if quadrants_to_flag:
         with open(band_path.joinpath("noprocess"), 'a') as f:
             for quadrant_to_flag in quadrants_to_flag:
                 f.write("{}\n".format(quadrant_to_flag))
+
+    flagged_count = len(quadrants_to_flag)
+    logger.info("{} quadrants flagged as having PSF stars count <= {}.".format(flagged_count, args.min_psfstars))
+    logger.info("{} quadrants added to the noprocess list.".format(len(quadrants_to_flag)))
 
 
 def filter_seeing(band_path, ztfname, filtercode, logger, args):
@@ -521,5 +537,5 @@ def filter_seeing(band_path, ztfname, filtercode, logger, args):
             for quadrant_to_flag in quadrants_to_flag:
                 f.write("{}\n".format(quadrant_to_flag))
 
-    logger.info("{} quadrants flagged as having seeing > {}".format(flagged_count, args.max_seeing))
-    logger.info("{} quadrants added to the noprocess list".format(len(quadrants_to_flag)))
+    logger.info("{} quadrants flagged as having seeing > {}.".format(flagged_count, args.max_seeing))
+    logger.info("{} quadrants added to the noprocess list.".format(len(quadrants_to_flag)))

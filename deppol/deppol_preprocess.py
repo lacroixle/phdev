@@ -2,7 +2,7 @@
 
 from deppol_utils import run_and_log
 
-def make_catalog(quadrant_folder, logger, args):
+def make_catalog(quadrant_folder, ztfname, filtercode, logger, args):
     from ztfquery.io import get_file
     from shutil import copyfile
 
@@ -21,7 +21,7 @@ def make_catalog(quadrant_folder, logger, args):
 make_catalog_rm = ["low.fits.gz", "miniback.fits", "segmentation.cv.fits", "segmentation.fits", "weight.fz"]
 
 
-def mkcat2(quadrant_path, logger, args):
+def mkcat2(quadrant_path, ztfname, filtercode, logger, args):
     import matplotlib
     import matplotlib.pyplot as plt
     matplotlib.use('Agg')
@@ -49,15 +49,15 @@ def mkcat2(quadrant_path, logger, args):
 mkcat2_rm = []
 
 
-def makepsf(quadrant_path, logger, args):
+def makepsf(quadrant_path, ztfname, filtercode, logger, args):
     run_and_log(["makepsf", quadrant_path, "-f"], logger)
     return quadrant_path.joinpath("psfstars.list").exists()
 
 
-makepsf_rm = ["psf_resid_tuple.fit", "psf_res_stack.fits"]
+makepsf_rm = ["psf_resid_tuple.fit", "psf_res_stack.fits", "psf_resid_image.fits"]
 
 
-def pipeline(quadrant_path, logger, args):
+def preprocess(quadrant_path, ztfname, filtercode, logger, args):
     if not make_catalog(quadrant_path, logger, args):
         return False
 

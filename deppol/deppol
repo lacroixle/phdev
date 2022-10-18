@@ -39,7 +39,7 @@ import deppol_preprocess
 poloka_func.append({'map': deppol_preprocess.make_catalog, 'rm': deppol_preprocess.make_catalog_rm})
 poloka_func.append({'map': deppol_preprocess.mkcat2, 'rm': deppol_preprocess.mkcat2_rm})
 poloka_func.append({'map': deppol_preprocess.makepsf, 'rm': deppol_preprocess.makepsf_rm})
-poloka_func.append({'map': deppol_preprocess.pipeline})
+poloka_func.append({'map': deppol_preprocess.preprocess})
 
 
 import deppol_smphot
@@ -80,6 +80,9 @@ def map_op(results, quadrant, wd, ztfname, filtercode, func, args):
             quadrant_path = quadrant_workspace
 
         logger.addHandler(logging.FileHandler(str(quadrant_path.joinpath("output.log")), mode='a'))
+        logger.info("")
+        logger.info("="*80)
+        logger.info("{}-{}".format(ztfname, filtercode))
         logger.info(datetime.datetime.today())
         logger.info("Running map operation \"{}\" on quadrant {}.".format(func, quadrant))
         logger.info("Quadrant directory: {}".format(quadrant_path))
@@ -88,7 +91,7 @@ def map_op(results, quadrant, wd, ztfname, filtercode, func, args):
     result = False
     try:
         start_time = time.perf_counter()
-        result = poloka_func[func]['map'](quadrant_path, logger, args)
+        result = poloka_func[func]['map'](quadrant_path, ztfname, filtercode, logger, args)
         end_time = time.perf_counter()
     except Exception as e:
         if func != 'clean':
@@ -143,6 +146,9 @@ def reduce_op(results, wd, ztfname, filtercode, func, save_stats, args):
         logger.addHandler(logging.StreamHandler())
         logger.setLevel(logging.INFO)
 
+    logger.info("")
+    logger.info("="*80)
+    logger.info("{}-{}".format(ztfname, filtercode))
     logger.info(datetime.datetime.today())
     logger.info("Running reduction {}".format(func))
 
@@ -153,7 +159,7 @@ def reduce_op(results, wd, ztfname, filtercode, func, save_stats, args):
         logger.error("In SN {}-{}".format(ztfname, filtercode))
         logger.error(traceback.format_exc())
     finally:
-        pass
+        logger.info("="*80)
 
     end_time = time.perf_counter()
     if args.dump_timings:
@@ -182,7 +188,7 @@ if __name__ == '__main__':
     argparser.add_argument('--log-std', action='store_true', help="If set, output log to standard output.")
     argparser.add_argument('--max-seeing', type=float, default=4.)
     argparser.add_argument('--photom-max-star-chi2', type=float, default=1.)
-    argparser.add_argument('--min-psfstars', type=int, default=200)
+    argparser.add_argument('--min-psfstars', type=int, default=150)
 
     logger = logging.getLogger("main")
     logger.addHandler(logging.StreamHandler())
@@ -246,7 +252,7 @@ if __name__ == '__main__':
     if args.cluster_worker > 0:
         cluster = SLURMCluster(cores=args.n_jobs,
                                processes=args.n_jobs,
-                               memory="{}GB".format(3*args.n_jobs),
+                               memory="{}GB".format(10*args.n_jobs),
                                project="ztf",
                                walltime="12:00:00",
                                queue="htc",
@@ -259,7 +265,7 @@ if __name__ == '__main__':
         print("Running {} workers with {} processes each ({} total).".format(args.cluster_worker, args.n_jobs, args.cluster_worker*args.n_jobs))
         client.wait_for_workers(1)
     elif not args.synchronous_compute:
-        localCluster = LocalCluster(n_workers=args.n_jobs, dashboard_address='localhost:8787', threads_per_worker=1, memory_limit=1.)
+        localCluster = LocalCluster(n_workers=args.n_jobs, dashboard_address='localhost:8787', memory_limit="{}GB".format(4*args.n_jobs), processes=True, threads_per_worker=1)
         client = Client(localCluster)
 
         print("Running a local cluster with {} processes.".format(args.n_jobs))
@@ -270,6 +276,7 @@ if __name__ == '__main__':
     jobs = []
     map_count = 0
     reduction_count = 0
+    map_count = 0
     wd = args.wd
     if args.scratch:
         wd = args.scratch
@@ -294,7 +301,6 @@ if __name__ == '__main__':
             print("{} quadrants found.".format(len(quadrants)))
 
             results = None
-            map_count = 0
             for func in funcs:
                 print("Pipeline function \"{}\". ".format(func), flush=True, end="")
                 if 'map' in poloka_func[func].keys() and not args.no_map:
@@ -311,6 +317,7 @@ if __name__ == '__main__':
                 if results:
                     jobs.extend(results)
 
+    print("", flush=True)
     if args.scratch:
         print("Moving data into scratch folder.")
         for ztfname in ztfnames:
@@ -323,13 +330,13 @@ if __name__ == '__main__':
                     shutil.copytree(args.wd.joinpath("{}/{}".format(ztfname, filtercode)), scratch_band_path)
 
     print("")
-    print("Running. ", end="")
+    print("Running. ", end="", flush=True)
 
     if map_count > 0:
         print("Processing {} mappings. ".format(map_count), end="", flush=True)
 
     if reduction_count > 0:
-        print("Processing {} reduction.".format(reduction_count), end="", flush=True)
+        print("Processing {} reductions.".format(reduction_count), end="", flush=True)
 
     print("", flush=True)
 

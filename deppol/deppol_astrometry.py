@@ -8,8 +8,6 @@ from scipy import sparse
 import numpy as np
 from sksparse import cholmod
 
-import matplotlib.pyplot as plt
-
 from utils import get_wcs_from_quadrant, quadrant_width_px, quadrant_height_px, gaiarefmjd
 
 
@@ -362,7 +360,7 @@ def astrometry_fit(band_path, ztfname, filtercode, logger, args):
     # Pixel space to tangent space for reference quadrant
     #
 
-    grid_res = 200
+    grid_res = 100
     def _ref2tp_polymodel(degree):
         logger.info("Reference quadrant={}".format(reference_quadrant))
         wcs = get_wcs_from_quadrant(band_path.joinpath(reference_quadrant))

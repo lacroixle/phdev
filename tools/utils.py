@@ -29,7 +29,8 @@ ztf_altitude = 1668. # m
 gaiarefmjd = Time(2015.5, format='byear').mjd
 
 filtercode2gaiaband = {'zg': 'bpmag',
-                       'zr': 'rpmag'}
+                       'zr': 'rpmag',
+                       'zi': 'rpmag'} # Not a great workaround
 
 idx2markerstyle = ['*', 'x', '.', 'v', '^']
 
@@ -440,4 +441,4 @@ def BiPol2D_fit(x, y, degree, space_indices=None, control_plots=None, simultaneo
 
 def create_2D_mesh_grid(*meshgrid_space):
     meshgrid = np.meshgrid(*meshgrid_space)
-    return np.array([meshgrid[0], meshgrid[1]]).T.reshape(-1, 2)
+    return np.array([meshgrid[0], meshgr
