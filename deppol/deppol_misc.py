@@ -124,8 +124,6 @@ def psf_study(quadrant_path, ztfname, filtercode, logger, args):
     # psf_resid.df['flux'] = psf_stars.df['flux'].iloc[idx].reset_index(drop=True)
     # psf_resid.df['eflux'] = psf_stars.df['eflux'].iloc[idx].reset_index(drop=True)
 
-
-
     # limits = [np.min(res), np.max(res)]
     # f = np.linspace(*limits, 200)
     # s = np.var(res)
@@ -477,11 +475,11 @@ def clean_reduce(band_path, ztfname, filtercode, logger, args):
     [f.unlink() for f in files_to_delete]
 
     # Delete output folders
-    folders_to_delete = ["astrometry", "photometry", "mappings", "moments", "psf_residuals", "smphot_output"]
-    [rmtree(folder) for folders in folders_to_delete]
+    folders_to_delete = ["astrometry", "photometry", "mappings", "moments", "psf_residuals", "smphot_output", "pmfit", "pmfit_plot"]
+    [rmtree(band_path.joinpath(folder), ignore_errors=True) for folder in folders_to_delete]
 
 
-def filter_psfstars_count(band_path, ztfname, fitlercode, logger, args):
+def filter_psfstars_count(band_path, ztfname, filtercode, logger, args):
     from deppol_utils import quadrants_from_band_path, noprocess_quadrants
     from utils import ListTable
 
@@ -510,6 +508,32 @@ def filter_psfstars_count(band_path, ztfname, fitlercode, logger, args):
     flagged_count = len(quadrants_to_flag)
     logger.info("{} quadrants flagged as having PSF stars count <= {}.".format(flagged_count, args.min_psfstars))
     logger.info("{} quadrants added to the noprocess list.".format(len(quadrants_to_flag)))
+
+
+def filter_astro_chi2(band_path, ztfname, filtercode, logger, args):
+    from deppol_utils import noprocess_quadrants
+    import pandas as pd
+
+    noprocess = noprocess_quadrants(band_path)
+
+    chi2_path = band_path.joinpath("astrometry/ref2px_plots/chi2_quadrants.csv")
+    if not chi2_path.exists():
+        logger.info("Could not find file {}!".format(chi2_path))
+        return
+
+    chi2_df = pd.read_csv(chi2_path, index_col=0)
+
+    to_filter = (chi2_df['chi2'] >= args.astro_max_chi2)
+    logger.info("{} quadrants flagged as having astrometry chi2 >= {}.".format(sum(to_filter), args.astro_max_chi2))
+
+    quadrants_to_flag = 0
+    for quadrant in chi2_df.loc[to_filter].index.tolist():
+        with open(band_path.joinpath("noprocess"), 'a') as f:
+            if quadrant not in noprocess:
+                f.write("{}\n".format(quadrant))
+                quadrants_to_flag += 1
+
+    logger.info("{} quadrants added to the noprocess list.".format(quadrants_to_flag))
 
 
 def filter_seeing(band_path, ztfname, filtercode, logger, args):

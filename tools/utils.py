@@ -441,4 +441,4 @@ def BiPol2D_fit(x, y, degree, space_indices=None, control_plots=None, simultaneo
 
 def create_2D_mesh_grid(*meshgrid_space):
     meshgrid = np.meshgrid(*meshgrid_space)
-    return np.array([meshgrid[0], meshgr
+    return np.array([meshgrid[0], meshgrid[1]]).T.reshape(-1, 2)
