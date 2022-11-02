@@ -5,7 +5,11 @@ import logging
 import pathlib
 import datetime
 
+import numpy as np
 import ztfquery
+import joblib
+from ztfimg.science import ScienceQuadrant
+from astropy.io import fits
 
 from utils import filtercodes
 
@@ -45,20 +49,20 @@ if __name__ == '__main__':
                 image_filenames = list(map(lambda x: x.strip(), f.readlines()))
 
             prepare_logger.info("Found. {} images.".format(len(image_filenames)))
-            quadrant_lists[filtercode] = {'quadrant_list': quadrant_list, 'filename': image_filenames}
+            quadrant_lists[filtercode] = image_filenames
         else:
             prepare_logger.info("Not found.")
 
     for filtercode in quadrant_lists.keys():
         def _create_folder(filtercode, quadrant_list):
-            logger.info("In filter {} - creating directory".format(filtercode))
-            args.output.joinpath("{}/{}".format(ztfname, filtercode)).mkdir(exist_ok=True)
+            prepare_logger.info("In filter {} - creating directory {}".format(filtercode, args.output.joinpath(filtercode)))
+            args.output.joinpath(filtercode).mkdir(exist_ok=True)
 
             def _create_subfolder(image_filename):
                 try:
                     # Check files exist
-                    quadrant_logger = logging.getLogger(sciimg_filename)
-                    quadrant_logger.addHandler(logging.FileHandler(args.output.joinpath("{}/prepare_{}.log".format(ztfname, ztfname))))
+                    quadrant_logger = logging.getLogger(image_filename)
+                    quadrant_logger.addHandler(logging.FileHandler(args.output.joinpath("{}/prepare.log".format(filtercode))))
                     quadrant_logger.addHandler(logging.StreamHandler())
                     quadrant_logger.setLevel(logging.INFO)
 
@@ -73,9 +77,8 @@ if __name__ == '__main__':
 
                         z = ScienceQuadrant.from_filename(sciimg_path)
 
-                        args.output.joinpath("{}/{}".format(ztfname, filtercode)).mkdir(exist_ok=True)
-                        folder_name = sciimg_filename[:37]
-                        folder_path = args.output.joinpath("{}/{}/{}".format(ztfname, filtercode, folder_name))
+                        folder_name = image_filename[:37]
+                        folder_path = args.output.joinpath("{}/{}".format(filtercode, folder_name))
 
                         folder_path.mkdir(exist_ok=True)
                         folder_path.joinpath(".dbstuff").touch()
@@ -102,15 +105,11 @@ if __name__ == '__main__':
                 except Exception as e:
                     quadrant_logger.exception("Exception error for: {}".format(sciimg_path))
                 else:
-                    quadrant_logger.info("Success: {}, dead pixel count={}".format(sciimg_filename, np.sum(deads)))
+                    quadrant_logger.info("Success: {}, dead pixel count={}".format(image_filename, np.sum(deads)))
                 finally:
                     for handler in quadrant_logger.handlers:
                         handler.close()
 
-            joblib.Parallel(n_jobs=args.n_jobs)(joblib.delayed(_create_subfolder)(image_filename) for image_filename in quadrant_list[filtercode]['image_filenames'])
+            joblib.Parallel(n_jobs=args.n_jobs)(joblib.delayed(_create_subfolder)(image_filename) for image_filename in quadrant_list)
 
-        for filtercode in quadrant_lists.keys():
-            _create_subfolders(filtercode, quadrant_lists[filtercode])
-
-        for handler in logger.handlers:
-            handler.close()
+        _create_folder(filtercode, quadrant_lists[filtercode])

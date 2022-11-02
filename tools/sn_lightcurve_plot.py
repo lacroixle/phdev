@@ -14,6 +14,7 @@ import socket
 import copy
 import traceback
 
+from scipy import stats
 from joblib import Parallel, delayed
 import pandas as pd
 from astropy.io import fits
@@ -29,7 +30,7 @@ from dask_jobqueue import SLURMCluster, SGECluster
 import ztfquery.io
 from ztfimg.science import ScienceQuadrant
 import numpy as np
-import pyloka
+#import pyloka
 import utils
 from scipy.interpolate import LSQUnivariateSpline
 
@@ -139,7 +140,7 @@ if __name__ == '__main__':
 
             fit_skycoord = SkyCoord.from_pixel(*fit_px, w)
             fit_ra, fit_dec = fit_skycoord.ra, fit_skycoord.dec
-            loka_radec = pyloka.pix2radec(str(sn_folder.joinpath("{}/calibrated.fits".format(ref_exp))), [fit_px[0]], [fit_px[1]])
+            #loka_radec = pyloka.pix2radec(str(sn_folder.joinpath("{}/calibrated.fits".format(ref_exp))), [fit_px[0]], [fit_px[1]])
 
             lc_info['fit_px'] = fit_px
             lc_info['fit_radec'] = fit_skycoord
@@ -272,7 +273,9 @@ if __name__ == '__main__':
 
             for j, fieldid in enumerate(lc_info['fieldids']):
                 sn_flux = lc_info['lc_fp'][lc_info['lc_fp']['field_id'] == fieldid]
-                plt.errorbar(sn_flux.index, sn_flux['flux'], yerr=sn_flux['flux_err'], color='black', ms=5., lw=0., marker=idx_to_marker[j], ls='', label=str(fieldid), elinewidth=1.)
+                to_plot = ~np.any([~(np.abs(stats.zscore(sn_flux['flux_err'])) < 2.), ~(np.abs(stats.zscore(sn_flux['flux'])) < 5)], axis=0)
+                print("To plot: {} ({} removed)".format(sum(to_plot), len(sn_flux)-sum(to_plot)))
+                plt.errorbar(sn_flux.index[to_plot], sn_flux['flux'][to_plot], yerr=sn_flux['flux_err'][to_plot], color='black', ms=5., lw=0., marker=idx_to_marker[j], ls='', label=str(fieldid), elinewidth=1.)
 
             plt.legend(title="Field ID")
             plt.axvline(lc_info['t0'], color='black')
