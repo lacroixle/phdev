@@ -2,6 +2,7 @@
 
 import pathlib
 from collections.abc import Iterable
+import itertools
 
 import numpy as np
 from croaks.match import NearestNeighAssoc
@@ -34,6 +35,56 @@ filtercode2gaiaband = {'zg': 'bpmag',
 
 idx2markerstyle = ['*', 'x', '.', 'v', '^']
 
+
+def plot_ztf_focal_plan(fig, focal_plane_dict, plot_fun, plot_ccdid=False):
+    ccds = fig.subfigures(ncols=4, nrows=4)
+    for i in range(4):
+        for j in range(4):
+            ccdid = 16 - (i*4+j)
+            quadrants = ccds[i, j].subplots(ncols=2, nrows=2)
+
+            for k in range(2):
+                for l in range(2):
+                    rcid = (ccdid-1)*4 + k*2
+                    qid = k*2
+                    if k > 0:
+                        rcid += l
+                        qid += l
+                    else:
+                        rcid -= (l - 1)
+                        qid -= (l - 1)
+
+                    plot_fun(quadrants[k, l], focal_plane_dict[ccdid][qid], ccdid, qid, rcid)
+
+            if plot_ccdid:
+                ax = ccds[i, j].add_subplot()
+                ax.text(0.5, 0.5, ccdid, horizontalalignment='center', verticalalignment='center', transform=ax.transAxes, fontweight='black', fontsize='xx-large')
+                ax.axis('off')
+
+def plot_ztf_focal_plan_rcid(fig):
+    rcids = dict([(i+1, dict([(j, j) for j in range(4)])) for i in range(0, 16)])
+
+    def _plot(ax, val, ccdid, qid, rcid):
+        ax.text(0.5, 0.5, rcid, horizontalalignment='center', verticalalignment='center', transform=ax.transAxes)
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+    plot_ztf_focal_plan(fig, rcids, _plot, plot_ccdid=True)
+
+def plot_ztf_focal_plan_values(fig, focal_plane_dict):
+    def _plot(ax, val, ccdid, qid, rcid):
+        if val is not None:
+            ax.imshow([[val]], vmin=vmin, vmax=vmax)
+        ax.text(0.5, 0.5, rcid, horizontalalignment='center', verticalalignment='center', transform=ax.transAxes)
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+    values = list(itertools.chain.from_iterable([[focal_plane_dict[ccdid][qid] for qid in focal_plane_dict[ccdid]] for ccdid in focal_plane_dict.keys()]))
+    values = list(filter(lambda x: x is not None, values))
+    vmin= np.min(values)
+    vmax = np.max(values)
+
+    plot_ztf_focal_plan(fig, focal_plane_dict, _plot, plot_ccdid=True)
 
 def make_index_from_list(dp, index_list):
     """
