@@ -8,6 +8,8 @@ def psf_study(quadrant_path, ztfname, filtercode, logger, args):
     from scipy.stats import norm
     import matplotlib
     import matplotlib.pyplot as plt
+    import pickle
+    from matplotlib.ticker import MultipleLocator, FormatStrFormatter, AutoMinorLocator
     matplotlib.use('Agg')
 
     if not quadrant_path.joinpath("psfstars.list").exists():
@@ -21,41 +23,63 @@ def psf_study(quadrant_path, ztfname, filtercode, logger, args):
     stand.df['mag'] = -2.5*np.log10(stand.df['flux'])
     psf_stars.df['mag'] = -2.5*np.log10(psf_stars.df['flux'])
     psf_residuals_px = (psf_resid.df['fimg'] - psf_resid.df['fpsf']).to_numpy()
+    mag = np.linspace(np.min(stand.df['mag']), np.max(stand.df['mag']), 100)
 
+    # Fit order 2 polynomials on skewness/mag relation
+    skew_poly_x = np.polynomial.Polynomial.fit(stand.df['mag'], stand.df['gmx3'], 1)
+    skew_poly_y = np.polynomial.Polynomial.fit(stand.df['mag'], stand.df['gmy3'], 1)
+    with open(quadrant_path.joinpath("stamp_skewness.pickle"), 'wb') as f:
+        pickle.dump({'poly_x': skew_poly_x, 'poly_y': skew_poly_y}, f)
 
     plt.figure(figsize=(7., 7.))
+    ax = plt.axes()
+    ax.tick_params(which='both', direction='in')
+    ax.xaxis.set_minor_locator(AutoMinorLocator())
+    ax.yaxis.set_minor_locator(AutoMinorLocator())
+    plt.grid(linestyle='--', color='xkcd:sky blue')
     plt.suptitle("Skewness plane for standalone stars stamps in \n {}".format(quadrant_path.name))
     plt.scatter(stand.df['gmx3'], stand.df['gmy3'], s=2., color='black')
     plt.xlabel("$M^g_{xxx}$")
     plt.ylabel("$M^g_{yyy}$")
     plt.axvline(0.)
     plt.axhline(0.)
+    plt.axvline(skew_poly_x.coef[0], ls='--')
+    plt.axhline(skew_poly_y.coef[0], ls='--')
     plt.axis('equal')
-    plt.grid()
     plt.savefig(quadrant_path.joinpath("{}_mx3_my3_plane.png".format(quadrant_path.name)), dpi=300.)
     plt.close()
 
     plt.subplots(ncols=1, nrows=2, sharex=True, figsize=(10., 5.))
     plt.suptitle("Skewness vs magnitude for standalone stars stamps in {}".format(quadrant_path.name))
-    plt.subplot(2, 1, 1)
+
+    ax = plt.subplot(2, 1, 1)
+    ax.tick_params(which='both', direction='in')
+    ax.xaxis.set_minor_locator(AutoMinorLocator())
+    ax.yaxis.set_minor_locator(AutoMinorLocator())
+    plt.grid(linestyle='--', color='xkcd:sky blue')
     plt.scatter(stand.df['mag'], stand.df['gmx3'], s=2.)
+    plt.plot(mag, skew_poly_x(mag), color='black')
     plt.axhline(0.)
-    plt.grid()
     plt.ylim(-0.5, 0.3)
     plt.xlim(-15., -7)
     plt.ylabel("$M^g_{xxx}$")
 
-    plt.subplot(2, 1, 2)
+    ax = plt.subplot(2, 1, 2)
+    ax.tick_params(which='both', direction='in')
+    ax.xaxis.set_minor_locator(AutoMinorLocator())
+    ax.yaxis.set_minor_locator(AutoMinorLocator())
+    plt.grid(linestyle='--', color='xkcd:sky blue')
     plt.scatter(stand.df['mag'], stand.df['gmy3'], s=2.)
+    plt.plot(mag, skew_poly_y(mag), color='black')
     plt.axhline(0.)
     plt.xlabel("$m$")
-    plt.grid()
     plt.ylim(-0.3, 0.3)
     plt.xlim(-15., -6)
     plt.ylabel("$M^g_{yyy}$")
 
     plt.savefig(quadrant_path.joinpath("{}_skewness_magnitude.png".format(quadrant_path.name)), dpi=300.)
     plt.close()
+    return
 
     star_indices = match_pixel_space(psf_stars.df[['x', 'y']].to_records(), psf_resid.df[['xc', 'yc']].rename(mapper={'xc': 'x', 'yc': 'y'}, axis='columns').to_records())
     psf_size = int(np.sqrt(sum(star_indices==0)))
@@ -158,7 +182,134 @@ def psf_study(quadrant_path, ztfname, filtercode, logger, args):
 
 
 def psf_study_reduce(band_path, ztfname, filtercode, logger, args):
-    pass
+    import numpy as np
+    import pandas as pd
+    import matplotlib.pyplot as plt
+    from deppol_utils import quadrants_from_band_path
+    from utils import get_header_from_quadrant_path, ListTable
+    from matplotlib.ticker import MultipleLocator, FormatStrFormatter, AutoMinorLocator
+    from utils import idx2markerstyle
+    import pickle
+
+    # Compare seeing computed by sextractor vs the one computed by the ZTF pipeline
+    quadrant_paths = quadrants_from_band_path(band_path, logger, check_files="psfstars.list", ignore_noprocess=False)
+
+    chi2_df = pd.read_csv(band_path.joinpath("astrometry/ref2px_plots/chi2_quadrants.csv"), index_col=0)
+
+    def _extract_seeing(quadrant_path):
+        hdr = get_header_from_quadrant_path(quadrant_path)
+        if quadrant_path.name in chi2_df.index.tolist():
+            chi2 = chi2_df.at[quadrant_path.name, 'chi2']
+        else:
+            chi2 = float('nan')
+
+        psfstars_list = ListTable.from_filename(quadrant_path.joinpath("psfstars.list"))
+        return 2.355*hdr['gfseeing'], hdr['seeing'], len(psfstars_list.df), chi2
+
+    seeings = np.array(list(map(_extract_seeing, quadrant_paths))).T
+
+    def _extract_skewness(quadrant_path):
+        hdr = get_header_from_quadrant_path(quadrant_path)
+        with open(quadrant_path.joinpath("stamp_skewness.pickle"), 'rb') as f:
+            poly = pickle.load(f)
+            poly_x = poly['poly_x']
+            poly_y = poly['poly_y']
+
+        out_dict = {'mjd': hdr['obsmjd'], 'quadrant_id': "{}_{}".format(hdr['ccdid'], hdr['qid'])}
+        out_dict.update(dict(('x{}'.format(i), coef) for i, coef in enumerate(poly_x.coef)))
+        out_dict.update(dict(('y{}'.format(i), coef) for i, coef in enumerate(poly_y.coef)))
+        return out_dict
+
+    skewness_df = pd.DataFrame(list(map(_extract_skewness, quadrant_paths)))
+
+    qids = set(skewness_df['quadrant_id'])
+    plt.subplots(nrows=2, ncols=1)
+    plt.suptitle("Order 1 polynomial coefficients fit on skewness/mag")
+    ax = plt.subplot(2, 1, 1)
+    for i, qid in enumerate(qids):
+        qid_mask = (skewness_df['quadrant_id'] == qid)
+        plt.plot(skewness_df.loc[qid_mask]['mjd'], skewness_df[qid_mask]['x1'], idx2markerstyle[i], color='black', label=qid)
+    plt.axhline(0., color='black')
+    plt.ylim(-0.15, 0.03)
+    ax.tick_params(which='both', direction='in')
+    ax.xaxis.set_minor_locator(AutoMinorLocator())
+    ax.yaxis.set_minor_locator(AutoMinorLocator())
+    plt.grid(linestyle='--', color='xkcd:sky blue')
+    plt.legend(title="Quadrant ID")
+    plt.xlabel("MJD")
+    plt.ylabel("$S^x_1$")
+
+    ax = plt.subplot(2, 1, 2)
+    for i, qid in enumerate(qids):
+        qid_mask = (skewness_df['quadrant_id'] == qid)
+        plt.plot(skewness_df.loc[qid_mask]['mjd'], skewness_df[qid_mask]['y1'], idx2markerstyle[i], color='black', label=qid)
+    plt.axhline(0., color='black')
+    plt.ylim(-0.15, 0.03)
+    ax.tick_params(which='both', direction='in')
+    ax.xaxis.set_minor_locator(AutoMinorLocator())
+    ax.yaxis.set_minor_locator(AutoMinorLocator())
+    plt.grid(linestyle='--', color='xkcd:sky blue')
+    plt.legend(title="Quadrant ID")
+    plt.xlabel("MJD")
+    plt.ylabel("$S^y_1$")
+
+    # plt.tight_layout()
+    plt.show()
+    plt.close()
+
+    return
+
+    # ax = plt.axes()
+    # plt.plot(seeings[0], seeings[1], '.')
+    # ax.tick_params(which='both', direction='in')
+    # ax.xaxis.set_minor_locator(AutoMinorLocator())
+    # ax.yaxis.set_minor_locator(AutoMinorLocator())
+    # plt.grid(linestyle='--', color='xkcd:sky blue')
+    # plt.xlabel("GF seeing [pixel]")
+    # plt.ylabel("ZTF seeing [pixel]")
+    # plt.show()
+    # plt.close()
+
+    # ax = plt.axes()
+    # plt.plot(seeings[2], seeings[3], '.')
+    # ax.tick_params(which='both', direction='in')
+    # ax.xaxis.set_minor_locator(AutoMinorLocator())
+    # ax.yaxis.set_minor_locator(AutoMinorLocator())
+    # plt.grid(linestyle='--', color='xkcd:sky blue')
+    # plt.xlabel("PSF stars count")
+    # plt.ylabel("Chi2")
+    # plt.show()
+    # plt.close()
+
+    # ax = plt.axes()
+    # plt.plot(seeings[2], seeings[0]-seeings[1]-np.mean(seeings[0]-seeings[1]), '.')
+    # ax.tick_params(which='both', direction='in')
+    # ax.xaxis.set_minor_locator(AutoMinorLocator())
+    # ax.yaxis.set_minor_locator(AutoMinorLocator())
+    # plt.grid(linestyle='--', color='xkcd:sky blue')
+    # plt.xlabel("PSF stars count")
+    # plt.ylabel("GF - ZTF - <GF-ZTF> (seeing) [pixel]")
+    # plt.show()
+    # plt.close()
+
+    # ax = plt.axes()
+    # plt.plot(seeings[3], seeings[0]-seeings[1]-np.mean(seeings[0]-seeings[1]), '.')
+    # ax.tick_params(which='both', direction='in')
+    # ax.xaxis.set_minor_locator(AutoMinorLocator())
+    # ax.yaxis.set_minor_locator(AutoMinorLocator())
+    # plt.grid(linestyle='--', color='xkcd:sky blue')
+    # plt.xlabel("Chi2")
+    # plt.ylabel("GF - ZTF - <GF-ZTF> (seeing) [pixel]")
+    # plt.show()
+    # plt.close()
+
+    # ax = plt.axes()
+    # plt.hist(seeings[0]-seeings[1]-np.mean(seeings[0]-seeings[1]), bins='auto', histtype='step', color='black')
+    # ax.tick_params(which='both', direction='in')
+    # ax.xaxis.set_minor_locator(AutoMinorLocator())
+    # ax.yaxis.set_minor_locator(AutoMinorLocator())
+    # plt.grid(linestyle='--', color='xkcd:sky blue')
+    # plt.show()
 
 
 def match_gaia(quadrant_path, ztfname, filtercode, logger, args):

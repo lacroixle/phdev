@@ -58,7 +58,7 @@ if __name__ == '__main__':
             prepare_logger.info("In filter {} - creating directory {}".format(filtercode, args.output.joinpath(filtercode)))
             args.output.joinpath(filtercode).mkdir(exist_ok=True)
 
-            def _create_subfolder(image_filename):
+            def _create_subfolders(image_filename):
                 try:
                     # Check files exist
                     quadrant_logger = logging.getLogger(image_filename)
