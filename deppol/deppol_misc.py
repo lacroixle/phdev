@@ -191,6 +191,9 @@ def psf_study_reduce(band_path, ztfname, filtercode, logger, args):
     from matplotlib.ticker import MultipleLocator, FormatStrFormatter, AutoMinorLocator
     from utils import idx2markerstyle, plot_ztf_focal_plan_values
     import pickle
+    from astropy import time
+    from matplotlib.cm import ScalarMappable
+    from matplotlib.colorbar import Colorbar
     # matplotlib.use('Agg')
 
     output_path = band_path.joinpath("psf_study")
@@ -199,19 +202,19 @@ def psf_study_reduce(band_path, ztfname, filtercode, logger, args):
     # Compare seeing computed by sextractor vs the one computed by the ZTF pipeline
     quadrant_paths = quadrants_from_band_path(band_path, logger, check_files="psfstars.list", ignore_noprocess=False)
 
-    chi2_df = pd.read_csv(band_path.joinpath("astrometry/ref2px_plots/chi2_quadrants.csv"), index_col=0)
+    #chi2_df = pd.read_csv(band_path.joinpath("astrometry/ref2px_plots/chi2_quadrants.csv"), index_col=0)
 
-    def _extract_seeing(quadrant_path):
-        hdr = get_header_from_quadrant_path(quadrant_path)
-        if quadrant_path.name in chi2_df.index.tolist():
-            chi2 = chi2_df.at[quadrant_path.name, 'chi2']
-        else:
-            chi2 = float('nan')
+    # def _extract_seeing(quadrant_path):
+    #     hdr = get_header_from_quadrant_path(quadrant_path)
+    #     if quadrant_path.name in chi2_df.index.tolist():
+    #         chi2 = chi2_df.at[quadrant_path.name, 'chi2']
+    #     else:
+    #         chi2 = float('nan')
 
-        psfstars_list = ListTable.from_filename(quadrant_path.joinpath("psfstars.list"))
-        return 2.355*hdr['gfseeing'], hdr['seeing'], len(psfstars_list.df), chi2
+    #     psfstars_list = ListTable.from_filename(quadrant_path.joinpath("psfstars.list"))
+    #     return 2.355*hdr['gfseeing'], hdr['seeing'], len(psfstars_list.df), chi2
 
-    seeings = np.array(list(map(_extract_seeing, quadrant_paths))).T
+    # seeings = np.array(list(map(_extract_seeing, quadrant_paths))).T
 
     def _extract_skewness(quadrant_path):
         hdr = get_header_from_quadrant_path(quadrant_path)
@@ -240,16 +243,28 @@ def psf_study_reduce(band_path, ztfname, filtercode, logger, args):
             row = row[1]
             ccdid = int(row['ccdid'])
             qid = int(row['qid'])
-            xskewness[mjd][ccdid][qid] = row['x1']
-            yskewness[mjd][ccdid][qid] = row['y1']
+            xskewness[mjd][ccdid][qid-1] = row['x1']
+            yskewness[mjd][ccdid][qid-1] = row['y1']
 
-    for mjd in unique_mjds:
-        fig = plt.figure(figsize=(5., 5.))
-        plt.suptitle(mjd)
-        plot_ztf_focal_plan_values(fig, xskewness[mjd])
-        plt.savefig(output_path.joinpath("{}_focal_plane_skewness.png".format(mjd)))
-        plt.close()
+    def _plot_focal_plane_skewness(x):
+        vmin = skewness_df[x].min()
+        vmax = skewness_df[x].max()
+        cm = ScalarMappable()
+        cm.set_clim(vmin=vmin, vmax=vmax)
 
+        for mjd in unique_mjds:
+            t = time.Time(mjd, format='mjd')
+            fig = plt.figure(figsize=(5., 6.), constrained_layout=True)
+            f1, f2 = fig.subfigures(ncols=1, nrows=2, height_ratios=[8., 1.])
+            plot_ztf_focal_plan_values(f1, xskewness[mjd], vmin=vmin, vmax=vmax)
+            ax = f2.add_subplot()
+            Colorbar(ax, cm, orientation='horizontal', label="${}_{}$".format(x[0], x[1]))
+            fig.suptitle("Focal plane skewness in ${}$ direction the {}".format(x[0], t.to_value('iso', subfmt='date')), fontsize='large')
+            plt.savefig(output_path.joinpath("{}_focal_plane_{}skewness.png".format(t.to_value('iso', subfmt='date'), x[0])))
+            plt.close()
+
+    _plot_focal_plane_skewness('x1')
+    _plot_focal_plane_skewness('y1')
 
     # rcids = set(skewness_df['rcid'])
     # plt.subplots(nrows=2, ncols=1, figsize=(10., 5.))
@@ -296,7 +311,23 @@ def psf_study_reduce(band_path, ztfname, filtercode, logger, args):
     # plt.savefig(output_path.joinpath("skewness_mjd.png"), dpi=300.)
     # plt.close()
 
-
+    # ax = plt.subplot(2, 1, 2)
+    # if len(qids) <= len(idx2markerstyle):
+    #     for i, qid in enumerate(qids):
+    #         qid_mask = (skewness_df['quadrant_id'] == qid)
+    #         plt.plot(skewness_df.loc[qid_mask]['mjd'], skewness_df[qid_mask]['y1'], idx2markerstyle[i], color='black', label=qid)
+    #     plt.legend(title="Quadrant ID")
+    # else:
+    #     plt.scatter(skewness_df['mjd'], skewness_df['y1'], c=skewness_df['quadrant_id'].tolist(), s=1.)
+    #     plt.colorbar()
+    # plt.axhline(0., color='black')
+    # plt.ylim(*ylim)
+    # ax.tick_params(which='both', direction='in')
+    # ax.xaxis.set_minor_locator(AutoMinorLocator())
+    # ax.yaxis.set_minor_locator(AutoMinorLocator())
+    # plt.grid(linestyle='--', color='xkcd:sky blue')
+    # plt.xlabel("MJD")
+    # plt.ylabel("$S^y_1$")
 
     return
 

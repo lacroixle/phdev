@@ -71,7 +71,7 @@ def plot_ztf_focal_plan_rcid(fig):
 
     plot_ztf_focal_plan(fig, rcids, _plot, plot_ccdid=True)
 
-def plot_ztf_focal_plan_values(fig, focal_plane_dict):
+def plot_ztf_focal_plan_values(fig, focal_plane_dict, vmin=None, vmax=None):
     def _plot(ax, val, ccdid, qid, rcid):
         if val is not None:
             ax.imshow([[val]], vmin=vmin, vmax=vmax)
@@ -79,10 +79,13 @@ def plot_ztf_focal_plan_values(fig, focal_plane_dict):
         ax.set_xticks([])
         ax.set_yticks([])
 
-    values = list(itertools.chain.from_iterable([[focal_plane_dict[ccdid][qid] for qid in focal_plane_dict[ccdid]] for ccdid in focal_plane_dict.keys()]))
-    values = list(filter(lambda x: x is not None, values))
-    vmin= np.min(values)
-    vmax = np.max(values)
+    if vmin is None or vmax is None:
+        values = list(itertools.chain.from_iterable([[focal_plane_dict[ccdid][qid] for qid in focal_plane_dict[ccdid]] for ccdid in focal_plane_dict.keys()]))
+        values = list(filter(lambda x: x is not None, values))
+        if vmin is None:
+            vmin = np.min(values)
+        if vmax is None:
+            vmax = np.max(values)
 
     plot_ztf_focal_plan(fig, focal_plane_dict, _plot, plot_ccdid=True)
 
