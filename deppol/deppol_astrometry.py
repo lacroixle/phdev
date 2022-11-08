@@ -174,7 +174,6 @@ def _fit_astrometry(model, dp, logger):
     p = fact(B)
     model.params.free = p
     logger.info("Done. Elapsed time={}.".format(time.perf_counter()-start_time))
-    v, J = model(np.array([dp.tpx, dp.tpy]), np.array([dp.pmtpx, dp.pmtpy]), dp.mjd, dp.quadrant_index, jac=True)
     return p
 
 def _filter_noisy(model, res_x, res_y, field, threshold, logger):

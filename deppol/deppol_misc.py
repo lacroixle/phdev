@@ -190,6 +190,7 @@ def psf_study_reduce(band_path, ztfname, filtercode, logger, args):
     import matplotlib.pyplot as plt
     from matplotlib.ticker import MultipleLocator, FormatStrFormatter, AutoMinorLocator
     from utils import idx2markerstyle, plot_ztf_focal_plan_values
+    import itertools
     import pickle
     from astropy import time
     from matplotlib.cm import ScalarMappable
@@ -224,13 +225,21 @@ def psf_study_reduce(band_path, ztfname, filtercode, logger, args):
             poly_y = poly['poly_y']
 
         #out_dict = {'mjd': hdr['obsmjd'], 'quadrant_id': "{}_{}".format(hdr['ccdid'], hdr['qid'])}
-        out_dict = {'mjd': hdr['obsmjd'], 'ccdid': int(hdr['ccdid']), 'qid': int(hdr['qid']), 'rcid': int(hdr['rcid'])}
+        out_dict = {'mjd': hdr['obsmjd'], 'ccdid': int(hdr['ccdid']), 'qid': int(hdr['qid']), 'rcid': int(hdr['rcid']),
+                    'sky': hdr['sexsky'], 'skysigma': hdr['sexsigma'], 'gfseeing': hdr['gfseeing'], 'seeing': hdr['seeing']}
         out_dict.update(dict(('x{}'.format(i), coef) for i, coef in enumerate(poly_x.coef)))
         out_dict.update(dict(('y{}'.format(i), coef) for i, coef in enumerate(poly_y.coef)))
         return out_dict
 
     skewness_df = pd.DataFrame(list(map(_extract_skewness, quadrant_paths)))
-    ylim = (np.min([skewness_df['x1'], skewness_df['y1']]), np.max([skewness_df['x1'], skewness_df['y1']]))
+    vmin, vmax = np.min([skewness_df['x1'], skewness_df['y1']]), np.max([skewness_df['x1'], skewness_df['y1']])
+    cmap = 'coolwarm'
+
+    center = True
+    if center:
+        m = max(np.abs(vmin), np.abs(vmax))
+        vmin = -m
+        vmax = m
 
     unique_mjds = list(set(skewness_df['mjd']))
     xskewness = dict([(mjd, dict([(i+1, dict([(j, None) for j in range(4)])) for i in range(16)])) for mjd in unique_mjds])
@@ -243,73 +252,71 @@ def psf_study_reduce(band_path, ztfname, filtercode, logger, args):
             row = row[1]
             ccdid = int(row['ccdid'])
             qid = int(row['qid'])
+
             xskewness[mjd][ccdid][qid-1] = row['x1']
             yskewness[mjd][ccdid][qid-1] = row['y1']
 
     def _plot_focal_plane_skewness(x):
-        vmin = skewness_df[x].min()
-        vmax = skewness_df[x].max()
-        cm = ScalarMappable()
+        cm = ScalarMappable(cmap=cmap)
         cm.set_clim(vmin=vmin, vmax=vmax)
 
         for mjd in unique_mjds:
             t = time.Time(mjd, format='mjd')
             fig = plt.figure(figsize=(5., 6.), constrained_layout=True)
             f1, f2 = fig.subfigures(ncols=1, nrows=2, height_ratios=[8., 1.])
-            plot_ztf_focal_plan_values(f1, xskewness[mjd], vmin=vmin, vmax=vmax)
+            plot_ztf_focal_plan_values(f1, xskewness[mjd], vmin=vmin, vmax=vmax, cmap=cmap)
             ax = f2.add_subplot()
             Colorbar(ax, cm, orientation='horizontal', label="${}_{}$".format(x[0], x[1]))
             fig.suptitle("Focal plane skewness in ${}$ direction the {}".format(x[0], t.to_value('iso', subfmt='date')), fontsize='large')
             plt.savefig(output_path.joinpath("{}_focal_plane_{}skewness.png".format(t.to_value('iso', subfmt='date'), x[0])))
             plt.close()
 
-    _plot_focal_plane_skewness('x1')
-    _plot_focal_plane_skewness('y1')
+    # _plot_focal_plane_skewness('x1')
+    # _plot_focal_plane_skewness('y1')
 
-    # rcids = set(skewness_df['rcid'])
-    # plt.subplots(nrows=2, ncols=1, figsize=(10., 5.))
-    # plt.suptitle("Order 1 polynomial coefficients fit on skewness/mag")
-    # ax = plt.subplot(2, 1, 1)
-    # if len(rcids) <= len(idx2markerstyle):
-    #     for i, rcid in enumerate(rcids):
-    #         rcid_mask = (skewness_df['rcid'] == rcid)
-    #         plt.plot(skewness_df.loc[rcid_mask]['mjd'], skewness_df[rcid_mask]['x1'], idx2markerstyle[i], color='black', label=rcid)
-    #     plt.legend(title="Quadrant ID")
-    # else:
-    #     plt.scatter(skewness_df['mjd'], skewness_df['x1'], c=skewness_df['rcid'].tolist(), s=1.)
-    #     plt.colorbar()
-    # plt.axhline(0., color='black')
-    # plt.ylim(*ylim)
-    # ax.tick_params(which='both', direction='in')
-    # ax.xaxis.set_minor_locator(AutoMinorLocator())
-    # ax.yaxis.set_minor_locator(AutoMinorLocator())
-    # plt.grid(linestyle='--', color='xkcd:sky blue')
-    # plt.xlabel("MJD")
-    # plt.ylabel("$S^x_1$")
+    rcids = set(skewness_df['rcid'])
+    plt.subplots(nrows=2, ncols=1, figsize=(10., 5.))
+    plt.suptitle("Order 1 polynomial coefficients fit on skewness/mag")
+    ax = plt.subplot(2, 1, 1)
+    if len(rcids) <= len(idx2markerstyle):
+        for i, rcid in enumerate(rcids):
+            rcid_mask = (skewness_df['rcid'] == rcid)
+            plt.plot(skewness_df.loc[rcid_mask]['mjd'], skewness_df[rcid_mask]['x1'], idx2markerstyle[i], color='black', label=rcid)
+        plt.legend(title="Quadrant ID")
+    else:
+        plt.scatter(skewness_df['mjd'], skewness_df['x1'], c=skewness_df['rcid'].tolist(), s=1.)
+        plt.colorbar()
+    plt.axhline(0., color='black')
+    plt.ylim(vmin, vmax)
+    ax.tick_params(which='both', direction='in')
+    ax.xaxis.set_minor_locator(AutoMinorLocator())
+    ax.yaxis.set_minor_locator(AutoMinorLocator())
+    plt.grid(linestyle='--', color='xkcd:sky blue')
+    plt.xlabel("MJD")
+    plt.ylabel("$S^x_1$")
 
-    # ax = plt.subplot(2, 1, 2)
-    # if len(rcids) <= len(idx2markerstyle):
-    #     for i, rcid in enumerate(rcids):
-    #         rcid_mask = (skewness_df['rcid'] == rcid)
-    #         plt.plot(skewness_df.loc[rcid_mask]['mjd'], skewness_df[rcid_mask]['y1'], idx2markerstyle[i], color='black', label=rcid)
-    #     plt.legend(title="Quadrant ID")
-    # else:
-    #     plt.scatter(skewness_df['mjd'], skewness_df['y1'], c=skewness_df['rcid'].tolist(), s=1.)
-    #     plt.colorbar()
-    # plt.axhline(0., color='black')
-    # plt.ylim(*ylim)
-    # ax.tick_params(which='both', direction='in')
-    # ax.xaxis.set_minor_locator(AutoMinorLocator())
-    # ax.yaxis.set_minor_locator(AutoMinorLocator())
-    # plt.grid(linestyle='--', color='xkcd:sky blue')
-    # plt.legend(title="Quadrant ID")
-    # plt.xlabel("MJD")
-    # plt.ylabel("$S^y_1$")
+    ax = plt.subplot(2, 1, 2)
+    if len(rcids) <= len(idx2markerstyle):
+        for i, rcid in enumerate(rcids):
+            rcid_mask = (skewness_df['rcid'] == rcid)
+            plt.plot(skewness_df.loc[rcid_mask]['mjd'], skewness_df[rcid_mask]['y1'], idx2markerstyle[i], color='black', label=rcid)
+        plt.legend(title="Quadrant ID")
+    else:
+        plt.scatter(skewness_df['mjd'], skewness_df['y1'], c=skewness_df['rcid'].tolist(), s=1.)
+        plt.colorbar()
+    plt.axhline(0., color='black')
+    plt.ylim(vmin, vmax)
+    ax.tick_params(which='both', direction='in')
+    ax.xaxis.set_minor_locator(AutoMinorLocator())
+    ax.yaxis.set_minor_locator(AutoMinorLocator())
+    plt.grid(linestyle='--', color='xkcd:sky blue')
+    plt.legend(title="Quadrant ID")
+    plt.xlabel("MJD")
+    plt.ylabel("$S^y_1$")
 
-    # # plt.tight_layout()
-    # plt.show()
-    # plt.savefig(output_path.joinpath("skewness_mjd.png"), dpi=300.)
-    # plt.close()
+    plt.tight_layout()
+    plt.savefig(output_path.joinpath("skewness_mjd.png"), dpi=300.)
+    plt.close()
 
     # ax = plt.subplot(2, 1, 2)
     # if len(qids) <= len(idx2markerstyle):

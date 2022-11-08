@@ -61,6 +61,7 @@ def plot_ztf_focal_plan(fig, focal_plane_dict, plot_fun, plot_ccdid=False):
                 ax.text(0.5, 0.5, ccdid, horizontalalignment='center', verticalalignment='center', transform=ax.transAxes, fontweight='black', fontsize='xx-large')
                 ax.axis('off')
 
+
 def plot_ztf_focal_plan_rcid(fig):
     rcids = dict([(i+1, dict([(j, j) for j in range(4)])) for i in range(0, 16)])
 
@@ -71,10 +72,11 @@ def plot_ztf_focal_plan_rcid(fig):
 
     plot_ztf_focal_plan(fig, rcids, _plot, plot_ccdid=True)
 
-def plot_ztf_focal_plan_values(fig, focal_plane_dict, vmin=None, vmax=None):
+
+def plot_ztf_focal_plan_values(fig, focal_plane_dict, vmin=None, vmax=None, cmap=None):
     def _plot(ax, val, ccdid, qid, rcid):
         if val is not None:
-            ax.imshow([[val]], vmin=vmin, vmax=vmax)
+            ax.imshow([[val]], vmin=vmin, vmax=vmax, cmap=cmap)
         ax.text(0.5, 0.5, rcid, horizontalalignment='center', verticalalignment='center', transform=ax.transAxes)
         ax.set_xticks([])
         ax.set_yticks([])
@@ -82,12 +84,15 @@ def plot_ztf_focal_plan_values(fig, focal_plane_dict, vmin=None, vmax=None):
     if vmin is None or vmax is None:
         values = list(itertools.chain.from_iterable([[focal_plane_dict[ccdid][qid] for qid in focal_plane_dict[ccdid]] for ccdid in focal_plane_dict.keys()]))
         values = list(filter(lambda x: x is not None, values))
+
         if vmin is None:
             vmin = np.min(values)
+
         if vmax is None:
             vmax = np.max(values)
 
     plot_ztf_focal_plan(fig, focal_plane_dict, _plot, plot_ccdid=True)
+
 
 def make_index_from_list(dp, index_list):
     """
