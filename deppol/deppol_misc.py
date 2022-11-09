@@ -259,20 +259,24 @@ def psf_study_reduce(band_path, ztfname, filtercode, logger, args):
     def _plot_focal_plane_skewness(x):
         cm = ScalarMappable(cmap=cmap)
         cm.set_clim(vmin=vmin, vmax=vmax)
+        if x == 'x1':
+            skewness = xskewness
+        elif x == 'y1':
+            skewness = yskewness
 
         for mjd in unique_mjds:
             t = time.Time(mjd, format='mjd')
             fig = plt.figure(figsize=(5., 6.), constrained_layout=True)
             f1, f2 = fig.subfigures(ncols=1, nrows=2, height_ratios=[8., 1.])
-            plot_ztf_focal_plan_values(f1, xskewness[mjd], vmin=vmin, vmax=vmax, cmap=cmap)
+            plot_ztf_focal_plan_values(f1, skewness[mjd], vmin=vmin, vmax=vmax, cmap=cmap)
             ax = f2.add_subplot()
             Colorbar(ax, cm, orientation='horizontal', label="${}_{}$".format(x[0], x[1]))
             fig.suptitle("Focal plane skewness in ${}$ direction the {}".format(x[0], t.to_value('iso', subfmt='date')), fontsize='large')
             plt.savefig(output_path.joinpath("{}_focal_plane_{}skewness.png".format(t.to_value('iso', subfmt='date'), x[0])))
             plt.close()
 
-    # _plot_focal_plane_skewness('x1')
-    # _plot_focal_plane_skewness('y1')
+    _plot_focal_plane_skewness('x1')
+    _plot_focal_plane_skewness('y1')
 
     rcids = set(skewness_df['rcid'])
     plt.subplots(nrows=2, ncols=1, figsize=(10., 5.))
@@ -310,7 +314,6 @@ def psf_study_reduce(band_path, ztfname, filtercode, logger, args):
     ax.xaxis.set_minor_locator(AutoMinorLocator())
     ax.yaxis.set_minor_locator(AutoMinorLocator())
     plt.grid(linestyle='--', color='xkcd:sky blue')
-    plt.legend(title="Quadrant ID")
     plt.xlabel("MJD")
     plt.ylabel("$S^y_1$")
 
