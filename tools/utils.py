@@ -18,6 +18,7 @@ from scipy import sparse
 from croaks import DataProxy
 from sksparse import cholmod
 import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 
 
 filtercodes = ['zg', 'zr', 'zi']
@@ -37,7 +38,7 @@ idx2markerstyle = ['*', 'x', '.', 'v', '^']
 
 
 def plot_ztf_focal_plan(fig, focal_plane_dict, plot_fun, plot_ccdid=False):
-    ccds = fig.subfigures(ncols=4, nrows=4)
+    ccds = fig.subfigures(ncols=4, nrows=4, hspace=0.09, wspace=0.09)
     for i in range(4):
         for j in range(4):
             ccdid = 16 - (i*4+j)
@@ -60,6 +61,8 @@ def plot_ztf_focal_plan(fig, focal_plane_dict, plot_fun, plot_ccdid=False):
                 ax = ccds[i, j].add_subplot()
                 ax.text(0.5, 0.5, ccdid, horizontalalignment='center', verticalalignment='center', transform=ax.transAxes, fontweight='black', fontsize='xx-large')
                 ax.axis('off')
+                # rect = patches.Rectangle((0.02, 0.02), 0.98, 0.98, linewidth=2, edgecolor='black', facecolor='none')
+                # ax.add_patch(rect)
 
 
 def plot_ztf_focal_plan_rcid(fig):
@@ -67,8 +70,9 @@ def plot_ztf_focal_plan_rcid(fig):
 
     def _plot(ax, val, ccdid, qid, rcid):
         ax.text(0.5, 0.5, rcid, horizontalalignment='center', verticalalignment='center', transform=ax.transAxes)
-        ax.set_xticks([])
-        ax.set_yticks([])
+        ax.axis('off')
+        # ax.set_xticks([])
+        # ax.set_yticks([])
 
     plot_ztf_focal_plan(fig, rcids, _plot, plot_ccdid=True)
 
@@ -77,7 +81,8 @@ def plot_ztf_focal_plan_values(fig, focal_plane_dict, vmin=None, vmax=None, cmap
     def _plot(ax, val, ccdid, qid, rcid):
         if val is not None:
             ax.imshow([[val]], vmin=vmin, vmax=vmax, cmap=cmap)
-        ax.text(0.5, 0.5, rcid, horizontalalignment='center', verticalalignment='center', transform=ax.transAxes)
+
+        ax.text(0.5, 0.5, rcid+1, horizontalalignment='center', verticalalignment='center', transform=ax.transAxes)
         ax.set_xticks([])
         ax.set_yticks([])
 

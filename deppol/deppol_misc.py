@@ -259,6 +259,7 @@ def psf_study_reduce(band_path, ztfname, filtercode, logger, args):
     def _plot_focal_plane_skewness(x):
         cm = ScalarMappable(cmap=cmap)
         cm.set_clim(vmin=vmin, vmax=vmax)
+
         if x == 'x1':
             skewness = xskewness
         elif x == 'y1':
@@ -272,7 +273,7 @@ def psf_study_reduce(band_path, ztfname, filtercode, logger, args):
             ax = f2.add_subplot()
             Colorbar(ax, cm, orientation='horizontal', label="${}_{}$".format(x[0], x[1]))
             fig.suptitle("Focal plane skewness in ${}$ direction the {}".format(x[0], t.to_value('iso', subfmt='date')), fontsize='large')
-            plt.savefig(output_path.joinpath("{}_focal_plane_{}skewness.png".format(t.to_value('iso', subfmt='date'), x[0])))
+            plt.savefig(output_path.joinpath("{}_focal_plane_{}skewness.png".format(t.to_value('iso', subfmt='date'), x[0])), dpi=300.)
             plt.close()
 
     _plot_focal_plane_skewness('x1')
