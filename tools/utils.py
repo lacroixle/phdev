@@ -23,6 +23,7 @@ import matplotlib.patches as patches
 
 filtercodes = ['zg', 'zr', 'zi']
 quadrant_width_px, quadrant_height_px = 3072, 3080
+quadrant_size_px = {'x': quadrant_width_px, 'y': quadrant_height_px}
 
 ztf_longitude = -116.8598 # deg
 ztf_latitude = 33.3573 # deg E
@@ -77,10 +78,13 @@ def plot_ztf_focal_plan_rcid(fig):
     plot_ztf_focal_plan(fig, rcids, _plot, plot_ccdid=True)
 
 
-def plot_ztf_focal_plan_values(fig, focal_plane_dict, vmin=None, vmax=None, cmap=None):
+def plot_ztf_focal_plan_values(fig, focal_plane_dict, scalar=False, vmin=None, vmax=None, cmap=None):
     def _plot(ax, val, ccdid, qid, rcid):
         if val is not None:
-            ax.imshow([[val]], vmin=vmin, vmax=vmax, cmap=cmap)
+            if scalar:
+                val = [[val]]
+
+            ax.imshow(val, vmin=vmin, vmax=vmax, cmap=cmap)
 
         ax.text(0.5, 0.5, rcid+1, horizontalalignment='center', verticalalignment='center', transform=ax.transAxes)
         ax.set_xticks([])

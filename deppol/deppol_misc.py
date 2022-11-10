@@ -2,7 +2,7 @@
 
 
 def psf_study(quadrant_path, ztfname, filtercode, logger, args):
-    from utils import ListTable, match_pixel_space
+    from utils import ListTable, match_pixel_space, quadrant_size_px
     import numpy as np
     from saunerie.plottools import binplot
     from scipy.stats import norm
@@ -25,11 +25,27 @@ def psf_study(quadrant_path, ztfname, filtercode, logger, args):
     psf_residuals_px = (psf_resid.df['fimg'] - psf_resid.df['fpsf']).to_numpy()
     mag = np.linspace(np.min(stand.df['mag']), np.max(stand.df['mag']), 100)
 
+    subx = 4
+    suby = 1
     # Fit order 2 polynomials on skewness/mag relation
-    skew_poly_x = np.polynomial.Polynomial.fit(stand.df['mag'], stand.df['gmx3'], 1)
-    skew_poly_y = np.polynomial.Polynomial.fit(stand.df['mag'], stand.df['gmy3'], 1)
+    def _fit_skewness_subquadrants(axis, sub):
+        ranges = np.linspace(0., quadrant_size_px[axis], sub+1)
+        skew_polynomials = []
+        for i in range(sub):
+            range_mask = (stand.df[axis] >= ranges[i]) & (stand.df[axis] < ranges[i+1])
+            skew_polynomials.append(np.polynomial.Polynomial.fit(stand.df.loc[range_mask]['mag'], stand.df.loc[range_mask]['gm{}3'.format(axis)], 1))
+
+        return skew_polynomials
+
+    skew_polynomial_x = np.polynomial.Polynomial.fit(stand.df['mag'], stand.df['gmx3'], 1)
+    skew_polynomial_y = np.polynomial.Polynomial.fit(stand.df['mag'], stand.df['gmy3'], 1)
+
+    skew_polynomial_subx = _fit_skewness_subquadrants('x', subx)
+    skew_polynomial_suby = _fit_skewness_subquadrants('y', suby)
+
     with open(quadrant_path.joinpath("stamp_skewness.pickle"), 'wb') as f:
-        pickle.dump({'poly_x': skew_poly_x, 'poly_y': skew_poly_y}, f)
+        pickle.dump({'poly_x': skew_polynomial_x, 'poly_y': skew_polynomial_y,
+                     'poly_x_sub': skew_polynomial_subx, 'poly_y_sub': skew_polynomial_suby}, f)
 
     plt.figure(figsize=(7., 7.))
     ax = plt.axes()
@@ -43,8 +59,8 @@ def psf_study(quadrant_path, ztfname, filtercode, logger, args):
     plt.ylabel("$M^g_{yyy}$")
     plt.axvline(0.)
     plt.axhline(0.)
-    plt.axvline(skew_poly_x.coef[0], ls='--')
-    plt.axhline(skew_poly_y.coef[0], ls='--')
+    plt.axvline(skew_polynomial_x.coef[0], ls='--')
+    plt.axhline(skew_polynomial_y.coef[0], ls='--')
     plt.axis('equal')
     plt.savefig(quadrant_path.joinpath("{}_mx3_my3_plane.png".format(quadrant_path.name)), dpi=300.)
     plt.close()
@@ -58,7 +74,7 @@ def psf_study(quadrant_path, ztfname, filtercode, logger, args):
     ax.yaxis.set_minor_locator(AutoMinorLocator())
     plt.grid(linestyle='--', color='xkcd:sky blue')
     plt.scatter(stand.df['mag'], stand.df['gmx3'], s=2.)
-    plt.plot(mag, skew_poly_x(mag), color='black')
+    plt.plot(mag, skew_polynomial_x(mag), color='black')
     plt.axhline(0.)
     plt.ylim(-0.5, 0.3)
     plt.xlim(-15., -7)
@@ -70,7 +86,7 @@ def psf_study(quadrant_path, ztfname, filtercode, logger, args):
     ax.yaxis.set_minor_locator(AutoMinorLocator())
     plt.grid(linestyle='--', color='xkcd:sky blue')
     plt.scatter(stand.df['mag'], stand.df['gmy3'], s=2.)
-    plt.plot(mag, skew_poly_y(mag), color='black')
+    plt.plot(mag, skew_polynomial_y(mag), color='black')
     plt.axhline(0.)
     plt.xlabel("$m$")
     plt.ylim(-0.3, 0.3)
@@ -223,12 +239,18 @@ def psf_study_reduce(band_path, ztfname, filtercode, logger, args):
             poly = pickle.load(f)
             poly_x = poly['poly_x']
             poly_y = poly['poly_y']
+            poly_x_sub = poly['poly_x_sub']
+            poly_y_sub = poly['poly_y_sub']
 
         #out_dict = {'mjd': hdr['obsmjd'], 'quadrant_id': "{}_{}".format(hdr['ccdid'], hdr['qid'])}
         out_dict = {'mjd': hdr['obsmjd'], 'ccdid': int(hdr['ccdid']), 'qid': int(hdr['qid']), 'rcid': int(hdr['rcid']),
                     'sky': hdr['sexsky'], 'skysigma': hdr['sexsigma'], 'gfseeing': hdr['gfseeing'], 'seeing': hdr['seeing']}
+
         out_dict.update(dict(('x{}'.format(i), coef) for i, coef in enumerate(poly_x.coef)))
         out_dict.update(dict(('y{}'.format(i), coef) for i, coef in enumerate(poly_y.coef)))
+        out_dict.update({'x1_sub': [poly.coef[1] for poly in poly_x_sub],
+                         'y1_sub': [poly.coef[1] for poly in poly_y_sub]})
+
         return out_dict
 
     skewness_df = pd.DataFrame(list(map(_extract_skewness, quadrant_paths)))
@@ -253,8 +275,8 @@ def psf_study_reduce(band_path, ztfname, filtercode, logger, args):
             ccdid = int(row['ccdid'])
             qid = int(row['qid'])
 
-            xskewness[mjd][ccdid][qid-1] = row['x1']
-            yskewness[mjd][ccdid][qid-1] = row['y1']
+            xskewness[mjd][ccdid][qid-1] = np.tile(np.array(row['x1_sub']), (len(row['x1_sub']), 1))
+            yskewness[mjd][ccdid][qid-1] = np.tile(np.array(row['x1_sub']), (len(row['x1_sub']), 1))
 
     def _plot_focal_plane_skewness(x):
         cm = ScalarMappable(cmap=cmap)
@@ -481,16 +503,31 @@ def match_gaia_reduce(band_path, ztfname, filtercode, logger, args):
         quadrant_dict['z'] = 90. - header['elvation']
         quadrant_dict['telra'] = header['telrad']
         quadrant_dict['teldec'] = header['teldecd']
+
         quadrant_dict['rcid'] = header['dbrcid']
         quadrant_dict['field'] = header['dbfield']
+        quadrant_dict['ccdid'] = header['ccdid']
+        quadrant_dict['fid'] = header['dbfid']
+
         quadrant_dict['temperature'] = header['tempture']
         quadrant_dict['head_temperature'] = header['headtemp']
+        quadrant_dict['ccdtemp'] = header['ccdtemp{}'.format(str(header['ccdid'])).zfill(2)]
+
         quadrant_dict['wind_speed'] = header['windspd']
         quadrant_dict['wind_dir'] = header['winddir']
         quadrant_dict['dewpoint'] = header['dewpoint']
         quadrant_dict['humidity'] = header['humidity']
         quadrant_dict['wetness'] = header['wetness']
         quadrant_dict['pressure'] = header['pressure']
+
+        quadrant_dict['crpix1'] = header['crpix1']
+        quadrant_dict['crpix2'] = header['crpix2']
+        quadrant_dict['crval1'] = header['crval1']
+        quadrant_dict['crval2'] = header['crval2']
+        quadrant_dict['cd_11'] = header['cd1_1']
+        quadrant_dict['cd_12'] = header['cd1_2']
+        quadrant_dict['cd_21'] = header['cd2_1']
+        quadrant_dict['cd_22'] = header['cd2_2']
 
         for key in quadrant_dict.keys():
             matched_stars_df[key] = quadrant_dict[key]
