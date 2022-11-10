@@ -254,14 +254,7 @@ def psf_study_reduce(band_path, ztfname, filtercode, logger, args):
         return out_dict
 
     skewness_df = pd.DataFrame(list(map(_extract_skewness, quadrant_paths)))
-    vmin, vmax = np.min([skewness_df['x1'], skewness_df['y1']]), np.max([skewness_df['x1'], skewness_df['y1']])
     cmap = 'coolwarm'
-
-    center = True
-    if center:
-        m = max(np.abs(vmin), np.abs(vmax))
-        vmin = -m
-        vmax = m
 
     unique_mjds = list(set(skewness_df['mjd']))
     xskewness = dict([(mjd, dict([(i+1, dict([(j, None) for j in range(4)])) for i in range(16)])) for mjd in unique_mjds])
@@ -278,7 +271,7 @@ def psf_study_reduce(band_path, ztfname, filtercode, logger, args):
             xskewness[mjd][ccdid][qid-1] = np.tile(np.array(row['x1_sub']), (len(row['x1_sub']), 1))
             yskewness[mjd][ccdid][qid-1] = np.tile(np.array(row['x1_sub']), (len(row['x1_sub']), 1))
 
-    def _plot_focal_plane_skewness(x):
+    def _plot_focal_plane_skewness(x, vmin, vmax):
         cm = ScalarMappable(cmap=cmap)
         cm.set_clim(vmin=vmin, vmax=vmax)
 
@@ -298,8 +291,35 @@ def psf_study_reduce(band_path, ztfname, filtercode, logger, args):
             plt.savefig(output_path.joinpath("{}_focal_plane_{}skewness.png".format(t.to_value('iso', subfmt='date'), x[0])), dpi=300.)
             plt.close()
 
-    _plot_focal_plane_skewness('x1')
-    _plot_focal_plane_skewness('y1')
+    sharedscale = False
+    center = True
+    if sharedscale:
+        vmin, vmax = np.min([skewness_df['x1'], skewness_df['y1']]), np.max([skewness_df['x1'], skewness_df['y1']])
+        xvmin = vmin
+        xvmax = vmax
+        yvmin = vmin
+        yvmax = vmax
+    else:
+        xvmin, xvmax = np.min(skewness_df['x1']), np.max(skewness_df['x1'])
+        yvmin, yvmax = np.min(skewness_df['y1']), np.max(skewness_df['y1'])
+
+    if center:
+        if sharedscale:
+            m = max(np.abs(vmin), np.abs(vmax))
+            xvmin = -m
+            xvmax = m
+            yvmin = -m
+            yvmax = m
+        else:
+            m = max(np.abs(xvmin), np.abs(xvmax))
+            xvmin = -m
+            xvmax = m
+            m = max(np.abs(yvmin), np.abs(yvmax))
+            yvmin = -m
+            yvmax = m
+
+    _plot_focal_plane_skewness('x1', xvmin, xvmax)
+    _plot_focal_plane_skewness('y1', yvmin, yvmax)
 
     rcids = set(skewness_df['rcid'])
     plt.subplots(nrows=2, ncols=1, figsize=(10., 5.))
