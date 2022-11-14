@@ -532,7 +532,7 @@ def match_gaia_reduce(band_path, ztfname, filtercode, logger, args):
 
         quadrant_dict['temperature'] = header['tempture']
         quadrant_dict['head_temperature'] = header['headtemp']
-        quadrant_dict['ccdtemp'] = header['ccdtemp{}'.format(str(header['ccdid'])).zfill(2)]
+        quadrant_dict['ccdtemp'] = float(header['ccdtmp{}'.format(str(header['ccdid']).zfill(2))])
 
         quadrant_dict['wind_speed'] = header['windspd']
         quadrant_dict['wind_dir'] = header['winddir']
@@ -859,11 +859,15 @@ def filter_seeing(band_path, ztfname, filtercode, logger, args):
 
 def discard_calibrated(quadrant_path, ztfname, filtercode, logger, args):
     from deppol_utils import run_and_log
+    from utils import get_header_from_quadrant_path
+    import pickle
     calibrated_path = quadrant_path.joinpath("calibrated.fits")
 
     if calibrated_path.exists():
         logger.info("Dumping header content")
-        run_and_log(["header", calibrated_path, ">", "calibrated_header.txt"], logger=logger)
+        hdr = get_header_from_quadrant_path(quadrant_path)
+        with open(quadrant_path.joinpath("calibrated_header.pickle"), 'wb') as f:
+            pickle.dump(hdr, f)
 
         logger.info("Deleting calibrated.fits")
         calibrated_path.unlink()

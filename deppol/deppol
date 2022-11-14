@@ -193,6 +193,7 @@ if __name__ == '__main__':
     argparser.add_argument('--min-psfstars', type=int, default=150)
     argparser.add_argument('--use-raw', action='store_true', help="If set, uses raw images instead of science images.")
     argparser.add_argument('--astro-max-chi2', type=float, default=1.)
+    argparser.add_argument('--discard-calibrated', action='store_true')
 
     logger = logging.getLogger("main")
     logger.addHandler(logging.StreamHandler())
@@ -361,5 +362,10 @@ if __name__ == '__main__':
         print("Moving data back from scratch folder into working directory.")
         print("Scratch folder: {}".format(args.scratch))
         print("Working directory: {}".format(args.wd))
-        shutil.copytree(args.scratch, args.wd, dirs_exist_ok=True, ignore=shutil.ignore_patterns("elixir.fits", "dead.fits.gz"))
+
+        to_ignore = ["elixir.fit", "dead.fits.gz"]
+        if args.discard_calibrated:
+            to_ignore.append("calibrated.fits")
+
+        shutil.copytree(args.scratch, args.wd, dirs_exist_ok=True, ignore=shutil.ignore_patterns(*to_ignore))
         shutil.rmtree(args.scratch)

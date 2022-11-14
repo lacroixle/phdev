@@ -5,6 +5,8 @@ from deppol_utils import run_and_log
 def make_catalog(quadrant_folder, ztfname, filtercode, logger, args):
     from ztfquery.io import get_file
     from shutil import copyfile
+    from utils import get_header_from_quadrant_path
+    import pickle
 
     logger.info("Retrieving calibrated.fits...")
     if not args.use_raw:
@@ -15,6 +17,11 @@ def make_catalog(quadrant_folder, ztfname, filtercode, logger, args):
     copyfile(image_path, quadrant_folder.joinpath("calibrated.fits"))
 
     run_and_log(["make_catalog", quadrant_folder, "-O", "-S"], logger)
+
+    logger.info("Dumping header content")
+    hdr = get_header_from_quadrant_path(quadrant_folder)
+    with open(quadrant_folder.joinpath("calibrated_header.pickle"), 'wb') as f:
+        pickle.dump(hdr, f)
 
     return quadrant_folder.joinpath("se.list").exists()
 
