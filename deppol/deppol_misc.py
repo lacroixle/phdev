@@ -27,12 +27,13 @@ def psf_study(quadrant_path, ztfname, filtercode, logger, args):
 
     subx = 4
     suby = 1
+
     # Fit order 2 polynomials on skewness/mag relation
     def _fit_skewness_subquadrants(axis, sub):
         ranges = np.linspace(0., quadrant_size_px[axis], sub+1)
         skew_polynomials = []
         for i in range(sub):
-            range_mask = (stand.df[axis] >= ranges[i]) & (stand.df[axis] < ranges[i+1])
+            range_mask = (stand.df['y'] >= ranges[i]) & (stand.df['y'] < ranges[i+1])
             skew_polynomials.append(np.polynomial.Polynomial.fit(stand.df.loc[range_mask]['mag'], stand.df.loc[range_mask]['gm{}3'.format(axis)], 1))
 
         return skew_polynomials
@@ -269,7 +270,7 @@ def psf_study_reduce(band_path, ztfname, filtercode, logger, args):
             qid = int(row['qid'])
 
             xskewness[mjd][ccdid][qid-1] = np.tile(np.array(row['x1_sub']), (len(row['x1_sub']), 1))
-            yskewness[mjd][ccdid][qid-1] = np.tile(np.array(row['x1_sub']), (len(row['x1_sub']), 1))
+            yskewness[mjd][ccdid][qid-1] = np.tile(np.array(row['y1_sub']), (len(row['y1_sub']), 1))
 
     def _plot_focal_plane_skewness(x, vmin, vmax):
         cm = ScalarMappable(cmap=cmap)
@@ -854,3 +855,15 @@ def filter_seeing(band_path, ztfname, filtercode, logger, args):
 
     logger.info("{} quadrants flagged as having seeing > {}.".format(flagged_count, args.max_seeing))
     logger.info("{} quadrants added to the noprocess list.".format(len(quadrants_to_flag)))
+
+
+def discard_calibrated(quadrant_path, ztfname, filtercode, logger, args):
+    from deppol_utils import run_and_log
+    calibrated_path = quadrant_path.joinpath("calibrated.fits")
+
+    if calibrated_path.exists():
+        logger.info("Dumping header content")
+        run_and_log(["header", calibrated_path, ">", "calibrated_header.txt"], logger=logger)
+
+        logger.info("Deleting calibrated.fits")
+        calibrated_path.unlink()
