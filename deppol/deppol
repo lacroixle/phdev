@@ -367,5 +367,6 @@ if __name__ == '__main__':
         if args.discard_calibrated:
             to_ignore.append("calibrated.fits")
 
+        print("Ignoring files {}".format(to_ignore))
         shutil.copytree(args.scratch, args.wd, dirs_exist_ok=True, ignore=shutil.ignore_patterns(*to_ignore))
         shutil.rmtree(args.scratch)

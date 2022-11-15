@@ -525,9 +525,11 @@ def match_gaia_reduce(band_path, ztfname, filtercode, logger, args):
         quadrant_dict['telra'] = header['telrad']
         quadrant_dict['teldec'] = header['teldecd']
 
-        quadrant_dict['rcid'] = header['dbrcid']
         quadrant_dict['field'] = header['dbfield']
-        quadrant_dict['ccdid'] = header['ccdid']
+        quadrant_dict['ccdid'] = header['ccd_id']
+        quadrant_dict['qid'] = header['amp_id']
+        quadrant_dict['rcid'] = header['dbrcid']
+
         quadrant_dict['fid'] = header['dbfid']
 
         quadrant_dict['temperature'] = header['tempture']
