@@ -363,7 +363,7 @@ if __name__ == '__main__':
         print("Scratch folder: {}".format(args.scratch))
         print("Working directory: {}".format(args.wd))
 
-        to_ignore = ["elixir.fit", "dead.fits.gz"]
+        to_ignore = ["elixir.fits", "dead.fits.gz"]
         if args.discard_calibrated:
             to_ignore.append("calibrated.fits")
 
