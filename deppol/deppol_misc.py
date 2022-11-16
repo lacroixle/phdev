@@ -534,7 +534,7 @@ def match_gaia_reduce(band_path, ztfname, filtercode, logger, args):
 
         quadrant_dict['temperature'] = header['tempture']
         quadrant_dict['head_temperature'] = header['headtemp']
-        quadrant_dict['ccdtemp'] = float(header['ccdtmp{}'.format(str(header['ccdid']).zfill(2))])
+        quadrant_dict['ccdtemp'] = float(header['ccdtmp{}'.format(str(header['ccd_id']).zfill(2))])
 
         quadrant_dict['wind_speed'] = header['windspd']
         quadrant_dict['wind_dir'] = header['winddir']
