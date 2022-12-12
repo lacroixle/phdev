@@ -11,7 +11,7 @@ import socket
 import copy
 import traceback
 
-from dask import delayed, compute
+from dask import delayed, compute, visualize
 from dask.distributed import Client, LocalCluster, wait, get_worker
 from dask_jobqueue import SLURMCluster
 from dask.graph_manipulation import bind
@@ -54,6 +54,8 @@ import deppol_smphot
 poloka_func.append({'reduce': deppol_smphot.reference_quadrant})
 poloka_func.append({'reduce': deppol_smphot.smphot})
 poloka_func.append({'reduce': deppol_smphot.smphot_plot})
+poloka_func.append({'reduce': deppol_smphot.smphot_stars})
+poloka_func.append({'reduce': deppol_smphot.smphot_stars_plot})
 
 
 import deppol_astrometry
@@ -280,6 +282,7 @@ if __name__ == '__main__':
 
         print("Running a local cluster with {} processes.".format(args.n_jobs))
         print("Dask dashboard at: {}".format(client.dashboard_link))
+        # args.local_cluster = localCluster
     else:
         print("Running computations synchronously.")
 
@@ -315,23 +318,22 @@ if __name__ == '__main__':
                 print("Pipeline function \"{}\". ".format(func), flush=True, end="")
                 if 'map' in poloka_func[func].keys() and not args.no_map:
                     map_count += len(quadrants)
-                    map_jobs = [delayed(_rename_op(map_op, func))(quadrant, wd, ztfname, filtercode, func, args) for quadrant in quadrants]
-                    bind(sn_jobs, map_jobs)
-                    jobs.extend(map_jobs)
+                    map_jobs = [delayed(_rename_op(map_op, func))(quadrant, wd, ztfname, filtercode, func, args) for quadrant in quadrants[:50]]
+                    sn_jobs.append(bind(map_jobs, sn_jobs))
                     print("{} map operations. ".format(len(quadrants)), end="", flush=True)
 
                 if ('reduce' in poloka_func[func].keys() or args.log_results) and not args.no_reduce:
                     reduce_job = [delayed(_rename_op(reduce_op, func + "_reduce"))(wd, ztfname, filtercode, func, True, args)]
                     reduction_count += 1
-                    bind(sn_jobs, reduce_job)
-                    jobs.extend(reduce_job)
+                    sn_jobs.append(bind(reduce_job, sn_jobs))
                     print("Reduction operation.", end="", flush=True)
                     print("")
                 else:
                     print("")
 
-            if sn_jobs:
-                jobs.extend(sn_jobs)
+            jobs.extend(sn_jobs)
+
+    # visualize(jobs, filename="out.svg")
 
     print("", flush=True)
     if args.scratch:
