@@ -14,7 +14,12 @@ import traceback
 from dask import delayed, compute
 from dask.distributed import Client, LocalCluster, wait, get_worker
 from dask_jobqueue import SLURMCluster
+from dask.graph_manipulation import bind
+
 import pandas as pd
+from dask import config as cfg
+
+cfg.set({'distributed.scheduler.worker-ttl': None})
 
 from deppol_utils import run_and_log, dump_timings, quadrants_from_band_path
 
@@ -67,7 +72,7 @@ poloka_func.append({'reduce': deppol_photometry.photometry_fit_plot})
 poloka_func = dict(zip([list(func.values())[0].__name__ for func in poloka_func], poloka_func))
 
 
-def map_op(results, quadrant, wd, ztfname, filtercode, func, args):
+def map_op(quadrant, wd, ztfname, filtercode, func, args):
     start_time = time.perf_counter()
     quadrant_path = wd.joinpath("{}/{}/{}".format(ztfname, filtercode, quadrant))
 
@@ -115,7 +120,6 @@ def map_op(results, quadrant, wd, ztfname, filtercode, func, args):
                         logger.warning("Tried to remove {} but it does not exist!".format(f))
                         logger.warning(" Full path: {}".format(to_remove))
 
-
             if args.dump_timings:
                 dump_timings(start_time, end_time, quadrant_dir.joinpath("timings_{}".format(func)))
 
@@ -128,16 +132,16 @@ def map_op(results, quadrant, wd, ztfname, filtercode, func, args):
 
             [handler.close() for handler in logger.handlers] # Needed to flush last msg
 
-    return result, time.perf_counter(), start_time, get_worker().id
+    # return result, time.perf_counter(), start_time, get_worker().id
 
 
-def reduce_op(results, wd, ztfname, filtercode, func, save_stats, args):
+def reduce_op(wd, ztfname, filtercode, func, save_stats, args):
     folder = wd.joinpath("{}/{}".format(ztfname, filtercode))
 
     # If we want to agregate run statistics on the previous map operation
-    if save_stats and results is not None and any(results) and func != 'clean':
-        results_df = pd.DataFrame([result for result in results if result is not None], columns=['result', 'time_end', 'time_start', 'worker_id'])
-        results_df.to_csv(folder.joinpath("results_{}.csv".format(func)), index=False)
+    # if save_stats and results is not None and any(results) and func != 'clean':
+    #     results_df = pd.DataFrame([result for result in results if result is not None], columns=['result', 'time_end', 'time_start', 'worker_id'])
+    #     results_df.to_csv(folder.joinpath("results_{}.csv".format(func)), index=False)
 
     if not 'reduce' in poloka_func[func].keys():
         return
@@ -145,7 +149,7 @@ def reduce_op(results, wd, ztfname, filtercode, func, save_stats, args):
     logger = logging.getLogger("{}-{}".format(ztfname, filtercode))
     if not logger.handlers:
         logger.addHandler(logging.FileHandler(folder.joinpath("output.log"), mode='a'))
-        logger.addHandler(logging.StreamHandler())
+        #logger.addHandler(logging.StreamHandler())
         logger.setLevel(logging.INFO)
 
     logger.info("")
@@ -196,7 +200,7 @@ if __name__ == '__main__':
     argparser.add_argument('--discard-calibrated', action='store_true')
 
     logger = logging.getLogger("main")
-    logger.addHandler(logging.StreamHandler())
+    #logger.addHandler(logging.StreamHandler())
 
     args = argparser.parse_args()
     args.wd = args.wd.expanduser().resolve()
@@ -257,7 +261,7 @@ if __name__ == '__main__':
     if args.cluster_worker > 0:
         cluster = SLURMCluster(cores=args.n_jobs,
                                processes=args.n_jobs,
-                               memory="{}GB".format(10*args.n_jobs),
+                               memory="{}GB".format(3*args.n_jobs),
                                project="ztf",
                                walltime="12:00:00",
                                queue="htc",
@@ -270,7 +274,8 @@ if __name__ == '__main__':
         print("Running {} workers with {} processes each ({} total).".format(args.cluster_worker, args.n_jobs, args.cluster_worker*args.n_jobs))
         client.wait_for_workers(1)
     elif not args.synchronous_compute:
-        localCluster = LocalCluster(n_workers=args.n_jobs, dashboard_address='localhost:8787', memory_limit="{}GB".format(4*args.n_jobs), processes=True, threads_per_worker=1)
+        #localCluster = LocalCluster(n_workers=args.n_jobs, dashboard_address='localhost:8787', memory_limit="{}GB".format(3*args.n_jobs), processes=True, threads_per_worker=1, scheduler_port=0)
+        localCluster = LocalCluster(n_workers=args.n_jobs, dashboard_address='localhost:8787', processes=True, threads_per_worker=1)
         client = Client(localCluster)
 
         print("Running a local cluster with {} processes.".format(args.n_jobs))
@@ -305,22 +310,28 @@ if __name__ == '__main__':
             quadrants = quadrants_from_band_path(band_path, logger, paths=False)
             print("{} quadrants found.".format(len(quadrants)))
 
-            results = None
+            sn_jobs = []
             for func in funcs:
                 print("Pipeline function \"{}\". ".format(func), flush=True, end="")
                 if 'map' in poloka_func[func].keys() and not args.no_map:
                     map_count += len(quadrants)
-                    results = [delayed(_rename_op(map_op, func))(results, quadrant, wd, ztfname, filtercode, func, args) for quadrant in quadrants]
+                    map_jobs = [delayed(_rename_op(map_op, func))(quadrant, wd, ztfname, filtercode, func, args) for quadrant in quadrants]
+                    bind(sn_jobs, map_jobs)
+                    jobs.extend(map_jobs)
                     print("{} map operations. ".format(len(quadrants)), end="", flush=True)
 
                 if ('reduce' in poloka_func[func].keys() or args.log_results) and not args.no_reduce:
-                    results = [delayed(_rename_op(reduce_op, func + "_reduce"))(results, wd, ztfname, filtercode, func, True, args)]
+                    reduce_job = [delayed(_rename_op(reduce_op, func + "_reduce"))(wd, ztfname, filtercode, func, True, args)]
                     reduction_count += 1
+                    bind(sn_jobs, reduce_job)
+                    jobs.extend(reduce_job)
                     print("Reduction operation.", end="", flush=True)
                     print("")
+                else:
+                    print("")
 
-                if results:
-                    jobs.extend(results)
+            if sn_jobs:
+                jobs.extend(sn_jobs)
 
     print("", flush=True)
     if args.scratch:
@@ -365,7 +376,7 @@ if __name__ == '__main__':
 
         to_ignore = ["elixir.fits", "dead.fits.gz"]
         if args.discard_calibrated:
-            to_ignore.append("calibrated.fits")
+            to_ignore.append("calibrated.fits", "weight.fz")
 
         print("Ignoring files {}".format(to_ignore))
         shutil.copytree(args.scratch, args.wd, dirs_exist_ok=True, ignore=shutil.ignore_patterns(*to_ignore))
