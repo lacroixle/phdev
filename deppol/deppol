@@ -276,8 +276,8 @@ if __name__ == '__main__':
         print("Running {} workers with {} processes each ({} total).".format(args.cluster_worker, args.n_jobs, args.cluster_worker*args.n_jobs))
         client.wait_for_workers(1)
     elif not args.synchronous_compute:
-        #localCluster = LocalCluster(n_workers=args.n_jobs, dashboard_address='localhost:8787', memory_limit="{}GB".format(3*args.n_jobs), processes=True, threads_per_worker=1, scheduler_port=0)
-        localCluster = LocalCluster(n_workers=args.n_jobs, dashboard_address='localhost:8787', processes=True, threads_per_worker=1)
+        localCluster = LocalCluster(n_workers=args.n_jobs, dashboard_address='localhost:8787', memory_limit="{}GB".format(3*args.n_jobs), processes=True, threads_per_worker=1)
+        #localCluster = LocalCluster(n_workers=args.n_jobs, dashboard_address='localhost:8787', processes=True, threads_per_worker=1)
         client = Client(localCluster)
 
         print("Running a local cluster with {} processes.".format(args.n_jobs))
@@ -318,7 +318,7 @@ if __name__ == '__main__':
                 print("Pipeline function \"{}\". ".format(func), flush=True, end="")
                 if 'map' in poloka_func[func].keys() and not args.no_map:
                     map_count += len(quadrants)
-                    map_jobs = [delayed(_rename_op(map_op, func))(quadrant, wd, ztfname, filtercode, func, args) for quadrant in quadrants[:50]]
+                    map_jobs = [delayed(_rename_op(map_op, func))(quadrant, wd, ztfname, filtercode, func, args) for quadrant in quadrants]
                     sn_jobs.append(bind(map_jobs, sn_jobs))
                     print("{} map operations. ".format(len(quadrants)), end="", flush=True)
 
@@ -378,8 +378,9 @@ if __name__ == '__main__':
 
         to_ignore = ["elixir.fits", "dead.fits.gz"]
         if args.discard_calibrated:
-            to_ignore.append("calibrated.fits", "weight.fz")
+            to_ignore.extend(["calibrated.fits", "weight.fz"])
 
         print("Ignoring files {}".format(to_ignore))
         shutil.copytree(args.scratch, args.wd, dirs_exist_ok=True, ignore=shutil.ignore_patterns(*to_ignore))
         shutil.rmtree(args.scratch)
+        print("Done")
