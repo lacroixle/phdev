@@ -14,7 +14,7 @@ import traceback
 from dask import delayed, compute, visualize
 from dask.distributed import Client, LocalCluster, wait, get_worker
 from dask_jobqueue import SLURMCluster
-from dask.graph_manipulation import bind
+from dask.graph_manipulation import bind, checkpoint
 
 import pandas as pd
 from dask import config as cfg
@@ -314,26 +314,45 @@ if __name__ == '__main__':
             print("{} quadrants found.".format(len(quadrants)))
 
             sn_jobs = []
+            map_jobs = []
+            reduce_job = None
+            sn_job = None
+            last_job = None
             for func in funcs:
                 print("Pipeline function \"{}\". ".format(func), flush=True, end="")
+                map_run = False
                 if 'map' in poloka_func[func].keys() and not args.no_map:
+                    map_run = True
                     map_count += len(quadrants)
                     map_jobs = [delayed(_rename_op(map_op, func))(quadrant, wd, ztfname, filtercode, func, args) for quadrant in quadrants]
-                    sn_jobs.append(bind(map_jobs, sn_jobs))
+
+                    if last_job is not None:
+                        map_job = bind(map_jobs, last_job)
+                    else:
+                        map_job = map_jobs
+
                     print("{} map operations. ".format(len(quadrants)), end="", flush=True)
+                else:
+                    map_job = None
 
                 if ('reduce' in poloka_func[func].keys() or args.log_results) and not args.no_reduce:
-                    reduce_job = [delayed(_rename_op(reduce_op, func + "_reduce"))(wd, ztfname, filtercode, func, True, args)]
+                    reduce_job = delayed(_rename_op(reduce_op, func + "_reduce"))(wd, ztfname, filtercode, func, True, args)
+                    if map_job:
+                        last_job = bind(reduce_job, map_job)
+                    else:
+                        last_job = bind(reduce_job, last_job)
+
                     reduction_count += 1
-                    sn_jobs.append(bind(reduce_job, sn_jobs))
                     print("Reduction operation.", end="", flush=True)
-                    print("")
-                else:
-                    print("")
+                elif map_run:
+                    last_job = checkpoint(map_job)
 
-            jobs.extend(sn_jobs)
+                print("")
 
-    # visualize(jobs, filename="out.svg")
+            jobs.append(last_job)
+
+    # visualize(jobs, filename="out.svg", optimize_graph=True)
+    # exit()
 
     print("", flush=True)
     if args.scratch:
@@ -357,7 +376,6 @@ if __name__ == '__main__':
         print("Processing {} reductions.".format(reduction_count), end="", flush=True)
 
     print("", flush=True)
-
 
     start_time = time.perf_counter()
     if args.synchronous_compute:
