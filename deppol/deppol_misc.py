@@ -860,16 +860,7 @@ def filter_seeing(band_path, ztfname, filtercode, logger, args):
 
 
 def discard_calibrated(quadrant_path, ztfname, filtercode, logger, args):
-    from deppol_utils import run_and_log
-    from utils import get_header_from_quadrant_path
-    import pickle
-    calibrated_path = quadrant_path.joinpath("calibrated.fits")
+    pass
 
-    if calibrated_path.exists():
-        logger.info("Dumping header content")
-        hdr = get_header_from_quadrant_path(quadrant_path)
-        with open(quadrant_path.joinpath("calibrated_header.pickle"), 'wb') as f:
-            pickle.dump(hdr, f)
 
-        logger.info("Deleting calibrated.fits")
-        calibrated_path.unlink()
+discard_calibrated_rm = ["calibrated.fits", "weight.fz"]

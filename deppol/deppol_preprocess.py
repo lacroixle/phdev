@@ -26,7 +26,7 @@ def make_catalog(quadrant_folder, ztfname, filtercode, logger, args):
     return quadrant_folder.joinpath("se.list").exists()
 
 
-make_catalog_rm = ["low.fits.gz", "miniback.fits", "segmentation.cv.fits", "segmentation.fits", "weight.fz"]
+make_catalog_rm = ["low.fits.gz", "miniback.fits", "segmentation.cv.fits", "segmentation.fits"]
 
 
 def mkcat2(quadrant_path, ztfname, filtercode, logger, args):
@@ -61,8 +61,8 @@ def makepsf(quadrant_path, ztfname, filtercode, logger, args):
     run_and_log(["makepsf", quadrant_path, "-f"], logger)
     return quadrant_path.joinpath("psfstars.list").exists()
 
-
-makepsf_rm = ["psf_resid_tuple.fit", "psf_res_stack.fits", "psf_resid_image.fits"]
+#makepsf_rm = ["psf_resid_tuple.fit", "psf_res_stack.fits", "psf_resid_image.fits", "psf_resid_tuple.dat", "calibrated.fits", "weight.fz"]
+makepsf_rm = ["psf_resid_tuple.fit", "psf_res_stack.fits", "psf_resid_image.fits", "psf_resid_tuple.dat"]
 
 
 def preprocess(quadrant_path, ztfname, filtercode, logger, args):

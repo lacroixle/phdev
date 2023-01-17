@@ -38,7 +38,7 @@ poloka_func.append({'map': deppol_misc.stats, 'reduce': deppol_misc.stats_reduce
 poloka_func.append({'reduce': deppol_misc.filter_seeing})
 poloka_func.append({'reduce': deppol_misc.filter_psfstars_count})
 poloka_func.append({'reduce': deppol_misc.filter_astro_chi2})
-poloka_func.append({'map': deppol_misc.discard_calibrated})
+poloka_func.append({'map': deppol_misc.discard_calibrated, 'rm': deppol_misc.discard_calibrated_rm})
 
 
 import deppol_preprocess
@@ -185,6 +185,7 @@ if __name__ == '__main__':
     argparser.add_argument('--no-reduce', dest='no_reduce', action='store_true', help="Skip reduce operations.")
     argparser.add_argument('--cluster-worker', type=int, default=0)
     argparser.add_argument('--scratch', type=pathlib.Path, help="")
+    argparser.add_argument('--from-scratch', action='store_true', help="When using scratch, does not transfer from distant directory first.")
     argparser.add_argument('--quadrant-workspace', type=pathlib.Path, help="Quadrant workspace directory to use instead of the one given by --wd. Useful to acceleratre IOs by moving onto a SSD disk or in memory mapped filesystem.")
     argparser.add_argument('--lc-folder', dest='lc_folder', type=pathlib.Path)
     argparser.add_argument('--log-results', action='store_true', default=True)
@@ -324,10 +325,14 @@ if __name__ == '__main__':
                 if 'map' in poloka_func[func].keys() and not args.no_map:
                     map_run = True
                     map_count += len(quadrants)
+                    print("(building map jobs)", flush=True, end="")
                     map_jobs = [delayed(_rename_op(map_op, func))(quadrant, wd, ztfname, filtercode, func, args) for quadrant in quadrants]
 
                     if last_job is not None:
-                        map_job = bind(map_jobs, last_job)
+                        print("(checkpoint)", flush=True, end="")
+                        map_job = checkpoint(map_jobs)
+                        print("(binding)", flush=True, end="")
+                        map_job = bind(map_job, last_job)
                     else:
                         map_job = map_jobs
 
@@ -336,8 +341,10 @@ if __name__ == '__main__':
                     map_job = None
 
                 if ('reduce' in poloka_func[func].keys() or args.log_results) and not args.no_reduce:
+                    print("(building reduce job)", flush=True, end="")
                     reduce_job = delayed(_rename_op(reduce_op, func + "_reduce"))(wd, ztfname, filtercode, func, True, args)
-                    if map_job:
+                    print("(binding)", flush=True, end="")
+                    if map_job is not None:
                         last_job = bind(reduce_job, map_job)
                     else:
                         last_job = bind(reduce_job, last_job)
@@ -356,15 +363,29 @@ if __name__ == '__main__':
 
     print("", flush=True)
     if args.scratch:
-        print("Moving data into scratch folder.")
+        scratch_usage = shutil.disk_usage(args.scratch)
+        print("Scratch disk usage")
+        print("  Total: {} GB".format(scratch_usage.total))
+        print("  Used : {} GB".format(scratch_usage.used))
+        print("  Free : {} GB".format(scratch_usage.free))
+
+        print("Moving data into scratch folder.", flush=True)
         for ztfname in ztfnames:
             for filtercode in filtercodes:
                 band_path = args.wd.joinpath("{}/{}".format(ztfname, filtercode))
                 if band_path.exists():
                     scratch_band_path = args.scratch.joinpath("{}/{}".format(ztfname, filtercode))
-                    print("Moving {}-{} into {}".format(ztfname, filtercode, scratch_band_path))
+                    print("Moving {}-{} into {}".format(ztfname, filtercode, scratch_band_path), flush=True)
                     shutil.rmtree(scratch_band_path, ignore_errors=True)
-                    shutil.copytree(args.wd.joinpath("{}/{}".format(ztfname, filtercode)), scratch_band_path)
+                    quadrant_folder = args.wd.joinpath("{}/{}".format(ztfname, filtercode))
+                    if args.from_scratch:
+                        def _from_scratch_ignore(current_folder, folders):
+                            to_copy = [".dbimage", "elexir.fits", "dead.fits.gz"]
+                            to_ignore = [f for f in folders if f.name not in to_copy]
+                            return to_ignore
+                        shutil.copytree(band_path, scratch_band_path, ignore=_from_scratch_ignore)
+                    else:
+                        shutil.copytree(args.wd.joinpath("{}/{}".format(ztfname, filtercode)), scratch_band_path)
 
     print("")
     print("Running. ", end="", flush=True)
