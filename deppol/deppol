@@ -386,7 +386,6 @@ if __name__ == '__main__':
             jobs.append(last_job)
 
     # visualize(jobs, filename="out.svg", optimize_graph=True)
-    # exit()
 
     print("", flush=True)
     if args.scratch:
@@ -408,7 +407,6 @@ if __name__ == '__main__':
                     else:
                         shutil.copytree(args.wd.joinpath("{}/{}".format(ztfname, filtercode)), scratch_band_path)
 
-    exit()
     print("")
     print("Running. ", end="", flush=True)
 

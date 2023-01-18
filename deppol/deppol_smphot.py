@@ -141,24 +141,27 @@ def smphot_stars(band_path, ztfname, filtercode, logger, args):
     calib_df = gaia_stars_df[['ra', 'dec', 'gmag', 'rpmag', 'e_rpmag', 'e_gmag']].rename(columns={'rpmag': 'magr', 'e_rpmag': 'emagr', 'gmag': 'magg', 'e_gmag': 'emagg'})
     calib_df.insert(2, column='n', value=1)
     calib_df['ristar'] = list(range(len(gaia_stars_df)))
+    calib_table = ListTable(None, calib_df)
+    calib_table.write_to(band_path.joinpath("calib_stars.list"))
 
-    calib_dfs = np.array_split(calib_df, args.n_jobs)
-    jobs = []
-    for i, calib_df in enumerate(calib_dfs):
-        calib_table = ListTable(None, calib_df)
-        calib_table.write_to(band_path.joinpath("calib_stars_{}.list".format(i)))
+    # calib_dfs = np.array_split(calib_df, args.n_jobs)
+    # jobs = []
+    # for i, calib_df in enumerate(calib_dfs):
+    #     calib_table = ListTable(None, calib_df)
+    #     calib_table.write_to(band_path.joinpath("calib_stars_{}.list".format(i)))
 
-    jobs = [delayed(_run_star_mklc)(i, band_path) for i in list(range(args.n_jobs))]
-    print(jobs)
-    args.local_cluster.compute(jobs)
+    # jobs = [delayed(_run_star_mklc)(i, band_path) for i in list(range(args.n_jobs))]
+    # print(jobs)
+    # args.local_cluster.compute(jobs)
+
 
     # Run mklc
-    # smphot_output = band_path.joinpath("smphot_output")
-    # smphot_output.mkdir(exist_ok=True)
-    # smphot_stars_output = band_path.joinpath("smphot_stars_output")
-    # smphot_stars_output.mkdir(exist_ok=True)
-    # smphot_stars_output = smphot_stars_output.joinpath("calib_cat.list")
-    # run_and_log(["mklc", "-t", band_path.joinpath("mappings"), "-O", smphot_output, "-v", band_path.joinpath("{}_driver_{}".format(ztfname, filtercode)), "-o", smphot_stars_output, '-c', band_path.joinpath(band_path.joinpath("calib_stars.list")), "-f", "1"], logger=logger)
+    smphot_output = band_path.joinpath("smphot_output")
+    smphot_output.mkdir(exist_ok=True)
+    smphot_stars_output = band_path.joinpath("smphot_stars_output")
+    smphot_stars_output.mkdir(exist_ok=True)
+    smphot_stars_output = smphot_stars_output.joinpath("calib_cat.list")
+    run_and_log(["mklc", "-t", band_path.joinpath("mappings"), "-O", smphot_output, "-v", band_path.joinpath("{}_driver_{}".format(ztfname, filtercode)), "-o", smphot_stars_output, '-c', band_path.joinpath(band_path.joinpath("calib_stars.list")), "-f", "1"], logger=logger)
 
 
 class ConstantStarModel:

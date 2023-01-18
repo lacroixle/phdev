@@ -4,6 +4,8 @@ import argparse
 import pathlib
 import sys
 import logging
+import subprocess
+import shutil
 
 from deppol_utils import run_and_log
 import utils
@@ -17,9 +19,11 @@ def generate_jobs(wd, run_folder, func, run_name):
     print("Saving jobs under {}".format(run_folder))
     batch_folder = run_folder.joinpath("{}/batches".format(run_name))
     log_folder = run_folder.joinpath("{}/logs".format(run_name))
+    status_folder = run_folder.joinpath("{}/status".format(run_name))
 
     batch_folder.mkdir(exist_ok=True)
     log_folder.mkdir(exist_ok=True)
+    status_folder.mkdir(exist_ok=True)
 
     print("Generating jobs...")
     sne_jobs = {}
@@ -43,8 +47,9 @@ source ~/pyenv/bin/activate
 export PYTHONPATH=${{PYTHONPATH}}:~/phdev/tools
 export PATH=${{PATH}}:~/phdev/deppol
 ulimit -n 4096
-OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 deppol --ztfname={} --filtercode={} -j 4 --wd={} --func={} --lc-folder=/sps/ztf/data/storage/scenemodeling/lc --quadrant-workspace=/dev/shm/llacroix --rm-intermediates --scratch=/tmp/llacroix --astro-degree=5 --max-seeing=4. --discard-calibrated --astro-min-mag=-10.
-""".format(ztfname, filtercode, wd, ",".join(func))
+OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 deppol --ztfname={} --filtercode={} -j {j} --wd={} --func={} --lc-folder=/sps/ztf/data/storage/scenemodeling/lc --quadrant-workspace=/dev/shm/llacroix --rm-intermediates --scratch=${{TMPDIR}}/llacroix --astro-degree=5 --max-seeing=4. --discard-calibrated --astro-min-mag=-10. --dump-node-info --from-scratch
+echo "done" > {}
+""".format(ztfname, filtercode, wd, ",".join(func), run_folder.joinpath("{}/status/{}-{}".format(run_name, ztfname, filtercode)), j=args.j)
             with open(batch_folder.joinpath("{}-{}.sh".format(ztfname, filtercode)), 'w') as f:
                 f.write(job)
 
@@ -53,23 +58,47 @@ def schedule_jobs(run_folder, run_name):
     print("Run folder: {}".format(run_folder))
     batch_folder = run_folder.joinpath("{}/batches".format(run_name))
     log_folder = run_folder.joinpath("{}/logs".format(run_name))
+    status_folder = run_folder.joinpath("{}/status".format(run_name))
+    status_folder.mkdir(exist_ok=True)
 
     logger = logging.getLogger("schedule_jobs")
     logger.addHandler(logging.StreamHandler())
     logger.setLevel(logging.INFO)
+
+    # First get list of currently scheduled jobs
+    out = subprocess.run(["squeue", "-o", "%j,%t", "-p", "htc", "-h"], capture_output=True)
+    scheduled_jobs_raw = out.stdout.decode('utf-8').split("\n")
+    scheduled_jobs = dict([(scheduled_job.split(",")[0][4:], scheduled_job.split(",")[1]) for scheduled_job in scheduled_jobs_raw if scheduled_job[:4] == "smp_"])
+
     batches = list(batch_folder.glob("*.sh"))
-    for batch in batches[:10]:
+    for batch in batches:
         batch_name = batch.name.split(".")[0]
-        cmd = ["sbatch", "--ntasks=4",
+        if batch_name in scheduled_jobs.keys():
+            continue
+
+        batch_status_path = status_folder.joinpath(batch_name)
+        if batch_status_path.exists():
+            with open(batch_status_path, 'r') as f:
+                status = f.readline().strip()
+                if status == "scheduled" or status == "done":
+                    continue
+
+        cmd = ["sbatch", "--ntasks={}".format(args.j),
                "-D", "{}".format(run_folder.joinpath(run_name)),
-               "-J", "{}_smp".format(batch_name),
+               "-J", "smp_{}".format(batch_name),
                "-o", log_folder.joinpath("log_{}".format(batch_name)),
                "-A", "ztf",
                "-L", "sps",
-               #"--spread-job",
                batch]
-        #print(" ".join(map(lambda x: str(x), cmd)))
+
         returncode = run_and_log(cmd, logger)
+
+        with open(batch_status_path, 'w') as f:
+            if returncode == 0:
+                f.write("scheduled")
+            else:
+                break
+                f.write("failedtoschedule")
         print("{}: {}".format(batch_name, returncode))
 
 
@@ -81,9 +110,16 @@ if __name__ == '__main__':
     argparser.add_argument('--run-folder', type=pathlib.Path, required=True)
     argparser.add_argument('--func', type=pathlib.Path, help="")
     argparser.add_argument('--run-name', type=str, required=True)
+    argparser.add_argument('-j', default=1)
+    argparser.add_argument('--purge-status', action='store_true')
 
     args = argparser.parse_args()
     args.wd = args.wd.expanduser().resolve()
+
+    if args.purge_status:
+        status_folder = args.run_folder.joinpath("{}/status".format(args.run_name))
+        if status_folder.exists():
+            shutil.rmtree(status_folder)
 
     if not args.wd.exists():
         sys.exit("Working folder does not exist!")
