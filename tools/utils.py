@@ -35,6 +35,10 @@ filtercode2gaiaband = {'zg': 'bpmag',
                        'zr': 'rpmag',
                        'zi': 'rpmag'} # Not a great workaround
 
+filtercode2ztffid = {'zg': 1,
+                     'zr': 2,
+                     'zi': 3}
+
 idx2markerstyle = ['*', 'x', '.', 'v', '^']
 
 
@@ -366,11 +370,12 @@ def read_list_ext(f):
 
 def write_list(filename, header, df, df_desc, df_format):
     with open(filename, 'w') as f:
-        for key in header.keys():
-            if isinstance(header[key], Iterable) and not isinstance(header[key], str):
-                f.write("@{} {}\n".format(key.upper(), " ".join(map(str, header[key]))))
-            else:
-                f.write("@{} {}\n".format(key.upper(), str(header[key])))
+        if header:
+            for key in header.keys():
+                if isinstance(header[key], Iterable) and not isinstance(header[key], str):
+                    f.write("@{} {}\n".format(key.upper(), " ".join(map(str, header[key]))))
+                else:
+                    f.write("@{} {}\n".format(key.upper(), str(header[key])))
 
         for column in df.columns:
             if column in df_desc.keys():
