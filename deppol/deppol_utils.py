@@ -4,6 +4,7 @@ import pathlib
 import subprocess
 import time
 from collections.abc import Iterable
+import json
 
 
 def run_and_log(cmd, logger=None):

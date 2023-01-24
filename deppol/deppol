@@ -111,7 +111,11 @@ def map_op(quadrant, wd, ztfname, filtercode, func, args):
             shutil.copytree(quadrant_path, quadrant_workspace, symlinks=False, dirs_exist_ok=True)
             quadrant_path = quadrant_workspace
 
-        logger.addHandler(logging.FileHandler(str(quadrant_path.joinpath("output.log")), mode='a'))
+        logger_mode = 'a'
+        if args.log_overwrite:
+            logger_mode = 'w'
+
+        logger.addHandler(logging.FileHandler(str(quadrant_path.joinpath("output.log")), mode=logger_mode))
         logger.info("")
         logger.info("="*80)
         logger.info("{}-{}".format(ztfname, filtercode))
@@ -124,13 +128,13 @@ def map_op(quadrant, wd, ztfname, filtercode, func, args):
     try:
         start_time = time.perf_counter()
         result = poloka_func[func]['map'](quadrant_path, ztfname, filtercode, logger, args)
-        end_time = time.perf_counter()
     except Exception as e:
         if func != 'clean':
             logger.error(traceback.format_exc())
         print(e)
         print(traceback.format_exc())
     finally:
+        end_time = time.perf_counter()
         if func != 'clean':
             logger.info("End of func \"{}\".".format(func))
 
@@ -146,7 +150,7 @@ def map_op(quadrant, wd, ztfname, filtercode, func, args):
                         logger.warning(" Full path: {}".format(to_remove))
 
             if args.dump_timings:
-                dump_timings(start_time, end_time, quadrant_dir.joinpath("timings_{}".format(func)))
+                dump_timings(start_time, end_time, quadrant_path.joinpath("timings_{}".format(func)))
 
             if args.quadrant_workspace:
                 logger.info("Copying quadrant data from temporary working directory back into original.")
@@ -173,7 +177,11 @@ def reduce_op(wd, ztfname, filtercode, func, save_stats, args):
 
     logger = logging.getLogger("{}-{}".format(ztfname, filtercode))
     if not logger.handlers:
-        logger.addHandler(logging.FileHandler(folder.joinpath("output.log"), mode='a'))
+        logger_mode = 'a'
+        if args.log_overwrite:
+            logger_mode = 'w'
+
+        logger.addHandler(logging.FileHandler(folder.joinpath("output.log"), mode=logger_mode))
         #logger.addHandler(logging.StreamHandler())
         logger.setLevel(logging.INFO)
 
@@ -225,6 +233,7 @@ if __name__ == '__main__':
     argparser.add_argument('--astro-max-chi2', type=float, default=1.)
     argparser.add_argument('--discard-calibrated', action='store_true')
     argparser.add_argument('--dump-node-info', action='store_true')
+    argparser.add_argument('--log-overwrite', action='store_true', help="If set, all logs will be overwritten.")
 
     logger = logging.getLogger("main")
     #logger.addHandler(logging.StreamHandler())

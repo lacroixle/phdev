@@ -43,13 +43,14 @@ def generate_jobs(wd, run_folder, func, run_name):
     for ztfname in sne_jobs.keys():
         for filtercode in sne_jobs[ztfname]:
             job = """#!/bin/sh
+echo "running" > {status_path}
 source ~/pyenv/bin/activate
 export PYTHONPATH=${{PYTHONPATH}}:~/phdev/tools
 export PATH=${{PATH}}:~/phdev/deppol
 ulimit -n 4096
-OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 deppol --ztfname={} --filtercode={} -j {j} --wd={} --func={} --lc-folder=/sps/ztf/data/storage/scenemodeling/lc --quadrant-workspace=/dev/shm/llacroix --rm-intermediates --scratch=${{TMPDIR}}/llacroix --astro-degree=5 --max-seeing=4. --discard-calibrated --astro-min-mag=-10. --dump-node-info --from-scratch
-echo "done" > {}
-""".format(ztfname, filtercode, wd, ",".join(func), run_folder.joinpath("{}/status/{}-{}".format(run_name, ztfname, filtercode)), j=args.j)
+OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 deppol --ztfname={} --filtercode={} -j {j} --wd={} --func={} --lc-folder=/sps/ztf/data/storage/scenemodeling/lc --quadrant-workspace=/dev/shm/llacroix --rm-intermediates --scratch=${{TMPDIR}}/llacroix --astro-degree=5 --max-seeing=4. --discard-calibrated --astro-min-mag=-10. --dump-node-info --from-scratch --dump-timings --log-overwrite
+echo "done" > {status_path}
+""".format(ztfname, filtercode, wd, ",".join(func), status_path=run_folder.joinpath("{}/status/{}-{}".format(run_name, ztfname, filtercode)), j=args.j)
             with open(batch_folder.joinpath("{}-{}.sh".format(ztfname, filtercode)), 'w') as f:
                 f.write(job)
 
@@ -80,7 +81,7 @@ def schedule_jobs(run_folder, run_name):
         if batch_status_path.exists():
             with open(batch_status_path, 'r') as f:
                 status = f.readline().strip()
-                if status == "scheduled" or status == "done":
+                if status == "scheduled" or status == "done" or status == "running":
                     continue
 
         cmd = ["sbatch", "--ntasks={}".format(args.j),
@@ -106,7 +107,7 @@ if __name__ == '__main__':
     argparser = argparse.ArgumentParser(description="")
     argparser.add_argument('--generate-jobs', action='store_true', help="If set, generate list of jobs")
     argparser.add_argument('--schedule-jobs', action='store_true', help="If set, schedule jobs onto SLURM")
-    argparser.add_argument('--wd', type=pathlib.Path, required=True)
+    argparser.add_argument('--wd', type=pathlib.Path, required=False)
     argparser.add_argument('--run-folder', type=pathlib.Path, required=True)
     argparser.add_argument('--func', type=pathlib.Path, help="")
     argparser.add_argument('--run-name', type=str, required=True)
@@ -114,25 +115,28 @@ if __name__ == '__main__':
     argparser.add_argument('--purge-status', action='store_true')
 
     args = argparser.parse_args()
-    args.wd = args.wd.expanduser().resolve()
+
+    if args.wd:
+        args.wd = args.wd.expanduser().resolve()
+        if not args.wd.exists():
+            sys.exit("Working folder does not exist!")
 
     if args.purge_status:
         status_folder = args.run_folder.joinpath("{}/status".format(args.run_name))
         if status_folder.exists():
             shutil.rmtree(status_folder)
 
-    if not args.wd.exists():
-        sys.exit("Working folder does not exist!")
 
     if not args.run_folder.exists():
         sys.exit("Run folder does not exist!")
 
-    funcs = []
-    if args.func.exists():
-        with open(args.func, 'r') as f:
-            funcs = list(map(lambda x: x.strip(), f.readlines()))
-    else:
-        funcs = str(args.func).split(",")
+    if args.func:
+        funcs = []
+        if args.func.exists():
+            with open(args.func, 'r') as f:
+                funcs = list(map(lambda x: x.strip(), f.readlines()))
+        else:
+            funcs = str(args.func).split(",")
 
     args.run_folder.joinpath(args.run_name).mkdir(exist_ok=True)
 

@@ -6,6 +6,7 @@ def make_catalog(quadrant_folder, ztfname, filtercode, logger, args):
     from ztfquery.io import get_file
     from shutil import copyfile
     from utils import get_header_from_quadrant_path
+    import json
     import pickle
 
     logger.info("Retrieving calibrated.fits...")
@@ -20,8 +21,8 @@ def make_catalog(quadrant_folder, ztfname, filtercode, logger, args):
 
     logger.info("Dumping header content")
     hdr = get_header_from_quadrant_path(quadrant_folder)
-    with open(quadrant_folder.joinpath("calibrated_header.pickle"), 'wb') as f:
-        pickle.dump(hdr, f)
+    with open(quadrant_folder.joinpath("calibrated_hdr"), 'wb') as f:
+        hdr.tofile(f, sep='\n', overwrite=True, padding=False)
 
     return quadrant_folder.joinpath("se.list").exists()
 

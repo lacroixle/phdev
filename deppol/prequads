@@ -14,6 +14,13 @@ from astropy.io import fits
 from utils import filtercodes
 
 
+def _create_symlink(path, symlink_to):
+    if path.exists():
+        path.unlink()
+
+    path.symlink_to(symlink_to)
+
+
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser(description="Prepare directory structure for quadrants.")
     argparser.add_argument('--quadrant-list', type=pathlib.Path, required=True)
@@ -58,7 +65,7 @@ if __name__ == '__main__':
             prepare_logger.info("In filter {} - creating directory {}".format(filtercode, args.output.joinpath(filtercode)))
             args.output.joinpath(filtercode).mkdir(exist_ok=True)
 
-            def _create_subfolders(image_filename):
+            def _create_subfolder(image_filename):
                 try:
                     # Check files exist
                     quadrant_logger = logging.getLogger(image_filename)
@@ -72,7 +79,7 @@ if __name__ == '__main__':
                         mskimg_path_gz = pathlib.Path(ztfquery.io.get_file(image_filename, downloadit=False, suffix='mskimg.fits.gz'))
 
                         # Much faster than relying on ScienceQuadrant.from_filename() throwing error
-                        if not sciimg_path.exists() or not (mskimg_path.exists() or maskimg_path_gz.exists()):
+                        if not sciimg_path.exists() or not (mskimg_path.exists() or mskimg_path_gz.exists()):
                             raise FileNotFoundError(sciimg_path)
 
                         z = ScienceQuadrant.from_filename(sciimg_path)
@@ -83,11 +90,6 @@ if __name__ == '__main__':
                         folder_path.mkdir(exist_ok=True)
                         folder_path.joinpath(".dbstuff").touch()
 
-                        def _create_symlink(path, symlink_to):
-                            if path.exists():
-                                path.unlink()
-
-                            path.symlink_to(symlink_to)
 
                         _create_symlink(folder_path.joinpath("elixir.fits"), sciimg_path)
 
@@ -98,14 +100,29 @@ if __name__ == '__main__':
                         mskhdu = fits.PrimaryHDU([deads])
                         mskhdu.writeto(folder_path.joinpath("dead.fits.gz"), overwrite=True)
                     else:
-                        print("Raw image - not implemented yet!!! è_é")
+                        raw_path = pathlib.Path(ztfquery.io.get_file(image_filename))
+
+                        if not raw_path.exists():
+                            raise FileNotFoundError(raw_path)
+
+                        folder_name = image_filename[:37]
+                        folder_path = args.output.joinpath("{}/{}".format(filtercode, folder_name))
+
+                        folder_path.mkdir(exist_ok=True)
+                        folder_path.joinpath(".dbstuff").touch()
+
+                        _create_symlink(folder_path.joinpath("elixir.fits"), raw_path)
+
 
                 except FileNotFoundError as e:
                     quadrant_logger.error("Fail: {}".format(sciimg_path))
                 except Exception as e:
                     quadrant_logger.exception("Exception error for: {}".format(sciimg_path))
                 else:
-                    quadrant_logger.info("Success: {}, dead pixel count={}".format(image_filename, np.sum(deads)))
+                    if args.use_raw:
+                        quadrant_logger.info("Success: {}".format(image_filename))
+                    else:
+                        quadrant_logger.info("Success: {}, dead pixel count={}".format(image_filename, np.sum(deads)))
                 finally:
                     for handler in quadrant_logger.handlers:
                         handler.close()
