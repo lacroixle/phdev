@@ -7,7 +7,7 @@ from collections.abc import Iterable
 import json
 
 
-def run_and_log(cmd, logger=None):
+def run_and_log(cmd, logger=None, return_log=False):
     if logger:
         logger.info("Running command: \"{}\"".format(" ".join([str(s) for s in cmd])))
         start_time = time.perf_counter()
@@ -19,6 +19,9 @@ def run_and_log(cmd, logger=None):
         logger.info("Command stdout/stderr output:")
         logger.info(out.stdout)
         logger.info("=========================== output end ===========================")
+
+    if return_log:
+        return out.returncode, out.stdout
 
     return out.returncode
 

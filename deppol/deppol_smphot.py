@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+from deppol_utils import run_and_log
 
 def reference_quadrant(band_path, ztfname, filtercode, logger, args):
     """
@@ -117,51 +118,78 @@ def smphot_plot(band_path, ztfname, filtercode, logger, args):
     return True
 
 
-def _run_star_mklc(i, band_path):
+def _run_star_mklc(i, smphot_stars_folder, mapping_folder, driver_path):
     #from deppol_utils import run_and_log
-    smphot_output = band_path.joinpath("smphot_output")
-    smphot_output.mkdir(exist_ok=True)
-    smphot_stars_output = band_path.joinpath("smphot_stars_output")
-    smphot_stars_output.mkdir(exist_ok=True)
-    smphot_stars_output = smphot_stars_output.joinpath("calib_cat.list")
-    out_filename = smphot_stars_output.joinpath("calib_cat_{}.list".format(i))
-    #run_and_log(["mklc", "-t", band_path.joinpath("mappings"), "-O", smphot_output, "-v", band_path.joinpath("{}_driver_{}".format(ztfname, filtercode)), "-o", out_filename, '-c', band_path.joinpath(band_path.joinpath("calib_stars_{}.list".format(i))), "-f", "1"], logger=logger)
+    stars_calib_cat_path = smphot_stars_folder.joinpath("calib_stars_cat_{}.list".format(i))
+    smphot_stars_cat_path = smphot_stars_folder.joinpath("smphot_stars_cat_{}.list".format(i))
+    _, return_log = run_and_log(["mklc", "-t", mapping_folder, "-O", smphot_stars_folder, "-v", driver_path, "-o", smphot_stars_cat_path, '-c', stars_calib_cat_path, "-f", "1"], return_log=True)
+
+    with open(smphot_stars_folder.joinpath("mklc_log_{}.log".format(i)), 'w') as f:
+        f.write(return_log)
 
 
 def smphot_stars(band_path, ztfname, filtercode, logger, args):
-    import pandas
+    import pandas as pd
     from dask import delayed, compute
     import numpy as np
     from utils import ListTable
-    from deppol_utils import run_and_log
+    from astropy.coordinates import SkyCoord
+    import astropy.units as u
 
     # Build calibration catalog
-    gaia_stars_df = pandas.read_parquet(band_path.joinpath("gaia_stars.parquet"))
+    gaia_stars_df = pd.read_parquet(band_path.joinpath("gaia_stars.parquet"))
 
     calib_df = gaia_stars_df[['ra', 'dec', 'gmag', 'rpmag', 'e_rpmag', 'e_gmag']].rename(columns={'rpmag': 'magr', 'e_rpmag': 'emagr', 'gmag': 'magg', 'e_gmag': 'emagg'})
     calib_df.insert(2, column='n', value=1)
     calib_df['ristar'] = list(range(len(gaia_stars_df)))
+
+    gaia_stars_skycoords = SkyCoord(ra=gaia_stars_df['ra'], dec=gaia_stars_df['dec'], unit='deg')
+
+    # Filter stars by SN proximity (in some radius defined by --smphot-stars-radius)
+    sn_parameters = pd.read_hdf(args.lc_folder.joinpath("{}.hd5".format(ztfname)), key='sn_info')
+    sn_skycoord = SkyCoord(ra=sn_parameters['sn_ra'], dec=sn_parameters['sn_dec'], unit='deg')
+    idxc, idxcatalog, d2d, d3d = sn_skycoord.search_around_sky(gaia_stars_skycoords, 0.35*u.deg)
+
+    calib_df = calib_df.iloc[idxc]
     calib_table = ListTable(None, calib_df)
-    calib_table.write_to(band_path.joinpath("calib_stars.list"))
 
-    # calib_dfs = np.array_split(calib_df, args.n_jobs)
-    # jobs = []
-    # for i, calib_df in enumerate(calib_dfs):
-    #     calib_table = ListTable(None, calib_df)
-    #     calib_table.write_to(band_path.joinpath("calib_stars_{}.list".format(i)))
+    smphot_stars_folder = band_path.joinpath("smphot_stars")
+    smphot_stars_folder.mkdir(exist_ok=True)
 
-    # jobs = [delayed(_run_star_mklc)(i, band_path) for i in list(range(args.n_jobs))]
-    # print(jobs)
-    # args.local_cluster.compute(jobs)
+    stars_calib_cat_path = smphot_stars_folder.joinpath("calib_stars_cat.list")
+    calib_table.write_to(stars_calib_cat_path)
 
+    driver_path = band_path.joinpath("{}_driver_{}".format(ztfname, filtercode))
+    mapping_folder = band_path.joinpath("mappings")
+    smphot_stars_cat_path = smphot_stars_folder.joinpath("smphot_stars_cat.list")
 
-    # Run mklc
-    smphot_output = band_path.joinpath("smphot_output")
-    smphot_output.mkdir(exist_ok=True)
-    smphot_stars_output = band_path.joinpath("smphot_stars_output")
-    smphot_stars_output.mkdir(exist_ok=True)
-    smphot_stars_output = smphot_stars_output.joinpath("calib_cat.list")
-    run_and_log(["mklc", "-t", band_path.joinpath("mappings"), "-O", smphot_output, "-v", band_path.joinpath("{}_driver_{}".format(ztfname, filtercode)), "-o", smphot_stars_output, '-c', band_path.joinpath(band_path.joinpath("calib_stars.list")), "-f", "1"], logger=logger)
+    if args.parallel_reduce:
+        # If parallel reduce enable, split up the catalog
+        n = int(len(calib_df)/4)
+        calib_dfs = np.array_split(calib_df, n)
+        jobs = []
+        for i, calib_df in enumerate(calib_dfs):
+            calib_table = ListTable(None, calib_df)
+            calib_table.write_to(smphot_stars_folder.joinpath("calib_stars_cat_{}.list".format(i)))
+
+        jobs = [delayed(_run_star_mklc)(i, smphot_stars_folder, mapping_folder, driver_path) for i in list(range(n))]
+        compute(jobs)
+
+        # Concatenate output catalog together
+        calib_cat_paths = [smphot_stars_folder.joinpath("smphot_stars_cat_{}.list".format(i)) for i in range(n)]
+        calib_cat_tables = [ListTable.from_filename(calib_cat_path) for calib_cat_path in calib_cat_paths]
+
+        calib_cat_df = pd.concat([calib_cat_table.df for calib_cat_table in calib_cat_tables])
+        calib_cat_len = sum([int(calib_cat_table.header['nstars']) for calib_cat_table in calib_cat_tables])
+        calib_cat_header = {'calibcatalog': stars_calib_cat_path, 'nstars': calib_cat_len, 'nimages': 0}
+
+        calib_cat_table = ListTable(calib_cat_header, calib_cat_df)
+        calib_cat_table.write_to(smphot_stars_cat_path)
+
+    else:
+        # Run on a single worker
+        run_and_log(["mklc", "-t", band_path.joinpath("mappings"), "-O", smphot_stars_folder, "-v", driver_path, "-o", smphot_stars_cat_path, '-c', stars_calib_cat_path, "-f", "1"], logger=logger)
+
 
 
 class ConstantStarModel:

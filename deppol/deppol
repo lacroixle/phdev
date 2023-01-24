@@ -133,6 +133,7 @@ def map_op(quadrant, wd, ztfname, filtercode, func, args):
             logger.error(traceback.format_exc())
         print(e)
         print(traceback.format_exc())
+        end_time = time.perf_counter()
     finally:
         end_time = time.perf_counter()
         if func != 'clean':
@@ -197,6 +198,7 @@ def reduce_op(wd, ztfname, filtercode, func, save_stats, args):
     except Exception as e:
         logger.error("In SN {}-{}".format(ztfname, filtercode))
         logger.error(traceback.format_exc())
+        traceback.print_exc()
     finally:
         logger.info("="*80)
 
@@ -234,6 +236,7 @@ if __name__ == '__main__':
     argparser.add_argument('--discard-calibrated', action='store_true')
     argparser.add_argument('--dump-node-info', action='store_true')
     argparser.add_argument('--log-overwrite', action='store_true', help="If set, all logs will be overwritten.")
+    argparser.add_argument('--parallel-reduce', action='store_true', help="If set, parallelize reduce operations (if op has a parallel codepath).")
 
     logger = logging.getLogger("main")
     #logger.addHandler(logging.StreamHandler())
