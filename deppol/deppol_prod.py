@@ -48,7 +48,7 @@ source ~/pyenv/bin/activate
 export PYTHONPATH=${{PYTHONPATH}}:~/phdev/tools
 export PATH=${{PATH}}:~/phdev/deppol
 ulimit -n 4096
-OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 deppol --ztfname={} --filtercode={} -j {j} --wd={} --func={} --lc-folder=/sps/ztf/data/storage/scenemodeling/lc --quadrant-workspace=/dev/shm/llacroix --rm-intermediates --scratch=${{TMPDIR}}/llacroix --astro-degree=5 --max-seeing=4. --discard-calibrated --astro-min-mag=-10. --dump-node-info --from-scratch --dump-timings --log-overwrite
+OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 deppol --ztfname={} --filtercode={} -j {j} --wd={} --func={} --lc-folder=/sps/ztf/data/storage/scenemodeling/lc --quadrant-workspace=/dev/shm/llacroix --rm-intermediates --scratch=${{TMPDIR}}/llacroix --astro-degree=5 --max-seeing=4. --discard-calibrated --astro-min-mag=-10. --dump-node-info --from-scratch --dump-timings --log-overwrite --parallel-reduce
 echo "done" > {status_path}
 """.format(ztfname, filtercode, wd, ",".join(func), status_path=run_folder.joinpath("{}/status/{}-{}".format(run_name, ztfname, filtercode)), j=args.j)
             with open(batch_folder.joinpath("{}-{}.sh".format(ztfname, filtercode)), 'w') as f:
@@ -90,6 +90,8 @@ def schedule_jobs(run_folder, run_name):
                "-o", log_folder.joinpath("log_{}".format(batch_name)),
                "-A", "ztf",
                "-L", "sps",
+               "--mem={}G".format(3*args.j),
+               "-t", "3-0",
                batch]
 
         returncode = run_and_log(cmd, logger)
@@ -111,7 +113,7 @@ if __name__ == '__main__':
     argparser.add_argument('--run-folder', type=pathlib.Path, required=True)
     argparser.add_argument('--func', type=pathlib.Path, help="")
     argparser.add_argument('--run-name', type=str, required=True)
-    argparser.add_argument('-j', default=1)
+    argparser.add_argument('-j', default=1, type=int)
     argparser.add_argument('--purge-status', action='store_true')
 
     args = argparser.parse_args()
