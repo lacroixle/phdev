@@ -2,29 +2,53 @@
 
 from deppol_utils import run_and_log
 
-def make_catalog(quadrant_folder, ztfname, filtercode, logger, args):
+
+def load_calibrated(quadrant_path, ztfname, filtercode, logger, args):
+    from ztfquery.io import get_file
+    from utils import get_header_from_quadrant_path
+
+    logger.info("Retrieving science image...")
+    if not args.use_raw:
+        image_path = get_file(quadrant_path.name + "_sciimg.fits", downloadit=False)
+
+    logger.info("Located at {}".format(image_path))
+    if not image_path.exists():
+        logger.error("Science image does not exist on disk!")
+        return False
+
+    copyfile(image_path, quadrant_path.joinpath("calibrated.fits"))
+
+    logger.info("Dumping header content")
+    hdr = get_header_from_quadrant_path(quadrant_path)
+    with open(quadrant_path.joinpath("calibrated_hdr"), 'wb') as f:
+        hdr.tofile(f, sep='\n', overwrite=True, padding=False)
+
+
+def make_catalog(quadrant_path, ztfname, filtercode, logger, args):
     from ztfquery.io import get_file
     from shutil import copyfile
     from utils import get_header_from_quadrant_path
-    import json
     import pickle
 
-    logger.info("Retrieving calibrated.fits...")
+    logger.info("Retrieving science image...")
     if not args.use_raw:
-        image_path = get_file(quadrant_folder.name + "_sciimg.fits", downloadit=False)
+        image_path = get_file(quadrant_path.name + "_sciimg.fits", downloadit=False)
 
     logger.info("Located at {}".format(image_path))
+    if not image_path.exists():
+        logger.error("Science image does not exist on disk!")
+        return False
 
-    copyfile(image_path, quadrant_folder.joinpath("calibrated.fits"))
+    copyfile(image_path, quadrant_path.joinpath("calibrated.fits"))
 
-    run_and_log(["make_catalog", quadrant_folder, "-O", "-S"], logger)
+    run_and_log(["make_catalog", quadrant_path, "-O", "-S"], logger)
 
     logger.info("Dumping header content")
-    hdr = get_header_from_quadrant_path(quadrant_folder)
-    with open(quadrant_folder.joinpath("calibrated_hdr"), 'wb') as f:
+    hdr = get_header_from_quadrant_path(quadrant_path)
+    with open(quadrant_path.joinpath("calibrated_hdr"), 'wb') as f:
         hdr.tofile(f, sep='\n', overwrite=True, padding=False)
 
-    return quadrant_folder.joinpath("se.list").exists()
+    return quadrant_path.joinpath("se.list").exists()
 
 
 make_catalog_rm = ["low.fits.gz", "miniback.fits", "segmentation.cv.fits", "segmentation.fits"]
@@ -59,8 +83,17 @@ mkcat2_rm = []
 
 
 def makepsf(quadrant_path, ztfname, filtercode, logger, args):
+    from utils import get_header_from_quadrant_path
+
     run_and_log(["makepsf", quadrant_path, "-f"], logger)
+
+    logger.info("Dumping header content")
+    hdr = get_header_from_quadrant_path(quadrant_path)
+    with open(quadrant_path.joinpath("calibrated_hdr"), 'wb') as f:
+        hdr.tofile(f, sep='\n', overwrite=True, padding=False)
+
     return quadrant_path.joinpath("psfstars.list").exists()
+
 
 #makepsf_rm = ["psf_resid_tuple.fit", "psf_res_stack.fits", "psf_resid_image.fits", "psf_resid_tuple.dat", "calibrated.fits", "weight.fz"]
 makepsf_rm = ["psf_resid_tuple.fit", "psf_res_stack.fits", "psf_resid_image.fits", "psf_resid_tuple.dat"]

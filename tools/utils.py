@@ -3,6 +3,7 @@
 import pathlib
 from collections.abc import Iterable
 import itertools
+import pickle
 
 import numpy as np
 from croaks.match import NearestNeighAssoc
@@ -43,11 +44,15 @@ idx2markerstyle = ['*', 'x', '.', 'v', '^']
 
 
 def plot_ztf_focal_plan(fig, focal_plane_dict, plot_fun, plot_ccdid=False):
-    ccds = fig.subfigures(ncols=4, nrows=4, hspace=0.09, wspace=0.09)
+    #ccds = fig.subfigures(ncols=4, nrows=4, hspace=0.09, wspace=0.09)
+    # ccds = fig.subfigures(ncols=4, nrows=4, hspace=0., wspace=0.)
+    ccds = fig.add_gridspec(4, 4, wspace=0.02, hspace=0.02)
     for i in range(4):
         for j in range(4):
             ccdid = 16 - (i*4+j)
-            quadrants = ccds[i, j].subplots(ncols=2, nrows=2)
+            # quadrants = ccds[i, j].subplots(ncols=2, nrows=2, gridspec_kw={'hspace': 0., 'wspace': 0.})
+            quadrants = ccds[i, j].subgridspec(2, 2, wspace=0., hspace=0.)
+            axs = quadrants.subplots()
 
             for k in range(2):
                 for l in range(2):
@@ -60,14 +65,28 @@ def plot_ztf_focal_plan(fig, focal_plane_dict, plot_fun, plot_ccdid=False):
                         rcid -= (l - 1)
                         qid -= (l - 1)
 
-                    plot_fun(quadrants[k, l], focal_plane_dict[ccdid][qid], ccdid, qid, rcid)
+                    #plot_fun(quadrants[k, l], focal_plane_dict[ccdid][qid], ccdid, qid, rcid)
+                    plot_fun(axs[k, l], focal_plane_dict[ccdid][qid], ccdid, qid, rcid)
 
             if plot_ccdid:
-                ax = ccds[i, j].add_subplot()
+                # ax = ccds[i, j].add_subplot()
+                ax = fig.add_subplot(ccds[i, j])
                 ax.text(0.5, 0.5, ccdid, horizontalalignment='center', verticalalignment='center', transform=ax.transAxes, fontweight='black', fontsize='xx-large')
                 ax.axis('off')
                 # rect = patches.Rectangle((0.02, 0.02), 0.98, 0.98, linewidth=2, edgecolor='black', facecolor='none')
                 # ax.add_patch(rect)
+
+    for ax in fig.get_axes():
+        ss = ax.get_subplotspec()
+        ax.spines.top.set_visible(ss.is_first_row())
+        ax.spines.top.set(linewidth=1.)
+        ax.spines.bottom.set_visible(ss.is_last_row())
+        ax.spines.bottom.set(linewidth=1.)
+        ax.spines.left.set_visible(ss.is_first_col())
+        ax.spines.left.set(linewidth=1.)
+        ax.spines.right.set_visible(ss.is_last_col())
+        ax.spines.right.set(linewidth=1.)
+
 
 
 def plot_ztf_focal_plan_rcid(fig):
@@ -75,7 +94,8 @@ def plot_ztf_focal_plan_rcid(fig):
 
     def _plot(ax, val, ccdid, qid, rcid):
         ax.text(0.5, 0.5, rcid, horizontalalignment='center', verticalalignment='center', transform=ax.transAxes)
-        ax.axis('off')
+        # ax.set_axis_off()
+        # ax.axis('off')
         # ax.set_xticks([])
         # ax.set_yticks([])
 
@@ -89,10 +109,10 @@ def plot_ztf_focal_plan_values(fig, focal_plane_dict, scalar=False, vmin=None, v
                 val = [[val]]
 
             ax.imshow(val, vmin=vmin, vmax=vmax, cmap=cmap)
+            ax.set(xticks=[], yticks=[])
+            ax.set_aspect('auto')
 
         ax.text(0.5, 0.5, rcid+1, horizontalalignment='center', verticalalignment='center', transform=ax.transAxes)
-        ax.set_xticks([])
-        ax.set_yticks([])
 
     if vmin is None or vmax is None:
         values = list(itertools.chain.from_iterable([[focal_plane_dict[ccdid][qid] for qid in focal_plane_dict[ccdid]] for ccdid in focal_plane_dict.keys()]))
@@ -159,11 +179,20 @@ def get_mjd_from_quadrant_path(quadrant_path):
 
 
 def get_header_from_quadrant_path(quadrant_path, key=None):
-    with fits.open(quadrant_path.joinpath("calibrated.fits")) as hdul:
-        if key is None:
+    if quadrant_path.joinpath("calibrated.fits").exists():
+        with fits.open(quadrant_path.joinpath("calibrated.fits")) as hdul:
+            if key is None:
+                return hdul[0].header
+            else:
+                return hdul[0].header[key]
+    elif quadrant_path.joinpath("calibrated_hdr").exists():
+        with fits.open(quadrant_path.joinpath("calibrated_hdr")) as hdul:
             return hdul[0].header
-        else:
-            return hdul[0].header[key]
+    elif quadrant_path.joinpath("calibrated_header.pickle").exists():
+        with open(quadrant_path.joinpath("calibrated_header.pickle"), 'rb') as f:
+            return pickle.load(f)
+    else:
+        raise FileNotFoundError("Could not find calibrated.fits nor calibrated_hdr! {}".format(quadrant_path))
 
 
 def sc_ra(skycoord):

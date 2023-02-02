@@ -438,6 +438,100 @@ def psf_study_reduce(band_path, ztfname, filtercode, logger, args):
     # plt.show()
 
 
+def seeing_study(band_path, ztfname, filtercode, logger, args):
+    from utils import get_header_from_quadrant_path, plot_ztf_focal_plan_values, ListTable
+    from deppol_utils import quadrants_from_band_path
+    import pickle
+    import numpy as np
+    import itertools
+    import matplotlib
+    import matplotlib.pyplot as plt
+    from matplotlib.cm import ScalarMappable
+    from matplotlib.colorbar import Colorbar
+    quadrant_paths = quadrants_from_band_path(band_path, logger, check_files="psfstars.list", ignore_noprocess=False)
+
+    keys = {'seeing': 'hdr',
+            'seseeing': 'hdr',
+            'gfseeing': 'gfseeing',
+            'momentx1': 'psfstars',
+            'momenty1': 'psfstars',
+            'momentx2': 'psfstars',
+            'momenty2': 'psfstars',
+            'momentxy': 'psfstars'}
+
+
+    if not band_path.joinpath("seeings.pickle").exists() or args.from_scratch:
+        vals = {}
+
+        for key in keys:
+            vals[key] = {}
+            for i in range(1, 17):
+                vals[key][i] = {}
+                for j in range(4):
+                    vals[key][i][j] = []
+
+        for quadrant_path in quadrant_paths:
+            hdr = get_header_from_quadrant_path(quadrant_path)
+            psfstars_list = ListTable.from_filename(quadrant_path.joinpath("psfstars.list"))
+
+            for key in keys.keys():
+                if keys[key] == 'psfstars':
+                    vals[key][hdr['ccdid']][hdr['qid']-1].append(psfstars_list.header[key])
+                elif key == 'seseeing':
+                    vals[key][hdr['ccdid']][hdr['qid']-1].append(2.355*hdr[key])
+                elif keys[key] == 'hdr':
+                    vals[key][hdr['ccdid']][hdr['qid']-1].append(hdr[key])
+                elif key == 'gfseeing':
+                    with open(quadrant_path.joinpath("psf.dat"), 'r') as f:
+                        lines = f.readlines()
+                        gfseeing = float(lines[3].split(" ")[0].strip())
+                    vals[key][hdr['ccdid']][hdr['qid']-1].append(2.355*gfseeing)
+
+        with open(band_path.joinpath("seeings.pickle"), 'wb') as f:
+            pickle.dump(vals, f)
+    else:
+        with open(band_path.joinpath("seeings.pickle"), 'rb') as f:
+            vals = pickle.load(f)
+
+    for key in keys:
+        for key_i in vals[key].keys():
+            for key_j in vals[key][key_i].keys():
+                vals[key][key_i][key_j] = np.median(list(map(lambda x: float(x), vals[key][key_i][key_j])))
+
+    cmap = 'coolwarm'
+    def _plot_focal_plane_seeing(key):
+        val_list = [[vals[key][key_i][key_j] for key_j in vals[key][key_i].keys()] for key_i in vals[key].keys()]
+        val_list = list(itertools.chain(*val_list))
+        vmin = min(val_list)
+        vmax = max(val_list)
+
+        cm = ScalarMappable(cmap=cmap)
+        cm.set_clim(vmin=vmin, vmax=vmax)
+
+        fig = plt.figure(figsize=(5., 6.), constrained_layout=False)
+        #f1, f2, f3 = fig.subfigures(ncols=1, nrows=3, height_ratios=[12., 1., 1.])
+        f1, f2 = fig.subfigures(ncols=1, nrows=2, height_ratios=[12., 0.3], wspace=-1., hspace=-1.)
+        f1.suptitle("\n{}-{} Focal plane {}".format(ztfname, filtercode, key), fontsize='large')
+        plot_ztf_focal_plan_values(f1, vals[key], vmin=vmin, vmax=vmax, cmap=cmap, scalar=True)
+        ax2 = f2.add_subplot(clip_on=False)
+        f2.subplots_adjust(bottom=-5, top=5.)
+        ax2.set_position((0.2, 0, 0.6, 1))
+        # ax2 = f2.add_subplot()
+        # ax3 = f3.add_subplot(axis='none')
+        # Colorbar(ax, cm, orientation='horizontal')
+        cb = f1.colorbar(cm, cax=ax2, orientation='horizontal')
+        # ax2.autoscale(tight=True)
+        ax2.set_clip_on(False)
+        ax2.minorticks_on()
+        ax2.tick_params(direction='inout')
+        plt.savefig(band_path.joinpath("{}-{}_focal_plane_{}.png".format(ztfname, filtercode, key)), dpi=300., bbox_inches='tight', pad_inches=0.1)
+        plt.close()
+
+    for key in keys:
+        # print("Plotting {}".format(key))
+        _plot_focal_plane_seeing(key)
+
+
 def match_gaia(quadrant_path, ztfname, filtercode, logger, args):
     from utils import read_list, get_wcs_from_quadrant, get_mjd_from_quadrant_path, contained_in_exposure, match_pixel_space, gaiarefmjd
     import pandas as pd
@@ -769,7 +863,11 @@ def clean_reduce(band_path, ztfname, filtercode, logger, args):
     [f.unlink() for f in files_to_delete]
 
     # Delete output folders
-    folders_to_delete = ["astrometry", "photometry", "mappings", "moments", "psf_residuals", "smphot_output", "pmfit", "pmfit_plot"]
+    # We delete everything but the quadrant folders
+    folders_to_keep = list(band_path.glob("ztf_*"))
+    folders_to_delete = [folder for folder in list(band_path.glob("*")) if (folder not in folders_to_keep) and folder.is_file()]
+    # folders_to_delete = ["astrometry", "photometry", "mappings", "moments", "psf_residuals", "smphot_output", "pmfit", "pmfit_plot"]
+    print(folders_to_delete)
     [rmtree(band_path.joinpath(folder), ignore_errors=True) for folder in folders_to_delete]
 
 
@@ -834,7 +932,9 @@ def filter_seeing(band_path, ztfname, filtercode, logger, args):
     from utils import get_header_from_quadrant_path
     from deppol_utils import quadrants_from_band_path, noprocess_quadrants
 
+    print(band_path)
     quadrant_paths = quadrants_from_band_path(band_path, logger)
+    print(quadrant_paths)
 
     flagged_count = 0
     quadrants_to_flag = []
@@ -842,7 +942,13 @@ def filter_seeing(band_path, ztfname, filtercode, logger, args):
 
     for quadrant_path in quadrant_paths:
         quadrant = quadrant_path.name
-        seeing = get_header_from_quadrant_path(quadrant_path)['SEEING']
+
+        try:
+            seeing = get_header_from_quadrant_path(quadrant_path)['SEEING']
+        except FileNotFoundError as e:
+            logger.error(e)
+            logger.error(quadrant_path)
+            continue
 
         if seeing > args.max_seeing:
             flagged_count += 1

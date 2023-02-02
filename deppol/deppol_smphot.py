@@ -150,7 +150,9 @@ def smphot_stars(band_path, ztfname, filtercode, logger, args):
     sn_skycoord = SkyCoord(ra=sn_parameters['sn_ra'], dec=sn_parameters['sn_dec'], unit='deg')
     idxc, idxcatalog, d2d, d3d = sn_skycoord.search_around_sky(gaia_stars_skycoords, 0.35*u.deg)
 
+    logger.info("Total star count: {}".format(len(calib_df)))
     calib_df = calib_df.iloc[idxc]
+    logger.info("Total star count in a 0.35 deg radius around SN: {}".format(len(calib_df)))
     calib_table = ListTable(None, calib_df)
 
     smphot_stars_folder = band_path.joinpath("smphot_stars")
@@ -165,15 +167,19 @@ def smphot_stars(band_path, ztfname, filtercode, logger, args):
 
     if args.parallel_reduce:
         # If parallel reduce enable, split up the catalog
+        logger.info("Running splitted mklc using {} workers".format(args.n_jobs))
         n = int(len(calib_df)/4)
+        logger.info("Splitting into {}".format(n))
         calib_dfs = np.array_split(calib_df, n)
         jobs = []
         for i, calib_df in enumerate(calib_dfs):
             calib_table = ListTable(None, calib_df)
             calib_table.write_to(smphot_stars_folder.joinpath("calib_stars_cat_{}.list".format(i)))
 
+        logger.info("Submitting into scheduler")
         jobs = [delayed(_run_star_mklc)(i, smphot_stars_folder, mapping_folder, driver_path) for i in list(range(n))]
         compute(jobs)
+        logger.info("Computation done, concatening catalogs")
 
         # Concatenate output catalog together
         calib_cat_paths = [smphot_stars_folder.joinpath("smphot_stars_cat_{}.list".format(i)) for i in range(n)]
@@ -185,11 +191,12 @@ def smphot_stars(band_path, ztfname, filtercode, logger, args):
 
         calib_cat_table = ListTable(calib_cat_header, calib_cat_df)
         calib_cat_table.write_to(smphot_stars_cat_path)
+        logger.info("Done")
 
     else:
         # Run on a single worker
+        logger.info("Running mklc onto the main worker")
         run_and_log(["mklc", "-t", band_path.joinpath("mappings"), "-O", smphot_stars_folder, "-v", driver_path, "-o", smphot_stars_cat_path, '-c', stars_calib_cat_path, "-f", "1"], logger=logger)
-
 
 
 class ConstantStarModel:

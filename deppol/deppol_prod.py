@@ -48,7 +48,7 @@ source ~/pyenv/bin/activate
 export PYTHONPATH=${{PYTHONPATH}}:~/phdev/tools
 export PATH=${{PATH}}:~/phdev/deppol
 ulimit -n 4096
-OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 deppol --ztfname={} --filtercode={} -j {j} --wd={} --func={} --lc-folder=/sps/ztf/data/storage/scenemodeling/lc --quadrant-workspace=/dev/shm/llacroix --rm-intermediates --scratch=${{TMPDIR}}/llacroix --astro-degree=5 --max-seeing=4. --discard-calibrated --astro-min-mag=-10. --dump-node-info --from-scratch --dump-timings --log-overwrite --parallel-reduce
+OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 deppol --ztfname={} --filtercode={} -j {j} --wd={} --func={} --lc-folder=/sps/ztf/data/storage/scenemodeling/lc --quadrant-workspace=/dev/shm/llacroix --rm-intermediates --scratch=${{TMPDIR}}/llacroix --astro-degree=5 --max-seeing=4. --discard-calibrated --astro-min-mag=-10. --dump-node-info --from-scratch --dump-timings --parallel-reduce
 echo "done" > {status_path}
 """.format(ztfname, filtercode, wd, ",".join(func), status_path=run_folder.joinpath("{}/status/{}-{}".format(run_name, ztfname, filtercode)), j=args.j)
             with open(batch_folder.joinpath("{}-{}.sh".format(ztfname, filtercode)), 'w') as f:
@@ -72,6 +72,8 @@ def schedule_jobs(run_folder, run_name):
     scheduled_jobs = dict([(scheduled_job.split(",")[0][4:], scheduled_job.split(",")[1]) for scheduled_job in scheduled_jobs_raw if scheduled_job[:4] == "smp_"])
 
     batches = list(batch_folder.glob("*.sh"))
+    #batches = [pathlib.Path("/sps/ztf/data/storage/scenemodeling/runs/dr0_run_0/batches/ZTF20actrwym-zg.sh")]
+
     for batch in batches:
         batch_name = batch.name.split(".")[0]
         if batch_name in scheduled_jobs.keys():
@@ -86,6 +88,7 @@ def schedule_jobs(run_folder, run_name):
 
         cmd = ["sbatch", "--ntasks={}".format(args.j),
                "-D", "{}".format(run_folder.joinpath(run_name)),
+               # "-D", "{}".format(log_folder),
                "-J", "smp_{}".format(batch_name),
                "-o", log_folder.joinpath("log_{}".format(batch_name)),
                "-A", "ztf",
@@ -115,6 +118,7 @@ if __name__ == '__main__':
     argparser.add_argument('--run-name', type=str, required=True)
     argparser.add_argument('-j', default=1, type=int)
     argparser.add_argument('--purge-status', action='store_true')
+    argparser.add_argument('--purge', action='store_true')
 
     args = argparser.parse_args()
 
@@ -127,7 +131,6 @@ if __name__ == '__main__':
         status_folder = args.run_folder.joinpath("{}/status".format(args.run_name))
         if status_folder.exists():
             shutil.rmtree(status_folder)
-
 
     if not args.run_folder.exists():
         sys.exit("Run folder does not exist!")
