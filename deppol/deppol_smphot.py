@@ -140,6 +140,8 @@ def smphot_stars(band_path, ztfname, filtercode, logger, args):
     gaia_stars_df = pd.read_parquet(band_path.joinpath("gaia_stars.parquet"))
 
     calib_df = gaia_stars_df[['ra', 'dec', 'gmag', 'rpmag', 'e_rpmag', 'e_gmag']].rename(columns={'rpmag': 'magr', 'e_rpmag': 'emagr', 'gmag': 'magg', 'e_gmag': 'emagg'})
+    calib_df['magi'] = calib_df['magr']
+    calib_df['emagi'] = calib_df['emagr']
     calib_df.insert(2, column='n', value=1)
     calib_df['ristar'] = list(range(len(gaia_stars_df)))
 

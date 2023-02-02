@@ -931,11 +931,9 @@ def filter_astro_chi2(band_path, ztfname, filtercode, logger, args):
 def filter_seeing(band_path, ztfname, filtercode, logger, args):
     from utils import get_header_from_quadrant_path
     from deppol_utils import quadrants_from_band_path, noprocess_quadrants
+    from deppol_misc import run_and_log
 
-    print(band_path)
     quadrant_paths = quadrants_from_band_path(band_path, logger)
-    print(quadrant_paths)
-
     flagged_count = 0
     quadrants_to_flag = []
     noprocess = noprocess_quadrants(band_path)
@@ -947,7 +945,8 @@ def filter_seeing(band_path, ztfname, filtercode, logger, args):
             seeing = get_header_from_quadrant_path(quadrant_path)['SEEING']
         except FileNotFoundError as e:
             logger.error(e)
-            logger.error(quadrant_path)
+            logger.error("Folder content:")
+            run_and_log(["ls", "-lah", quadrant_path], logger)
             continue
 
         if seeing > args.max_seeing:

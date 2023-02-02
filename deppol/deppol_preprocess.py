@@ -5,11 +5,13 @@ from deppol_utils import run_and_log
 
 def load_calibrated(quadrant_path, ztfname, filtercode, logger, args):
     from ztfquery.io import get_file
+    from shutil import copyfile
     from utils import get_header_from_quadrant_path
+    import pathlib
 
     logger.info("Retrieving science image...")
     if not args.use_raw:
-        image_path = get_file(quadrant_path.name + "_sciimg.fits", downloadit=False)
+        image_path = pathlib.Path(get_file(quadrant_path.name + "_sciimg.fits", downloadit=False))
 
     logger.info("Located at {}".format(image_path))
     if not image_path.exists():
@@ -28,11 +30,11 @@ def make_catalog(quadrant_path, ztfname, filtercode, logger, args):
     from ztfquery.io import get_file
     from shutil import copyfile
     from utils import get_header_from_quadrant_path
-    import pickle
+    import pathlib
 
     logger.info("Retrieving science image...")
     if not args.use_raw:
-        image_path = get_file(quadrant_path.name + "_sciimg.fits", downloadit=False)
+        image_path = pathlib.Path(get_file(quadrant_path.name + "_sciimg.fits", downloadit=False))
 
     logger.info("Located at {}".format(image_path))
     if not image_path.exists():

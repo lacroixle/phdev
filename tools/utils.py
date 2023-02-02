@@ -158,6 +158,22 @@ def get_cat_size(catalog_filename):
     return len(cat)
 
 
+def match_gaia_catalogs(quadrant1_path, quadrant2_path):
+    cat1_stars = pd.read_hdf(quadrant1_path.joinpath("matched_stars.hd5"), '/matched_stars')
+    cat1_gaia = pd.read_hdf(quadrant1_path.joinpath("matched_stars.hd5"), '/matched_gaia_stars')
+    cat2_stars = pd.read_hdf(quadrant2_path.joinpath("matched_stars.hd5"), '/matched_stars')
+    cat2_gaia = pd.read_hdf(quadrant2_path.joinpath("matched_stars.hd5"), '/matched_gaia_stars')
+
+    cat1_stars.set_index(cat1_gaia['gaiaid'], inplace=True)
+    cat2_stars.set_index(cat2_gaia['gaiaid'], inplace=True)
+    cat1_gaia.set_index('gaiaid', inplace=True)
+    cat2_gaia.set_index('gaiaid', inplace=True)
+
+    indices = [idx for idx in cat1_stars.index if idx in cat2_stars.index]
+
+    return cat1_stars.loc[indices], cat2_stars.loc[indices], cat1_gaia.loc[indices]
+
+
 def apply_space_motion(ra, dec, pm_ra, pm_dec, refmjd, newmjd):
     reftime = Time(refmjd, format='mjd')
     newtime = Time(newmjd, format='mjd')
@@ -165,6 +181,7 @@ def apply_space_motion(ra, dec, pm_ra, pm_dec, refmjd, newmjd):
     coords = SkyCoord(ra*u.deg, dec*u.deg, pm_ra_cosdec=np.zeros_like(ra)*u.mas/u.year, pm_dec=np.zeros_like(ra)*u.mas/u.year, obstime=reftime)
     coords.apply_space_motion(newtime)
     return np.stack([coords.frame.data.lon.value, coords.frame.data.lat.value], axis=1)
+
 
 def get_wcs_from_quadrant(quadrant_path):
     with fits.open(quadrant_path.joinpath("calibrated.fits")) as hdul:

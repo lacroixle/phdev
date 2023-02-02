@@ -176,6 +176,7 @@ def _fit_astrometry(model, dp, logger):
     logger.info("Done. Elapsed time={}.".format(time.perf_counter()-start_time))
     return p
 
+
 def _filter_noisy(model, res_x, res_y, field, threshold, logger):
     """
     Filter elements of defined set whose partial Chi2 is over some threshold
@@ -220,6 +221,7 @@ def astrometry_fit(band_path, ztfname, filtercode, logger, args):
     # Load data
     matched_stars_df = pd.read_parquet(band_path.joinpath("matched_stars.parquet"))
     logger.info("Before cuts, N={}".format(len(matched_stars_df)))
+    logger.info(" Total quadrants={}".format(len(set(matched_stars_df['quadrant']))))
 
     # Do cut in magnitude
     matched_stars_df = matched_stars_df.loc[matched_stars_df['mag'] < args.astro_min_mag]
@@ -228,6 +230,7 @@ def astrometry_fit(band_path, ztfname, filtercode, logger, args):
     matched_stars_df = matched_stars_df.loc[matched_stars_df['seeing'] <= 4.]
 
     logger.info("After cuts, N={}".format(len(matched_stars_df)))
+    logger.info(" Total quadrants={}".format(len(set(matched_stars_df['quadrant']))))
     # Compute parallactic angle
     parallactic_angle_sin = np.cos(np.deg2rad(ztf_latitude))*np.sin(np.deg2rad(matched_stars_df['ha']))/np.sin(np.deg2rad(matched_stars_df['z']))
     parallactic_angle_cos = np.sqrt(1.-parallactic_angle_sin**2)
