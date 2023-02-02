@@ -170,6 +170,7 @@ def map_op(quadrant, wd, ztfname, filtercode, func, args):
 def reduce_op(wd, ztfname, filtercode, func, save_stats, args):
     folder = wd.joinpath("{}/{}".format(ztfname, filtercode))
 
+    print(folder)
     # If we want to agregate run statistics on the previous map operation
     # if save_stats and results is not None and any(results) and func != 'clean':
     #     results_df = pd.DataFrame([result for result in results if result is not None], columns=['result', 'time_end', 'time_start', 'worker_id'])
@@ -178,33 +179,39 @@ def reduce_op(wd, ztfname, filtercode, func, save_stats, args):
     if not 'reduce' in poloka_func[func].keys():
         return
 
-    logger = logging.getLogger("{}-{}".format(ztfname, filtercode))
-    if not logger.handlers:
-        logger_mode = 'a'
-        if args.log_overwrite:
-            logger_mode = 'w'
+    if func != 'clean':
+        logger = logging.getLogger("{}-{}".format(ztfname, filtercode))
+        if not logger.handlers:
+            logger_mode = 'a'
+            if args.log_overwrite:
+                logger_mode = 'w'
 
-        logger.addHandler(logging.FileHandler(folder.joinpath("output.log"), mode=logger_mode))
-        logger.addHandler(logging.StreamHandler())
-        logger.setLevel(logging.INFO)
+            logger.addHandler(logging.FileHandler(folder.joinpath("output.log"), mode=logger_mode))
+            logger.addHandler(logging.StreamHandler())
+            logger.setLevel(logging.INFO)
 
-    logger.info("")
-    logger.info("="*80)
-    logger.info("{}-{}".format(ztfname, filtercode))
-    logger.info(datetime.datetime.today())
-    logger.info("Running reduction {}".format(func))
+        logger.info("")
+        logger.info("="*80)
+        logger.info("{}-{}".format(ztfname, filtercode))
+        logger.info(datetime.datetime.today())
+        logger.info("Running reduction {}".format(func))
 
     start_time = time.perf_counter()
     try:
         result = poloka_func[func]['reduce'](folder, ztfname, filtercode, logger, args)
     except Exception as e:
-        logger.error("{}-{}: {}".format(ztfname, filtercode, func))
-        logger.error(traceback.format_exc())
+        if func != 'clean':
+            logger.error("{}-{}: {}".format(ztfname, filtercode, func))
+            logger.error(traceback.format_exc())
+        else:
+            print("{}-{}: {}".format(ztfname, filtercode, func))
+            traceback.print_exc()
     finally:
-        logger.info("="*80)
+        if func != 'clean':
+            logger.info("="*80)
 
     end_time = time.perf_counter()
-    if args.dump_timings:
+    if args.dump_timings and func != 'clean':
         dump_timings(start_time, end_time, folder.joinpath("timings_{}".format(func)))
 
 
@@ -331,9 +338,6 @@ if __name__ == '__main__':
     map_count = 0
     reduction_count = 0
     map_count = 0
-    wd = args.wd
-    if args.scratch:
-        wd = args.scratch
 
     # Rename compute functions to get better reporting on the dask dashboard
     def _rename_op(op, func):
@@ -360,6 +364,10 @@ if __name__ == '__main__':
             sn_job = None
             last_job = None
             for func in funcs:
+                wd = args.wd
+                if args.scratch and func != 'clean':
+                    wd = args.scratch
+
                 print("Pipeline function \"{}\". ".format(func), flush=True, end="")
                 map_run = False
                 if 'map' in poloka_func[func].keys() and not args.no_map:
