@@ -136,10 +136,16 @@ def map_op(quadrant, wd, ztfname, filtercode, func, args):
         print("{}-{}: {}".format(ztfname, filtercode, func))
         print(e)
         print(traceback.format_exc())
+        result = False
     finally:
         end_time = time.perf_counter()
         if func != 'clean':
             logger.info("End of func \"{}\".".format(func))
+
+            if result == 0:
+                quadrant_path.joinpath("{}.success".format(func))
+            else:
+                quadrant_path.joinpath("{}.fail".format(func))
 
             # Remove intermediate files if any
             if args.rm_intermediates and 'rm' in poloka_func[func].keys():
@@ -170,11 +176,17 @@ def map_op(quadrant, wd, ztfname, filtercode, func, args):
 def reduce_op(wd, ztfname, filtercode, func, save_stats, args):
     folder = wd.joinpath("{}/{}".format(ztfname, filtercode))
 
-    print(folder)
     # If we want to agregate run statistics on the previous map operation
     # if save_stats and results is not None and any(results) and func != 'clean':
     #     results_df = pd.DataFrame([result for result in results if result is not None], columns=['result', 'time_end', 'time_start', 'worker_id'])
     #     results_df.to_csv(folder.joinpath("results_{}.csv".format(func)), index=False)
+
+    # if args.dump_timings:
+    #     quadrants = quadrants_from_band_path(wd, None)
+    #     timings = [(quadrant.name, load_timings(quadrant.joinpath("timings_{}".format(func)))) for quadrant in quadrants]
+    #     timings_df = pd.DataFrame(timings, columns=['quadrant', 'start', 'end', 'elapsed'])
+
+    #     pass
 
     if not 'reduce' in poloka_func[func].keys():
         return
@@ -195,6 +207,8 @@ def reduce_op(wd, ztfname, filtercode, func, save_stats, args):
         logger.info("{}-{}".format(ztfname, filtercode))
         logger.info(datetime.datetime.today())
         logger.info("Running reduction {}".format(func))
+    else:
+        logger = None
 
     start_time = time.perf_counter()
     try:

@@ -459,7 +459,6 @@ def seeing_study(band_path, ztfname, filtercode, logger, args):
             'momenty2': 'psfstars',
             'momentxy': 'psfstars'}
 
-
     if not band_path.joinpath("seeings.pickle").exists() or args.from_scratch:
         vals = {}
 
@@ -930,8 +929,7 @@ def filter_astro_chi2(band_path, ztfname, filtercode, logger, args):
 
 def filter_seeing(band_path, ztfname, filtercode, logger, args):
     from utils import get_header_from_quadrant_path
-    from deppol_utils import quadrants_from_band_path, noprocess_quadrants
-    from deppol_misc import run_and_log
+    from deppol_utils import quadrants_from_band_path, noprocess_quadrants, run_and_log
 
     quadrant_paths = quadrants_from_band_path(band_path, logger)
     flagged_count = 0

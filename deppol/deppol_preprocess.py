@@ -25,6 +25,8 @@ def load_calibrated(quadrant_path, ztfname, filtercode, logger, args):
     with open(quadrant_path.joinpath("calibrated_hdr"), 'wb') as f:
         hdr.tofile(f, sep='\n', overwrite=True, padding=False)
 
+    return True
+
 
 def make_catalog(quadrant_path, ztfname, filtercode, logger, args):
     from ztfquery.io import get_file
@@ -65,20 +67,22 @@ def mkcat2(quadrant_path, ztfname, filtercode, logger, args):
     from utils import read_list
 
     run_and_log(["mkcat2", quadrant_path, "-o"], logger)
-    if quadrant_path.joinpath("standalone_stars.list").exists():
-        se_list = read_list(quadrant_path.joinpath("aperse.list"))
-        plt.plot(np.sqrt(se_list[1]['gmxx']), np.sqrt(se_list[1]['gmyy']), '.')
-        plt.xlabel("$\sqrt{M_g^{xx}}$")
-        plt.ylabel("$\sqrt{M_g^{yy}}$")
-        plt.grid()
-        plt.xlim(0., 10.)
-        plt.ylim(0., 10.)
-        plt.axis('equal')
-        plt.savefig(quadrant_path.joinpath("moments_plan.png"), dpi=300.)
-        plt.close()
-        return True
-    else:
-        return False
+    # if quadrant_path.joinpath("standalone_stars.list").exists():
+    #     se_list = read_list(quadrant_path.joinpath("aperse.list"))
+    #     plt.plot(np.sqrt(se_list[1]['gmxx']), np.sqrt(se_list[1]['gmyy']), '.')
+    #     plt.xlabel("$\sqrt{M_g^{xx}}$")
+    #     plt.ylabel("$\sqrt{M_g^{yy}}$")
+    #     plt.grid()
+    #     plt.xlim(0., 10.)
+    #     plt.ylim(0., 10.)
+    #     plt.axis('equal')
+    #     plt.savefig(quadrant_path.joinpath("moments_plan.png"), dpi=300.)
+    #     plt.close()
+    #     return True
+    # else:
+    #     return False
+
+    return quadrant_path.joinpath("standalone_stars.list").exists()
 
 
 mkcat2_rm = []
@@ -108,10 +112,7 @@ def preprocess(quadrant_path, ztfname, filtercode, logger, args):
     if not mkcat2(quadrant_path, logger, args):
         return False
 
-    if not makepsf(quadrant_path, logger, args):
-        return False
-
-    return True
+    return makepsf(quadrant_path, logger, args):
 
 
 pipeline_rm = make_catalog_rm + mkcat2_rm + makepsf_rm

@@ -31,6 +31,11 @@ def dump_timings(start_time, end_time, output_file):
         f.write(json.dumps({'start': start_time, 'end': end_time, 'elapsed': end_time-start_time}))
 
 
+def load_timings(filename):
+    with open(filename, 'r') as f:
+        return json.load(f)
+
+
 def ztfnames_from_string(ztfname):
     if ztfname is not None:
         if ztfname.stem == str(ztfname):
