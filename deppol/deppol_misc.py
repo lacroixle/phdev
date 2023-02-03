@@ -538,7 +538,7 @@ def match_gaia(quadrant_path, ztfname, filtercode, logger, args):
     from astropy.coordinates import SkyCoord
 
     if not quadrant_path.joinpath("psfstars.list").exists():
-        return
+        return False
 
     _, stars_df = read_list(quadrant_path.joinpath("psfstars.list"))
     wcs = get_wcs_from_quadrant(quadrant_path)
@@ -576,6 +576,8 @@ def match_gaia(quadrant_path, ztfname, filtercode, logger, args):
     with pd.HDFStore(quadrant_path.joinpath("matched_stars.hd5"), 'w') as hdfstore:
         hdfstore.put('matched_gaia_stars', matched_gaia_stars_df)
         hdfstore.put('matched_stars', matched_stars_df)
+
+    return True
 
 
 def match_gaia_reduce(band_path, ztfname, filtercode, logger, args):
@@ -770,7 +772,8 @@ def stats_reduce(band_path, ztfname, filtercode, logger, args):
 
     ax = plt.axes()
     plt.suptitle("Seeing distribution (computed by the ZTF pipeline)")
-    plt.hist(seeings, bins=int(len(seeings)/4), color='xkcd:dark grey', histtype='step')
+    #plt.hist(seeings, bins=int(len(seeings)/4), color='xkcd:dark grey', histtype='step')
+    plt.hist(seeings, bins='auto', color='xkcd:dark grey', histtype='step')
     if args.max_seeing:
         removed_quadrants = len(list(filter(lambda x: x >= args.max_seeing, seeings)))
         plt.axvline(args.max_seeing)
@@ -800,6 +803,9 @@ def stats_reduce(band_path, ztfname, filtercode, logger, args):
         filtered_psfstars_count = len(list(filter(lambda x: x < args.min_psfstars, psfstars_counts)))
         plt.axhline(args.min_psfstars)
         plt.text(0.2, 0.1, "{:.02f}% quadrants ({}) with PSF stars count < {}".format(filtered_psfstars_count/len(quadrant_paths)*100., filtered_psfstars_count, args.min_psfstars), transform=ax.transAxes)
+
+    if args.max_seeing:
+        plt.axvline(args.max_seeing)
 
     plt.grid()
     plt.xlabel("Seeing FWHM [pixel]")
@@ -864,9 +870,8 @@ def clean_reduce(band_path, ztfname, filtercode, logger, args):
     # Delete output folders
     # We delete everything but the quadrant folders
     folders_to_keep = list(band_path.glob("ztf_*"))
-    folders_to_delete = [folder for folder in list(band_path.glob("*")) if (folder not in folders_to_keep) and folder.is_file()]
-    # folders_to_delete = ["astrometry", "photometry", "mappings", "moments", "psf_residuals", "smphot_output", "pmfit", "pmfit_plot"]
-    print(folders_to_delete)
+    folders_to_delete = [folder for folder in list(band_path.glob("*")) if (folder not in folders_to_keep) or folder.is_file()]
+
     [rmtree(band_path.joinpath(folder), ignore_errors=True) for folder in folders_to_delete]
 
 

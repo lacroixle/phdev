@@ -112,7 +112,7 @@ def preprocess(quadrant_path, ztfname, filtercode, logger, args):
     if not mkcat2(quadrant_path, logger, args):
         return False
 
-    return makepsf(quadrant_path, logger, args):
+    return makepsf(quadrant_path, logger, args)
 
 
 pipeline_rm = make_catalog_rm + mkcat2_rm + makepsf_rm

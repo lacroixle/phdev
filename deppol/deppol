@@ -22,7 +22,7 @@ from dask import config as cfg
 
 cfg.set({'distributed.scheduler.worker-ttl': None})
 
-from deppol_utils import run_and_log, dump_timings, quadrants_from_band_path
+from deppol_utils import run_and_log, dump_timings, dump_timings_reduce, load_timings, quadrants_from_band_path
 
 
 ztf_filtercodes = ['zg', 'zr', 'zi', 'all']
@@ -142,10 +142,10 @@ def map_op(quadrant, wd, ztfname, filtercode, func, args):
         if func != 'clean':
             logger.info("End of func \"{}\".".format(func))
 
-            if result == 0:
-                quadrant_path.joinpath("{}.success".format(func))
+            if result:
+                quadrant_path.joinpath("{}.success".format(func)).touch()
             else:
-                quadrant_path.joinpath("{}.fail".format(func))
+                quadrant_path.joinpath("{}.fail".format(func)).touch()
 
             # Remove intermediate files if any
             if args.rm_intermediates and 'rm' in poloka_func[func].keys():
@@ -170,35 +170,26 @@ def map_op(quadrant, wd, ztfname, filtercode, func, args):
 
             [handler.close() for handler in logger.handlers] # Needed to flush last msg
 
-    # return result, time.perf_counter(), start_time, get_worker().id
-
 
 def reduce_op(wd, ztfname, filtercode, func, save_stats, args):
-    folder = wd.joinpath("{}/{}".format(ztfname, filtercode))
-
+    band_path = wd.joinpath("{}/{}".format(ztfname, filtercode))
     # If we want to agregate run statistics on the previous map operation
     # if save_stats and results is not None and any(results) and func != 'clean':
     #     results_df = pd.DataFrame([result for result in results if result is not None], columns=['result', 'time_end', 'time_start', 'worker_id'])
     #     results_df.to_csv(folder.joinpath("results_{}.csv".format(func)), index=False)
 
-    # if args.dump_timings:
-    #     quadrants = quadrants_from_band_path(wd, None)
-    #     timings = [(quadrant.name, load_timings(quadrant.joinpath("timings_{}".format(func)))) for quadrant in quadrants]
-    #     timings_df = pd.DataFrame(timings, columns=['quadrant', 'start', 'end', 'elapsed'])
-
-    #     pass
-
-    if not 'reduce' in poloka_func[func].keys():
-        return
-
     if func != 'clean':
+        pass
+
+    start_time = time.perf_counter()
+    if func != 'clean' and 'reduce' in poloka_func[func].keys():
         logger = logging.getLogger("{}-{}".format(ztfname, filtercode))
         if not logger.handlers:
             logger_mode = 'a'
             if args.log_overwrite:
                 logger_mode = 'w'
 
-            logger.addHandler(logging.FileHandler(folder.joinpath("output.log"), mode=logger_mode))
+            logger.addHandler(logging.FileHandler(band_path.joinpath("output.log"), mode=logger_mode))
             logger.addHandler(logging.StreamHandler())
             logger.setLevel(logging.INFO)
 
@@ -210,23 +201,41 @@ def reduce_op(wd, ztfname, filtercode, func, save_stats, args):
     else:
         logger = None
 
-    start_time = time.perf_counter()
-    try:
-        result = poloka_func[func]['reduce'](folder, ztfname, filtercode, logger, args)
-    except Exception as e:
-        if func != 'clean':
-            logger.error("{}-{}: {}".format(ztfname, filtercode, func))
-            logger.error(traceback.format_exc())
-        else:
-            print("{}-{}: {}".format(ztfname, filtercode, func))
-            traceback.print_exc()
-    finally:
-        if func != 'clean':
-            logger.info("="*80)
+    if 'reduce' in poloka_func[func].keys():
+        try:
+            result = poloka_func[func]['reduce'](band_path, ztfname, filtercode, logger, args)
+        except Exception as e:
+            if func != 'clean':
+                logger.error("{}-{}: {}".format(ztfname, filtercode, func))
+                logger.error(traceback.format_exc())
+            else:
+                print("{}-{}: {}".format(ztfname, filtercode, func))
+                traceback.print_exc()
+        finally:
+            if func != 'clean':
+                logger.info("="*80)
+            else:
+                return 0
 
     end_time = time.perf_counter()
     if args.dump_timings and func != 'clean':
-        dump_timings(start_time, end_time, folder.joinpath("timings_{}".format(func)))
+        map_start_time = 0.
+        map_end_time = 0.
+        if 'map' in poloka_func[func].keys():
+            quadrants = quadrants_from_band_path(band_path, None)
+            timings = [load_timings(quadrant.joinpath("timings_{}".format(func))) for quadrant in quadrants]
+            timings_df = pd.DataFrame.from_records(timings)
+            timings_df['quadrant'] = list(map(lambda x: x.name, quadrants))
+            timings_df.set_index('quadrant', inplace=True)
+
+            map_start_time = timings_df['start'].min()
+            map_end_time = timings_df['end'].max()
+
+        dump_timings_reduce({'map': map_start_time, 'reduce': start_time},
+                            {'map': map_end_time, 'reduce': end_time},
+                            band_path.joinpath("timings_{}".format(func)))
+
+    return 0
 
 
 if __name__ == '__main__':
@@ -243,7 +252,6 @@ if __name__ == '__main__':
     argparser.add_argument('--from-scratch', action='store_true', help="When using scratch, does not transfer from distant directory first.")
     argparser.add_argument('--quadrant-workspace', type=pathlib.Path, help="Quadrant workspace directory to use instead of the one given by --wd. Useful to acceleratre IOs by moving onto a SSD disk or in memory mapped filesystem.")
     argparser.add_argument('--lc-folder', dest='lc_folder', type=pathlib.Path)
-    argparser.add_argument('--log-results', action='store_true', default=True)
     argparser.add_argument('--astro-degree', type=int, default=3, help="Degree of ref->quadrant polynomial transformations for relative astrometric.")
     argparser.add_argument('--dump-timings', action='store_true')
     argparser.add_argument('--rm-intermediates', action='store_true', help="Remove intermediate files generated by Poloka.")
@@ -402,7 +410,7 @@ if __name__ == '__main__':
                 else:
                     map_job = None
 
-                if ('reduce' in poloka_func[func].keys() or args.log_results) and not args.no_reduce:
+                if ('reduce' in poloka_func[func].keys() or args.dump_timings) and not args.no_reduce:
                     print("(building reduce job)", flush=True, end="")
                     reduce_job = delayed(_rename_op(reduce_op, func + "_reduce"))(wd, ztfname, filtercode, func, True, args)
                     print("(binding)", flush=True, end="")
@@ -460,7 +468,11 @@ if __name__ == '__main__':
         fjobs = client.compute(jobs)
         wait(fjobs)
 
-    print("Done. Elapsed time={}".format(time.perf_counter() - start_time))
+    end_time = time.perf_counter()
+
+    print("Done. Elapsed time={}".format(end_time - start_time))
+    if len(ztfnames) == 1 and len(filtercodes) == 1:
+        dump_timings(start_time, end_time, args.wd.joinpath("{}/{}/timings_total".format(ztfnames[0], filtercodes[0])))
 
     if not args.synchronous_compute:
         client.close(30)
