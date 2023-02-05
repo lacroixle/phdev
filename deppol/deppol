@@ -22,7 +22,7 @@ from dask import config as cfg
 
 cfg.set({'distributed.scheduler.worker-ttl': None})
 
-from deppol_utils import run_and_log, dump_timings, dump_timings_reduce, load_timings, quadrants_from_band_path
+from deppol_utils import run_and_log, dump_timings, dump_timings_reduce, load_timings, quadrants_from_band_path, noprocess_quadrants
 
 
 ztf_filtercodes = ['zg', 'zr', 'zi', 'all']
@@ -101,9 +101,13 @@ def dump_node_config(args):
 def map_op(quadrant, wd, ztfname, filtercode, func, args):
     start_time = time.perf_counter()
     quadrant_path = wd.joinpath("{}/{}/{}".format(ztfname, filtercode, quadrant))
+    band_path = wd.joinpath("{}/{}".format(ztfname, filtercode))
 
     logger = None
     if func != 'clean':
+        if quadrant in noprocess_quadrants(band_path):
+            return
+
         logger = logging.getLogger(quadrant)
         logger.setLevel(logging.INFO)
 
@@ -205,6 +209,7 @@ def reduce_op(wd, ztfname, filtercode, func, save_stats, args):
         try:
             result = poloka_func[func]['reduce'](band_path, ztfname, filtercode, logger, args)
         except Exception as e:
+            result = False
             if func != 'clean':
                 logger.error("{}-{}: {}".format(ztfname, filtercode, func))
                 logger.error(traceback.format_exc())
@@ -212,6 +217,11 @@ def reduce_op(wd, ztfname, filtercode, func, save_stats, args):
                 print("{}-{}: {}".format(ztfname, filtercode, func))
                 traceback.print_exc()
         finally:
+            if result:
+                band_path.joinpath("{}.success".format(func)).touch()
+            else:
+                band_path.joinpath("{}.fail".format(func)).touch()
+
             if func != 'clean':
                 logger.info("="*80)
             else:
@@ -222,8 +232,8 @@ def reduce_op(wd, ztfname, filtercode, func, save_stats, args):
         map_start_time = 0.
         map_end_time = 0.
         if 'map' in poloka_func[func].keys():
-            quadrants = quadrants_from_band_path(band_path, None)
-            timings = [load_timings(quadrant.joinpath("timings_{}".format(func))) for quadrant in quadrants]
+            quadrants = quadrants_from_band_path(band_path, None, check_files=["{}.success".format(func)])
+            timings = [load_timings(quadrant.joinpath("timings_{}".format(func))) for quadrant in quadrants if quadrant.joinpath("{}.success".format(func)).exists()]
             timings_df = pd.DataFrame.from_records(timings)
             timings_df['quadrant'] = list(map(lambda x: x.name, quadrants))
             timings_df.set_index('quadrant', inplace=True)
@@ -377,7 +387,7 @@ if __name__ == '__main__':
                 print("No quadrant found.")
                 continue
 
-            quadrants = quadrants_from_band_path(band_path, logger, paths=False)
+            quadrants = quadrants_from_band_path(band_path, logger, paths=False, ignore_noprocess=True)
             print("{} quadrants found.".format(len(quadrants)))
 
             sn_jobs = []

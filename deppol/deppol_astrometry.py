@@ -434,6 +434,8 @@ def astrometry_fit(band_path, ztfname, filtercode, logger, args):
     with open(save_folder_path.joinpath("models.pickle"), 'wb') as f:
         pickle.dump({'tp2px': tp2px_model, 'ref2tp': ref2tp_model, 'ref2px': ref2px_model, 'dp': dp}, f)
 
+    return True
+
 
 def astrometry_fit_plot(band_path, ztfname, filtercode, logger, args):
     import pickle

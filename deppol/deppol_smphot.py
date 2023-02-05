@@ -80,6 +80,8 @@ def reference_quadrant(band_path, ztfname, filtercode, logger, args):
     with open(band_path.joinpath("reference_quadrant"), 'w') as f:
         f.write(str(idxmin.name))
 
+    return True
+
 
 def smphot(band_path, ztfname, filtercode, logger, args):
     from deppol_utils import run_and_log
@@ -89,9 +91,9 @@ def smphot(band_path, ztfname, filtercode, logger, args):
     smphot_output = band_path.joinpath("smphot_output")
     smphot_output.mkdir(exist_ok=True)
 
-    run_and_log(["mklc", "-t", band_path.joinpath("mappings"), "-O", smphot_output, "-v", band_path.joinpath("{}_driver_{}".format(ztfname, filtercode))], logger=logger)
+    returncode = run_and_log(["mklc", "-t", band_path.joinpath("mappings"), "-O", smphot_output, "-v", band_path.joinpath("{}_driver_{}".format(ztfname, filtercode))], logger=logger)
 
-    return True
+    return (returncode == 0)
 
 
 def smphot_plot(band_path, ztfname, filtercode, logger, args):
@@ -120,8 +122,8 @@ def smphot_plot(band_path, ztfname, filtercode, logger, args):
 
 def _run_star_mklc(i, smphot_stars_folder, mapping_folder, driver_path):
     #from deppol_utils import run_and_log
-    stars_calib_cat_path = smphot_stars_folder.joinpath("calib_stars_cat_{}.list".format(i))
-    smphot_stars_cat_path = smphot_stars_folder.joinpath("smphot_stars_cat_{}.list".format(i))
+    stars_calib_cat_path = smphot_stars_folder.joinpath("mklc_{i}/calib_stars_cat_{i}.list".format(i=i))
+    smphot_stars_cat_path = smphot_stars_folder.joinpath("mklc_{i}/smphot_stars_cat_{i}.list".format(i=i))
     _, return_log = run_and_log(["mklc", "-t", mapping_folder, "-O", smphot_stars_folder, "-v", driver_path, "-o", smphot_stars_cat_path, '-c', stars_calib_cat_path, "-f", "1"], return_log=True)
 
     with open(smphot_stars_folder.joinpath("mklc_log_{}.log".format(i)), 'w') as f:
@@ -154,6 +156,7 @@ def smphot_stars(band_path, ztfname, filtercode, logger, args):
 
     logger.info("Total star count: {}".format(len(calib_df)))
     calib_df = calib_df.iloc[idxc]
+    calib_df = calib_df.iloc[:50]
     logger.info("Total star count in a 0.35 deg radius around SN: {}".format(len(calib_df)))
     calib_table = ListTable(None, calib_df)
 
@@ -170,13 +173,15 @@ def smphot_stars(band_path, ztfname, filtercode, logger, args):
     if args.parallel_reduce:
         # If parallel reduce enable, split up the catalog
         logger.info("Running splitted mklc using {} workers".format(args.n_jobs))
-        n = int(len(calib_df)/4)
+        n = int(len(calib_df)/3)
         logger.info("Splitting into {}".format(n))
         calib_dfs = np.array_split(calib_df, n)
         jobs = []
         for i, calib_df in enumerate(calib_dfs):
+            calib_stars_folder = smphot_stars_folder.joinpath("mklc_{}".format(i))
+            calib_stars_folder.mkdir(exists_ok=True)
             calib_table = ListTable(None, calib_df)
-            calib_table.write_to(smphot_stars_folder.joinpath("calib_stars_cat_{}.list".format(i)))
+            calib_table.write_to(calib_stars_folder.joinpath("calib_stars_cat_{}.list".format(i)))
 
         logger.info("Submitting into scheduler")
         jobs = [delayed(_run_star_mklc)(i, smphot_stars_folder, mapping_folder, driver_path) for i in list(range(n))]
@@ -184,7 +189,8 @@ def smphot_stars(band_path, ztfname, filtercode, logger, args):
         logger.info("Computation done, concatening catalogs")
 
         # Concatenate output catalog together
-        calib_cat_paths = [smphot_stars_folder.joinpath("smphot_stars_cat_{}.list".format(i)) for i in range(n)]
+        #calib_cat_paths = [smphot_stars_folder.joinpath("smphot_stars_cat_{}.list".format(i)) for i in range(n)]
+        calib_cat_paths = list(smphot_stars_folder.glob("smphot_stars_cat_*.list"))
         calib_cat_tables = [ListTable.from_filename(calib_cat_path) for calib_cat_path in calib_cat_paths]
 
         calib_cat_df = pd.concat([calib_cat_table.df for calib_cat_table in calib_cat_tables])

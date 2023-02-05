@@ -170,6 +170,8 @@ def photometry_fit(band_path, ztfname, filtercode, logger, args):
     logger.info("Computing photometric ratios")
     _dump_photoratios(new_model, y_new_model, get_ref_quadrant_from_band_folder(band_path), band_path.joinpath("mappings"))
 
+    return True
+
 
 def photometry_fit_plot(band_path, ztfname, filtercode, logger, args):
     import pickle

@@ -692,6 +692,8 @@ def match_gaia_reduce(band_path, ztfname, filtercode, logger, args):
 
     gaia_stars_df.to_parquet(band_path.joinpath("gaia_stars.parquet"))
 
+    return True
+
 
 # Extract data from standalone stars and plot several distributions
 def stats(quadrant_path, ztfname, filtercode, logger, args):
@@ -905,6 +907,8 @@ def filter_psfstars_count(band_path, ztfname, filtercode, logger, args):
     logger.info("{} quadrants flagged as having PSF stars count <= {}.".format(flagged_count, args.min_psfstars))
     logger.info("{} quadrants added to the noprocess list.".format(len(quadrants_to_flag)))
 
+    return True
+
 
 def filter_astro_chi2(band_path, ztfname, filtercode, logger, args):
     from deppol_utils import noprocess_quadrants
@@ -950,6 +954,11 @@ def filter_seeing(band_path, ztfname, filtercode, logger, args):
             logger.error(e)
             logger.error("Folder content:")
             run_and_log(["ls", "-lah", quadrant_path], logger)
+            continue
+        except KeyError as e:
+            logger.error(quadrant)
+            logger.error(e)
+            quadrants_to_flag.append(quadrant)
             continue
 
         if seeing > args.max_seeing:
