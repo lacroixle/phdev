@@ -975,6 +975,8 @@ def filter_seeing(band_path, ztfname, filtercode, logger, args):
     logger.info("{} quadrants flagged as having seeing > {}.".format(flagged_count, args.max_seeing))
     logger.info("{} quadrants added to the noprocess list.".format(len(quadrants_to_flag)))
 
+    return True
+
 
 def discard_calibrated(quadrant_path, ztfname, filtercode, logger, args):
     pass

@@ -33,9 +33,14 @@ def dump_timings(start_time, end_time, output_file):
 
 def dump_timings_reduce(start_times, end_times, output_file):
     with open(output_file, 'w') as f:
-        f.write(json.dumps({'map': {'start': start_times['map'], 'end': end_times['map'], 'elapsed': end_times['map']-start_times['map']},
-                            'reduce': {'start': start_times['reduce'], 'end': end_times['reduce'], 'elapsed': end_times['reduce']-start_times['reduce']},
-                            'total': {'start': start_times['map'], 'end': end_times['reduce'], 'elapsed': end_times['reduce']-start_times['map']}}))
+        if start_times['map'] is None and end_times['map'] is None:
+            f.write(json.dumps({'map': {'start': 0., 'end': 0., 'elapsed': 0.},
+                                'reduce': {'start': start_times['reduce'], 'end': end_times['reduce'], 'elapsed': end_times['reduce']-start_times['reduce']},
+                                'total': {'start': start_times['reduce'], 'end': end_times['reduce'], 'elapsed': end_times['reduce']-start_times['reduce']}}))
+        else:
+            f.write(json.dumps({'map': {'start': start_times['map'], 'end': end_times['map'], 'elapsed': end_times['map']-start_times['map']},
+                                'reduce': {'start': start_times['reduce'], 'end': end_times['reduce'], 'elapsed': end_times['reduce']-start_times['reduce']},
+                                'total': {'start': start_times['map'], 'end': end_times['reduce'], 'elapsed': end_times['reduce']-start_times['map']}}))
 
 def load_timings(filename):
     with open(filename, 'r') as f:

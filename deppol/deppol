@@ -217,20 +217,21 @@ def reduce_op(wd, ztfname, filtercode, func, save_stats, args):
                 print("{}-{}: {}".format(ztfname, filtercode, func))
                 traceback.print_exc()
         finally:
-            if result:
-                band_path.joinpath("{}.success".format(func)).touch()
-            else:
-                band_path.joinpath("{}.fail".format(func)).touch()
 
             if func != 'clean':
                 logger.info("="*80)
+
+                if result:
+                    band_path.joinpath("{}.success".format(func)).touch()
+                else:
+                    band_path.joinpath("{}.fail".format(func)).touch()
             else:
                 return 0
 
     end_time = time.perf_counter()
     if args.dump_timings and func != 'clean':
-        map_start_time = 0.
-        map_end_time = 0.
+        map_start_time = None
+        map_end_time = None
         if 'map' in poloka_func[func].keys():
             quadrants = quadrants_from_band_path(band_path, None, check_files=["{}.success".format(func)])
             timings = [load_timings(quadrant.joinpath("timings_{}".format(func))) for quadrant in quadrants if quadrant.joinpath("{}.success".format(func)).exists()]

@@ -124,7 +124,7 @@ def _run_star_mklc(i, smphot_stars_folder, mapping_folder, driver_path):
     #from deppol_utils import run_and_log
     stars_calib_cat_path = smphot_stars_folder.joinpath("mklc_{i}/calib_stars_cat_{i}.list".format(i=i))
     smphot_stars_cat_path = smphot_stars_folder.joinpath("mklc_{i}/smphot_stars_cat_{i}.list".format(i=i))
-    _, return_log = run_and_log(["mklc", "-t", mapping_folder, "-O", smphot_stars_folder, "-v", driver_path, "-o", smphot_stars_cat_path, '-c', stars_calib_cat_path, "-f", "1"], return_log=True)
+    _, return_log = run_and_log(["mklc", "-t", mapping_folder, "-O", smphot_stars_folder.joinpath("mklc_{}".format(i)), "-v", driver_path, "-o", smphot_stars_cat_path, '-c', stars_calib_cat_path, "-f", "1"], return_log=True)
 
     with open(smphot_stars_folder.joinpath("mklc_log_{}.log".format(i)), 'w') as f:
         f.write(return_log)
@@ -179,7 +179,7 @@ def smphot_stars(band_path, ztfname, filtercode, logger, args):
         jobs = []
         for i, calib_df in enumerate(calib_dfs):
             calib_stars_folder = smphot_stars_folder.joinpath("mklc_{}".format(i))
-            calib_stars_folder.mkdir(exists_ok=True)
+            calib_stars_folder.mkdir(exist_ok=True)
             calib_table = ListTable(None, calib_df)
             calib_table.write_to(calib_stars_folder.joinpath("calib_stars_cat_{}.list".format(i)))
 
@@ -190,7 +190,7 @@ def smphot_stars(band_path, ztfname, filtercode, logger, args):
 
         # Concatenate output catalog together
         #calib_cat_paths = [smphot_stars_folder.joinpath("smphot_stars_cat_{}.list".format(i)) for i in range(n)]
-        calib_cat_paths = list(smphot_stars_folder.glob("smphot_stars_cat_*.list"))
+        calib_cat_paths = list(smphot_stars_folder.glob("mklc_*/smphot_stars_cat_*.list"))
         calib_cat_tables = [ListTable.from_filename(calib_cat_path) for calib_cat_path in calib_cat_paths]
 
         calib_cat_df = pd.concat([calib_cat_table.df for calib_cat_table in calib_cat_tables])
@@ -205,6 +205,8 @@ def smphot_stars(band_path, ztfname, filtercode, logger, args):
         # Run on a single worker
         logger.info("Running mklc onto the main worker")
         run_and_log(["mklc", "-t", band_path.joinpath("mappings"), "-O", smphot_stars_folder, "-v", driver_path, "-o", smphot_stars_cat_path, '-c', stars_calib_cat_path, "-f", "1"], logger=logger)
+
+    return True
 
 
 class ConstantStarModel:
