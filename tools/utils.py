@@ -184,10 +184,13 @@ def apply_space_motion(ra, dec, pm_ra, pm_dec, refmjd, newmjd):
 
 
 def get_wcs_from_quadrant(quadrant_path):
-    with fits.open(quadrant_path.joinpath("calibrated.fits")) as hdul:
-        wcs = WCS(hdul[0].header)
+    #with fits.open(quadrant_path.joinpath("calibrated.fits")) as hdul:
+    #    wcs = WCS(hdul[0].header)
+    #return wcs
 
-    return wcs
+    hdr = get_header_from_quadrant_path(quadrant_path)
+    return WCS(hdr)
+
 
 
 def get_mjd_from_quadrant_path(quadrant_path):
@@ -219,6 +222,9 @@ def sc_ra(skycoord):
 def sc_dec(skycoord):
     return skycoord.frame.data.lat.value
 
+def sc_array(skycoord):
+    return np.array([skycoord.frame.data.lon.value, skycoord.frame.data.lat.value])
+
 
 def contained_in_exposure(objects, wcs, return_mask=False):
     width, height = wcs.pixel_shape
@@ -231,15 +237,28 @@ def contained_in_exposure(objects, wcs, return_mask=False):
         bottom_left = [0., 0.]
         bottom_right = [width, 0]
 
-        tl_radec = wcs.pixel_to_world(*top_left)
-        tr_radec = wcs.pixel_to_world(*top_right)
-        bl_radec = wcs.pixel_to_world(*bottom_left)
-        br_radec = wcs.pixel_to_world(*bottom_right)
+        tl_radec = sc_array(wcs.pixel_to_world(*top_left))
+        tr_radec = sc_array(wcs.pixel_to_world(*top_right))
+        bl_radec = sc_array(wcs.pixel_to_world(*bottom_left))
+        br_radec = sc_array(wcs.pixel_to_world(*bottom_right))
 
-        tl = (max([sc_ra(tl_radec), sc_ra(bl_radec)]), min([sc_dec(tl_radec), sc_dec(tr_radec)]))
-        br = (min([sc_ra(tr_radec), sc_ra(br_radec)]), max([sc_dec(bl_radec), sc_dec(br_radec)]))
+        tl = [max([tl_radec[0], bl_radec[0]]), min([tl_radec[1], tr_radec[1]])]
+        br = [min([tr_radec[0], br_radec[0]]), max([bl_radec[1], br_radec[1]])]
 
-        mask = (sc_ra(objects) < tl[0]) & (sc_ra(objects) > br[0]) & (sc_dec(objects) > tl[1]) & (sc_dec(objects) < br[1])
+        #tl = (max([sc_ra(tl_radec), sc_ra(bl_radec)]), min([sc_dec(tl_radec), sc_dec(tr_radec)]))
+        #br = (min([sc_ra(tr_radec), sc_ra(br_radec)]), max([sc_dec(bl_radec), sc_dec(br_radec)]))
+
+        print(tl)
+        print(br)
+        o = sc_array(objects)
+        if tl[0] < br[0]:
+            print("PROUT")
+            mask = (o[0] > tl[0]) & (o[0] < br[0]) & (o[1] > tl[1]) & (o[1] < br[1])
+            #br[0], tl[0] = tl[0], br[0]
+        else:
+            mask = (o[0] < tl[0]) & (o[0] > br[0]) & (o[1] > tl[1]) & (o[1] < br[1])
+
+        print(sum(mask))
 
     if return_mask:
         return mask

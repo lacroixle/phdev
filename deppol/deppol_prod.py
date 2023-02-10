@@ -7,6 +7,8 @@ import logging
 import subprocess
 import shutil
 
+import pandas as pd
+
 from deppol_utils import run_and_log
 import utils
 
@@ -72,7 +74,27 @@ def schedule_jobs(run_folder, run_name):
     scheduled_jobs = dict([(scheduled_job.split(",")[0][4:], scheduled_job.split(",")[1]) for scheduled_job in scheduled_jobs_raw if scheduled_job[:4] == "smp_"])
 
     batches = list(batch_folder.glob("*.sh"))
-    #batches = [pathlib.Path("/sps/ztf/data/storage/scenemodeling/runs/dr0_run_0/batches/ZTF20actrwym-zg.sh")]
+
+    if args.ztfname:
+        if args.ztfname.exists():
+            with open(args.ztfname, 'r') as f:
+                lines = f.readlines()
+
+            batches = [batch_folder.joinpath("{}.sh".format(line.strip())) for line in lines]
+            for batch in batches:
+                if not batch.exists():
+                    print("{} does not exist!".format(batch))
+                    exit()
+
+            print("Scheduling {} jobs".format(len(batches)))
+        else:
+            ztfbatch = batch_folder.joinpath("{}.sh".format(args.ztfname))
+            if ztfbatch.exists():
+                batches = [ztfbatch]
+            else:
+                print("--ztfname specified but does not correspond to a list or a sn-filtercode!")
+                exit()
+
 
     for batch in batches:
         batch_name = batch.name.split(".")[0]
@@ -80,7 +102,7 @@ def schedule_jobs(run_folder, run_name):
             continue
 
         batch_status_path = status_folder.joinpath(batch_name)
-        if batch_status_path.exists():
+        if batch_status_path.exists() and not args.ztfname:
             with open(batch_status_path, 'r') as f:
                 status = f.readline().strip()
                 if status == "scheduled" or status == "done" or status == "running":
@@ -88,7 +110,6 @@ def schedule_jobs(run_folder, run_name):
 
         cmd = ["sbatch", "--ntasks={}".format(args.j),
                "-D", "{}".format(run_folder.joinpath(run_name)),
-               # "-D", "{}".format(log_folder),
                "-J", "smp_{}".format(batch_name),
                "-o", log_folder.joinpath("log_{}".format(batch_name)),
                "-A", "ztf",
@@ -108,6 +129,47 @@ def schedule_jobs(run_folder, run_name):
         print("{}: {}".format(batch_name, returncode))
 
 
+def generate_summary(args, funcs):
+    def __is_job_done(status_name):
+        with open(status_name, 'r') as f:
+            return "done" in f.readline()
+
+    def __func_status(folder, func):
+        if folder.joinpath("{}.success".format(func)).exists():
+            return True
+        elif folder.joinpath("{}.fail".format(func)).exists():
+            return False
+        else:
+            return None
+
+    status_folder = args.run_folder.joinpath("{}/status".format(args.run_name))
+    sne_status = list(status_folder.glob("*"))
+
+    ztfname_filter_list = [sn_status.name for sn_status in sne_status if __is_job_done(sn_status)]
+
+    func_status = {}
+    failed_list = []
+    for ztfname_filter in ztfname_filter_list:
+        ztfname, filtercode = ztfname_filter.split("-")
+        func_status[ztfname_filter] = {}
+        band_folder = args.wd.joinpath("{}/{}".format(ztfname, filtercode))
+
+        success = True
+        for func in funcs:
+            status = __func_status(band_folder, func)
+            func_status[ztfname_filter][func] = status
+
+        if not func_status[ztfname_filter]['smphot'] or not func_status[ztfname_filter]['smphot_stars']:
+            failed_list.append(ztfname_filter)
+
+    df = pd.DataFrame.from_dict(func_status, orient='index')
+    df.to_csv("out.csv")
+
+    if args.print_failed:
+        for failed in failed_list:
+            print(failed)
+
+
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser(description="")
     argparser.add_argument('--generate-jobs', action='store_true', help="If set, generate list of jobs")
@@ -119,6 +181,9 @@ if __name__ == '__main__':
     argparser.add_argument('-j', default=1, type=int)
     argparser.add_argument('--purge-status', action='store_true')
     argparser.add_argument('--purge', action='store_true')
+    argparser.add_argument('--ztfname', type=pathlib.Path, help="To schedule only one SN. Followong ZTFSNname-filtercode, eg ZTF19aaripqw-zg.\nTo schedule a list, put a filename (as for deppol).\nForces through status.")
+    argparser.add_argument('--generate-summary', action='store_true')
+    argparser.add_argument('--print-failed', action='store_true')
 
     args = argparser.parse_args()
 
@@ -144,6 +209,9 @@ if __name__ == '__main__':
             funcs = str(args.func).split(",")
 
     args.run_folder.joinpath(args.run_name).mkdir(exist_ok=True)
+
+    if args.generate_summary:
+        generate_summary(args, funcs)
 
     if args.generate_jobs:
         generate_jobs(args.wd, args.run_folder, funcs, args.run_name)
