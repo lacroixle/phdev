@@ -550,9 +550,9 @@ def match_gaia(quadrant_path, ztfname, filtercode, logger, args):
     center_skycoord = SkyCoord(ra=center_radec[0], dec=center_radec[1], unit='deg')
 
     # Add aperture photometry
-    aper_fields = [['apfl'+i, 'eapfl'+i] for i in range(10)]
-    aper_fields = chain(*aper_fields)
-    print(aper_fields)
+    aper_fields = [['apfl'+str(i), 'eapfl'+str(i)] for i in range(10)]
+    aper_fields = list(chain(*aper_fields))
+    stars_df[aper_fields] = aper_stars_df[aper_fields]
 
     gaia_stars_df = pd.read_hdf(args.lc_folder.joinpath("{}.hd5".format(ztfname)), key='gaia_cal')
     gaia_stars_df.rename({'pmde': 'pmdec'}, axis='columns', inplace=True)
