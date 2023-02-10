@@ -532,17 +532,27 @@ def seeing_study(band_path, ztfname, filtercode, logger, args):
 
 
 def match_gaia(quadrant_path, ztfname, filtercode, logger, args):
-    from utils import read_list, get_wcs_from_quadrant, get_mjd_from_quadrant_path, contained_in_exposure, match_pixel_space, gaiarefmjd
+    from itertools import chain
+    from utils import read_list, get_wcs_from_quadrant, get_mjd_from_quadrant_path, contained_in_exposure, match_pixel_space, gaiarefmjd, quadrant_width_px, quadrant_height_px
     import pandas as pd
     import numpy as np
     from astropy.coordinates import SkyCoord
+    import astropy.units as u
 
     if not quadrant_path.joinpath("psfstars.list").exists():
         return False
 
     _, stars_df = read_list(quadrant_path.joinpath("psfstars.list"))
+    _, aper_stars_df = read_list(quadrant_path.joinpath("standalone_stars.list"))
     wcs = get_wcs_from_quadrant(quadrant_path)
     obsmjd = get_mjd_from_quadrant_path(quadrant_path)
+    center_radec = wcs.pixel_to_world_values(np.array([[quadrant_width_px/2., quadrant_height_px/2.]]))[0]
+    center_skycoord = SkyCoord(ra=center_radec[0], dec=center_radec[1], unit='deg')
+
+    # Add aperture photometry
+    aper_fields = [['apfl'+i, 'eapfl'+i] for i in range(10)]
+    aper_fields = chain(*aper_fields)
+    print(aper_fields)
 
     gaia_stars_df = pd.read_hdf(args.lc_folder.joinpath("{}.hd5".format(ztfname)), key='gaia_cal')
     gaia_stars_df.rename({'pmde': 'pmdec'}, axis='columns', inplace=True)
@@ -555,19 +565,32 @@ def match_gaia(quadrant_path, ztfname, filtercode, logger, args):
     # mas/year -> deg/day
     gaia_stars_df['pmra'] = gaia_stars_df['pmra']/np.cos(np.deg2rad(gaia_stars_df['dec']))/1000./3600./365.25
     gaia_stars_df['pmdec'] = gaia_stars_df['pmdec']/1000./3600./365.25
+    gaia_stars_df.dropna(inplace=True)
 
     ra_corrected = gaia_stars_df['ra']+(obsmjd-gaiarefmjd)*gaia_stars_df['pmra']
     dec_corrected = gaia_stars_df['dec']+(obsmjd-gaiarefmjd)*gaia_stars_df['pmdec']
 
     # gaia_stars_radec = SkyCoord(gaia_stars_df['ra'], gaia_stars_df['dec'], unit='deg')
-    gaia_stars_radec = SkyCoord(ra_corrected, dec_corrected, unit='deg')
-    gaia_mask = contained_in_exposure(gaia_stars_radec, wcs, return_mask=True)
-    gaia_stars_df = gaia_stars_df.iloc[gaia_mask]
-    x, y = gaia_stars_radec[gaia_mask].to_pixel(wcs)
+    gaia_stars_skycoords = SkyCoord(ra_corrected, dec_corrected, unit='deg')
+
+    sep = center_skycoord.separation(gaia_stars_skycoords)
+    idxc = (sep < 0.5*u.deg)
+    gaia_stars_skycoords = gaia_stars_skycoords[idxc]
+    gaia_stars_df = gaia_stars_df[idxc]
+
+    #gaia_mask = contained_in_exposure(gaia_stars_radec, wcs, return_mask=True)
+    #gaia_stars_df = gaia_stars_df.iloc[gaia_mask]
+    #x, y = gaia_stars_radec[gaia_mask].to_pixel(wcs)
+    x, y = gaia_stars_skycoords.to_pixel(wcs)
     gaia_stars_df['x'] = x
     gaia_stars_df['y'] = y
+    gaia_stars_df = gaia_stars_df.dropna()
 
-    i = match_pixel_space(gaia_stars_df[['x', 'y']].to_records(), stars_df[['x', 'y']].to_records(), radius=0.5)
+    try:
+        i = match_pixel_space(gaia_stars_df[['x', 'y']].to_records(), stars_df[['x', 'y']].to_records(), radius=2.)
+    except Exception as e:
+        logger.error("Could not match any Gaia stars!")
+        raise ValueError("Could not match any Gaia stars!")
 
     matched_gaia_stars_df = gaia_stars_df.iloc[i[i>=0]].reset_index(drop=True)
     matched_stars_df = stars_df.iloc[i>=0].reset_index(drop=True)
@@ -663,7 +686,8 @@ def match_gaia_reduce(band_path, ztfname, filtercode, logger, args):
 
     gaia_stars = []
     for gaiaid in set(matched_stars_df['gaiaid']):
-        gaia_stars.append(pd.Series(gaia_stars_df.drop(['rcid', 'field'], axis='columns').loc[gaiaid], name=gaiaid))
+        #gaia_stars.append(pd.Series(gaia_stars_df.drop(['rcid', 'field'], axis='columns').loc[gaiaid], name=gaiaid))
+        gaia_stars.append(pd.Series(gaia_stars_df.loc[gaiaid], name=gaiaid))
 
     gaia_stars_df = pd.DataFrame(data=gaia_stars)
     gaia_stars_df.rename({'pmde': 'pmdec'}, axis='columns', inplace=True)
