@@ -549,8 +549,13 @@ def match_gaia(quadrant_path, ztfname, filtercode, logger, args):
     center_radec = wcs.pixel_to_world_values(np.array([[quadrant_width_px/2., quadrant_height_px/2.]]))[0]
     center_skycoord = SkyCoord(ra=center_radec[0], dec=center_radec[1], unit='deg')
 
+    # Match aperture photometry and psf photometry catalogs
+    i = match_pixel_space(stars_df[['x', 'y']], aper_stars_df[['x', 'y']], radius=1.)
+    stars_df = stars_df.iloc[i[i>=0]].reset_index(drop=True)
+    aper_stars_df = aper_stars_df.iloc[i>=0].reset_index(drop=True)
+
     # Add aperture photometry
-    aper_fields = [['apfl'+str(i), 'eapfl'+str(i)] for i in range(10)]
+    aper_fields = [['apfl'+str(i), 'eapfl'+str(i), 'rad'+str(i)] for i in range(10)]
     aper_fields = list(chain(*aper_fields))
     stars_df[aper_fields] = aper_stars_df[aper_fields]
 
@@ -669,6 +674,9 @@ def match_gaia_reduce(band_path, ztfname, filtercode, logger, args):
         quadrant_dict['cd_12'] = header['cd1_2']
         quadrant_dict['cd_21'] = header['cd2_1']
         quadrant_dict['cd_22'] = header['cd2_2']
+
+        quadrant_dict['skylev'] = header['sexsky']
+        quadrant_dict['sigma_skylev'] = header['sexsigma']
 
         for key in quadrant_dict.keys():
             matched_stars_df[key] = quadrant_dict[key]

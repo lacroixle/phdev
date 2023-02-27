@@ -146,9 +146,11 @@ def generate_summary(args, funcs):
     sne_status = list(status_folder.glob("*"))
 
     ztfname_filter_list = [sn_status.name for sn_status in sne_status if __is_job_done(sn_status)]
-
     func_status = {}
     failed_list = []
+    success_sne = 0
+    success_smp_sn = 0
+    success_smp_stars = 0
     for ztfname_filter in ztfname_filter_list:
         ztfname, filtercode = ztfname_filter.split("-")
         func_status[ztfname_filter] = {}
@@ -161,6 +163,25 @@ def generate_summary(args, funcs):
 
         if not func_status[ztfname_filter]['smphot'] or not func_status[ztfname_filter]['smphot_stars']:
             failed_list.append(ztfname_filter)
+        else:
+            success_sne += 1
+
+        if func_status[ztfname_filter]['smphot']:
+            success_smp_sn += 1
+
+        if func_status[ztfname_filter]['smphot_stars']:
+            success_smp_stars += 1
+
+        if not args.print_failed:
+            print(".", end="", flush=True)
+
+    if not args.print_failed:
+        print("Run summary:")
+        print("Total SNe={}".format(len(ztfname_filter_list)))
+        print("Success={}".format(success_sne))
+        print("Failed={}".format(len(failed_list)))
+        print("Success SN SMP={}".format(success_smp_sn))
+        print("Success SN stars={}".format(success_smp_stars))
 
     df = pd.DataFrame.from_dict(func_status, orient='index')
     df.to_csv("out.csv")
