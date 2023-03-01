@@ -54,6 +54,8 @@ def psfstudy(band_path, ztfname, filtercode, logger, args):
             qid = int(quadrant_header['qid'])
             skylev = float(quadrant_header['sexsky'])
             moonillf = float(quadrant_header['moonillf'])
+            seeing = float(quadrant_header['seeing'])
+            airmass = float(quadrant_header['airmass'])
 
             year, month, day, _, _, ccdid, qid = quadrant_name_explode(quadrant_path.name)
 
@@ -76,9 +78,9 @@ def psfstudy(band_path, ztfname, filtercode, logger, args):
 
             # Convert ADU flux into mag
             cat_psfstars['mag'] = -2.5*np.log10(cat_psfstars['flux'])
-            cat_aperstars['mag'] = -2.5*np.log10(cat_aperstars['apfl5'])
+            cat_aperstars['mag'] = -2.5*np.log10(cat_aperstars['apfl6'])
             cat_psfstars['emag'] = -1.08*cat_psfstars['eflux']/cat_psfstars['flux']
-            cat_aperstars['emag'] = -1.08*cat_aperstars['eapfl5']/cat_aperstars['apfl5']
+            cat_aperstars['emag'] = -1.08*cat_aperstars['eapfl6']/cat_aperstars['apfl6']
             aper_size = list(set(cat_aperstars['rad5']))[0]
 
             # Compute delta flux between PSF and aperture photometry
@@ -88,7 +90,7 @@ def psfstudy(band_path, ztfname, filtercode, logger, args):
 
             # Bin delta flux
             plt.figure(figsize=(7., 4.))
-            gmag_binned, deltamag_binned, edeltamag_binned = binplot(cat_gaia['gmag'].to_numpy(), deltamag, robust=True, data=False, scale=True, weights=1./edeltamag**2, bins=np.linspace(min_mag, max_mag, 15), color='black', zorder=15)
+            gmag_binned, deltamag_binned, edeltamag_binned = binplot(cat_gaia['gmag'].to_numpy(), deltamag, robust=True, data=False, scale=True, weights=1./edeltamag**2, bins=np.linspace(min_mag, max_mag, 8), color='black', zorder=15)
 
             bin_mask = (edeltamag_binned > 0.)
             gmag_binned = gmag_binned[bin_mask]
@@ -144,7 +146,9 @@ def psfstudy(band_path, ztfname, filtercode, logger, args):
                     'deltamag': deltamag_bin,
                     'poly0_chi2': poly0_chi2,
                     'poly1_chi2': poly1_chi2,
-                    'poly2_chi2': poly2_chi2}
+                    'poly2_chi2': poly2_chi2,
+                    'seeing': seeing,
+                    'airmass': airmass}
 
         except Exception as e:
             print(quadrant_path)

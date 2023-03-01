@@ -51,10 +51,10 @@ if __name__ == '__main__':
     def _download_quadrant(quadrant):
         warnings.filterwarnings("ignore")
         try:
-            print(quadrant)
+            print(".", end="", flush=True)
             if "o.fits.fz" in quadrant:
                 downloaded_raw_ccd = io.get_file(quadrant)
-                print(downloaded_raw_ccd)
+                # print(downloaded_raw_ccd)
             else:
                 downloaded_quadrant_sciimg = io.get_file(quadrant)
                 downloaded_quadrant_mskimg = io.get_file(quadrant, suffix="mskimg.fits")

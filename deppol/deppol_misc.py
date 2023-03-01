@@ -614,7 +614,7 @@ def match_gaia_reduce(band_path, ztfname, filtercode, logger, args):
     from utils import get_header_from_quadrant_path
     from deppol_utils import quadrants_from_band_path
 
-    quadrant_paths = quadrants_from_band_path(band_path, logger, check_files="psfstars.list")
+    quadrant_paths = quadrants_from_band_path(band_path, logger, check_files="match_gaia.success")
 
     logger.info("Concatenating matched stars measurements from {} quadrants.".format(len(quadrant_paths)))
 

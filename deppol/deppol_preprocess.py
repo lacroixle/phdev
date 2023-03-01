@@ -20,10 +20,10 @@ def load_calibrated(quadrant_path, ztfname, filtercode, logger, args):
 
     copyfile(image_path, quadrant_path.joinpath("calibrated.fits"))
 
-    logger.info("Dumping header content")
-    hdr = get_header_from_quadrant_path(quadrant_path)
-    with open(quadrant_path.joinpath("calibrated_hdr"), 'wb') as f:
-        hdr.tofile(f, sep='\n', overwrite=True, padding=False)
+    # logger.info("Dumping header content")
+    # hdr = get_header_from_quadrant_path(quadrant_path)
+    # with open(quadrant_path.joinpath("calibrated_hdr"), 'wb') as f:
+    #     hdr.tofile(f, sep='\n', overwrite=False, padding=True)
 
     return True
 

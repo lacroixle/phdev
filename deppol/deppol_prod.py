@@ -9,7 +9,7 @@ import shutil
 
 import pandas as pd
 
-from deppol_utils import run_and_log
+from deppol_utils import run_and_log, load_timings
 import utils
 
 
@@ -147,19 +147,35 @@ def generate_summary(args, funcs):
 
     ztfname_filter_list = [sn_status.name for sn_status in sne_status if __is_job_done(sn_status)]
     func_status = {}
+    func_timings = {}
     failed_list = []
     success_sne = 0
     success_smp_sn = 0
     success_smp_stars = 0
     for ztfname_filter in ztfname_filter_list:
         ztfname, filtercode = ztfname_filter.split("-")
-        func_status[ztfname_filter] = {}
         band_folder = args.wd.joinpath("{}/{}".format(ztfname, filtercode))
+        func_status[ztfname_filter] = {}
+        func_timings[ztfname_filter] = {}
+        func_timings[ztfname_filter]['quadrant_count'] = len(list(band_folder.glob("ztf_*")))
 
+        # Get number of workers from the log...
+        with open(args.run_folder.joinpath("{}/logs/log_{}".format(args.run_name, ztfname_filter))) as f:
+            worker_count = -1
+            for i in range(200):
+                line = f.readline().strip()
+                if "Running a local cluster with" in line:
+                    worker_count = int(line.split(" ")[5])
+
+        func_timings[ztfname_filter]['worker_count'] = worker_count
         success = True
         for func in funcs:
             status = __func_status(band_folder, func)
             func_status[ztfname_filter][func] = status
+
+            if band_folder.joinpath("timings_{}".format(func)).exists():
+                elapsed = load_timings(band_folder.joinpath("timings_{}".format(func)))['total']['elapsed']
+                func_timings[ztfname_filter][func] = elapsed
 
         if not func_status[ztfname_filter]['smphot'] or not func_status[ztfname_filter]['smphot_stars']:
             failed_list.append(ztfname_filter)
@@ -183,8 +199,11 @@ def generate_summary(args, funcs):
         print("Success SN SMP={}".format(success_smp_sn))
         print("Success SN stars={}".format(success_smp_stars))
 
-    df = pd.DataFrame.from_dict(func_status, orient='index')
-    df.to_csv("out.csv")
+    df_status = pd.DataFrame.from_dict(func_status, orient='index')
+    df_status.to_csv("pipeline_status.csv")
+
+    df_timings = pd.DataFrame.from_dict(func_timings, orient='index')
+    df_timings.to_csv("pipeline_timings.csv")
 
     if args.print_failed:
         for failed in failed_list:
