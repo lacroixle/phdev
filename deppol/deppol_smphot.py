@@ -156,7 +156,7 @@ def smphot_stars(band_path, ztfname, filtercode, logger, args):
 
     logger.info("Total star count: {}".format(len(calib_df)))
     calib_df = calib_df.iloc[idxc]
-    calib_df = calib_df.iloc[:50]
+    calib_df = calib_df.iloc[:5]
     logger.info("Total star count in a 0.35 deg radius around SN: {}".format(len(calib_df)))
     calib_table = ListTable(None, calib_df)
 
@@ -201,10 +201,20 @@ def smphot_stars(band_path, ztfname, filtercode, logger, args):
         calib_cat_table.write_to(smphot_stars_cat_path)
         logger.info("Done")
 
+        logger.info("Deleting unuseful *.fits files...")
+        to_delete_list = list(smphot_stars_folder.glob("mklc_*/*.fits"))
+        for to_delete in to_delete_list:
+            to_delete.unlink()
+
     else:
         # Run on a single worker
         logger.info("Running mklc onto the main worker")
         run_and_log(["mklc", "-t", band_path.joinpath("mappings"), "-O", smphot_stars_folder, "-v", driver_path, "-o", smphot_stars_cat_path, '-c', stars_calib_cat_path, "-f", "1"], logger=logger)
+        logger.info("Done")
+        logger.info("Deleting unuseful *.fits files...")
+        to_delete_list = list(smphot_stars_folder.glob("*.fits"))
+        for to_delete in to_delete_list:
+            to_delete.unlink()
 
     return True
 
