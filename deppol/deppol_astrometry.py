@@ -434,6 +434,23 @@ def astrometry_fit(band_path, ztfname, filtercode, logger, args):
     with open(save_folder_path.joinpath("models.pickle"), 'wb') as f:
         pickle.dump({'tp2px': tp2px_model, 'ref2tp': ref2tp_model, 'ref2px': ref2px_model, 'dp': dp}, f)
 
+    logger.info("Filtering quadrants with bad chi2")
+
+
+    gaiaid_in_ref = dp.gaiaid[dp.quadrant_index == reference_index]
+    measure_mask = np.where(dp.quadrant_index != reference_index, np.isin(dp.gaiaid, gaiaid_in_ref), False)
+    in_ref = np.hstack([np.where(gaiaid == gaiaid_in_ref) for gaiaid in dp.gaiaid[measure_mask]]).flatten()
+
+    ref2px_residuals = ref2px_model.residuals(np.array([dp.x[dp.quadrant_index==reference_index][in_ref], dp.y[dp.quadrant_index==reference_index][in_ref]]),
+                                              np.array([dp.x[measure_mask], dp.y[measure_mask]]),
+                                              space_indices=dp.quadrant_index[measure_mask])
+
+    ref2px_chi2_quadrant = np.bincount(dp.quadrant_index[measure_mask], weights=np.sqrt(ref2px_residuals[0]**2+ref2px_residuals[1]**2))/np.bincount(dp.quadrant_index[measure_mask])
+    ref2px_chi2_quadrant = np.pad(ref2px_chi2_quadrant, (0, len(dp.quadrant_set) - len(ref2px_chi2_quadrant)), constant_values=np.nan)
+
+    df_ref2px_chi2_quadrant = pd.DataFrame(data=ref2px_chi2_quadrant, index=dp.quadrant_set, columns=['chi2'])
+    print(df_ref2px_chi2_quadrant.loc[df_ref2px_chi2_quadrant['chi2'].isna()])
+    df_ref2px_chi2_quadrant.to_csv(save_folder_path.joinpath("ref2px_chi2_quadrants.csv"), sep=",")
     return True
 
 

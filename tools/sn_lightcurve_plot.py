@@ -13,6 +13,7 @@ import sys
 import socket
 import copy
 import traceback
+import gc
 
 from scipy import stats
 from joblib import Parallel, delayed
@@ -33,7 +34,7 @@ import numpy as np
 #import pyloka
 import utils
 from scipy.interpolate import LSQUnivariateSpline
-
+from matplotlib.ticker import MultipleLocator, FormatStrFormatter, AutoMinorLocator
 
 filtercodes = ['zg', 'zr', 'zi']
 filtercode_colors = {'zg': 'green', 'zr': 'red', 'zi': 'orange'}
@@ -94,7 +95,7 @@ if __name__ == '__main__':
     print("Found {} SN1a".format(len(ztfnames)))
 
 
-    for ztfname in ztfnames:
+    def plot_ztf_lightcurve(ztfname):
         def _get_lc_info(filtercode):
             sn_folder = args.wd.joinpath("{}/{}".format(ztfname, filtercode))
             if not sn_folder.exists():
@@ -114,6 +115,13 @@ if __name__ == '__main__':
             with open(smphot_lc_fit_file, 'r') as f:
                 globals_fit_df, fit_df = utils.read_list(f)
 
+            nans = sn_flux_df.isna().any(axis=1)
+            sn_flux_df = sn_flux_df.loc[~nans]
+            fit_df = fit_df.loc[~nans]
+
+            if len(sn_flux_df) == 0:
+                return
+
             sn_parameters = pd.read_hdf(args.lc_folder.joinpath("{}.hd5".format(ztfname)), key='sn_info')
 
             ref_exp = globals_fit_df['referenceimage']
@@ -123,11 +131,14 @@ if __name__ == '__main__':
             lc_info['sn_flux'] = sn_flux_df
             lc_info['sn_flux']['fieldid'] = fit_df['name'].apply(lambda x: int(x.split("_")[2]))
             lc_info['fieldids'] = tuple(set(lc_info['sn_flux']['fieldid']))
+            lc_info['sn_flux'] = lc_info['sn_flux']
 
             t = np.linspace(sn_flux_df['mjd'].min()+1., sn_flux_df['mjd'].max()-1., int(len(sn_flux_df)/3.))
             #lc_info['spline'] = LSQUnivariateSpline(sn_flux_df['mjd'].to_numpy(), sn_flux_df['flux'].to_numpy(), t)
 
-            with fits.open(sn_folder.joinpath("{}/calibrated.fits".format(ref_exp))) as hdul:
+            ref_exp_path = ztfquery.io.get_file(ref_exp + "_sciimg.fits", downloadit=False)
+            #with fits.open(sn_folder.joinpath("{}/calibrated.fits".format(ref_exp))) as hdul:
+            with fits.open(ref_exp_path) as hdul:
                 w = WCS(hdul[0].header)
 
             init_skycoord = SkyCoord(sn_parameters['sn_ra'].item(), sn_parameters['sn_dec'].item(), unit='deg')
@@ -191,7 +202,7 @@ if __name__ == '__main__':
 
         if not lc_infos:
             print("Found no data for {}... Skipping.".format(ztfname))
-            continue
+            return
         else:
             print(ztfname)
 
@@ -219,12 +230,16 @@ if __name__ == '__main__':
             plt.subplot(3, 2, i*2+2)
             for j, fieldid in enumerate(lc_info['fieldids']):
                 sn_flux = lc_info['sn_flux'][lc_info['sn_flux']['fieldid'] == fieldid]
+
+                if len(sn_flux) == 0:
+                    continue
+
                 if args.mag:
                     sn_flux['flux'] = -2.5*np.log10(sn_flux['flux']+sn_flux['flux'].min())
 
                 plt.errorbar(sn_flux['mjd'], sn_flux['flux'], yerr=sn_flux['varflux'], color='black', ms=5., lw=0., marker=idx_to_marker[j], ls='', label=str(fieldid), elinewidth=1.)
 
-            t = np.linspace(lc_info['sn_flux']['mjd'].min(), lc_info['sn_flux']['mjd'].max(), 500)
+            #t = np.linspace(lc_info['sn_flux']['mjd'].min(), lc_info['sn_flux']['mjd'].max(), 500)
             #plt.plot(t, lc_info['spline'](t), color='grey')
             plt.xlim([lc_info['t_inf'], lc_info['t_sup']])
             plt.axvline(lc_info['t0'], color='black')
@@ -266,9 +281,13 @@ if __name__ == '__main__':
             plt.grid()
             plt.legend()
 
-        def _plot_fp_diff(lc_info, i, first):
-            plt.subplot(3, 2, i*2 + 1)
-            if first:
+        def _plot_fp_diff(lc_info, i, first, columns=False):
+            if columns:
+                plt.subplot(2, 1, 1)
+            else:
+                plt.subplot(3, 2, i*2 + 1)
+
+            if first and not columns:
                 plt.title("Forced photometry lightcurve")
 
             for j, fieldid in enumerate(lc_info['fieldids']):
@@ -278,24 +297,39 @@ if __name__ == '__main__':
                 plt.errorbar(sn_flux.index[to_plot], sn_flux['flux'][to_plot], yerr=sn_flux['flux_err'][to_plot], color='black', ms=5., lw=0., marker=idx_to_marker[j], ls='', label=str(fieldid), elinewidth=1.)
 
             plt.legend(title="Field ID")
-            plt.axvline(lc_info['t0'], color='black')
             plt.grid()
-            plt.xlabel("MJD")
+
+            if not columns:
+                plt.xlabel("MJD")
+                plt.axvline(lc_info['t0'], color='black')
+
+            if columns:
+                plt.ylabel("FP flux [ADU]")
+
             plt.xlim(lc_info['t_inf'], lc_info['t_sup'])
 
-            plt.subplot(3, 2, i*2 + 2)
-            if first:
+            if columns:
+                plt.subplot(2, 1, 2)
+            else:
+                plt.subplot(3, 2, i*2 + 2)
+
+            if first and not columns:
                 plt.title("Scene modeling lightcurve")
 
             for j, fieldid in enumerate(lc_info['fieldids']):
                 sn_flux = lc_info['sn_flux'][lc_info['sn_flux']['fieldid'] == fieldid]
                 plt.errorbar(sn_flux['mjd'], sn_flux['flux'], yerr=sn_flux['varflux'], color='black', ms=5., lw=0., marker=idx_to_marker[j], ls='', label=str(fieldid), elinewidth=1.)
 
-            plt.legend(title="Field ID")
-            plt.axvline(lc_info['t0'], color='black')
+            if not columns:
+                plt.legend(title="Field ID")
+                plt.axvline(lc_info['t0'], color='black')
+
             plt.grid()
             plt.xlabel("MJD")
-            plt.ylabel("Flux - {}".format(lc_info['filtercode']))
+            if not columns:
+                plt.ylabel("Flux - {}".format(lc_info['filtercode']))
+            else:
+                plt.ylabel("SMP flux [ADU]")
             plt.xlim(lc_info['t_inf'], lc_info['t_sup'])
 
         # Do plots
@@ -338,5 +372,24 @@ if __name__ == '__main__':
                     ax.text(0.5, 0.5, "No data", fontsize=30, transform=ax.transAxes, horizontalalignment='center', verticalalignment='center')
                     ax.axis('off')
 
-            plt.savefig(args.output.joinpath("{}_fp_diff.png".format(ztfname)), dpi=200.)
+            plt.savefig(args.output.joinpath("{}_fp_diff.svg".format(ztfname)), dpi=200.)
             plt.close()
+
+            # Other version of the same plot, better suited for publications...
+            for i, filtercode in enumerate(filtercodes):
+                if filtercode in lc_infos.keys():
+                    fig, axs = plt.subplots(ncols=1, nrows=2, sharex=True, figsize=(8., 5.), gridspec_kw={'hspace': 0.})
+                    for ax in axs:
+                        ax.tick_params(which='both', direction='in')
+                        ax.xaxis.set_minor_locator(AutoMinorLocator())
+                        ax.yaxis.set_minor_locator(AutoMinorLocator())
+
+                    plt.suptitle("{} - {} filter".format(ztfname, filtercode[1]))
+                    _plot_fp_diff(lc_infos[filtercode], i, True, columns=True)
+                    fig.align_ylabels(axs=axs)
+                    plt.tight_layout()
+                    plt.savefig(args.output.joinpath("{}_{}_fp_diff.pdf".format(ztfname, filtercode)))
+
+    for ztfname in ztfnames:
+        plot_ztf_lightcurve(ztfname)
+        gc.collect()

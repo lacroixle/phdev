@@ -16,7 +16,7 @@ def psfstudy(band_path, ztfname, filtercode, logger, args):
     from dask import delayed, compute
 
     from deppol_utils import quadrants_from_band_path
-    from utils import get_header_from_quadrant_path, plot_ztf_focal_plan_values, ListTable, match_pixel_space, quadrant_name_explode
+    from utils import get_header_from_quadrant_path, plot_ztf_focal_plan_values, ListTable, match_by_gaia_catalogs, quadrant_name_explode, match_to_gaia
 
     matplotlib.use('Agg')
 
@@ -42,11 +42,48 @@ def psfstudy(band_path, ztfname, filtercode, logger, args):
     min_mag, max_mag = 13., 19.
     low_bin, high_bin = 14, 17
 
-    def _process_quadrant(quadrant_path):
+    def _process_quadrant(quadrant_path, cat1, cat2):
+        def _cat_to_name(cat):
+            if cat == 'flux':
+                return "PSF"
+            else:
+                return "Aperture-" + cat[-1]
+
+        def _is_aperture(cat):
+            return 'apfl' in cat
+
+        def _get_cat_from_name(cat, refexp=None):
+            path = quadrant_path
+            if refexp:
+                path = quadrant_path.with_name(refexp + quadrant_path.name[28:])
+
+            if cat == 'flux':
+                with pd.HDFStore(path.joinpath("matched_stars.hd5")) as hdfstore:
+                    cat_df = hdfstore.get('/matched_stars')
+            else:
+                cat_df = ListTable.from_filename(path.joinpath("standalone_stars.list")).df
+
+            return cat_df
+
+        def _get_gaia_cat(refexp=None):
+            path = quadrant_path
+            if refexp:
+                path = quadrant_path.with_name(refexp + quadrant_path.name[28:])
+
+            with pd.HDFStore(path.joinpath("matched_stars.hd5")) as hdfstore:
+                cat_gaia_df = hdfstore.get('/matched_gaia_stars')
+
+            return cat_gaia_df
+
         if not _quadrant_good(quadrant_path):
             return
 
         try:
+            refexp = None
+            if cat1[:3] == 'ref':
+                refexp = args.refexp
+                cat1 = cat1[3:]
+
             quadrant_header = get_header_from_quadrant_path(quadrant_path)
             expid = int(quadrant_header['expid'])
             mjd = float(quadrant_header['obsmjd'])
@@ -62,35 +99,53 @@ def psfstudy(band_path, ztfname, filtercode, logger, args):
             exposure_output_path = output_path.joinpath("{}-{}-{}-{}".format(year, month, day, expid))
             exposure_output_path.mkdir(exist_ok=True)
 
-            # First load PSF and Gaia catalog
-            with pd.HDFStore(quadrant_path.joinpath("matched_stars.hd5")) as hdfstore:
-                cat_gaia = hdfstore.get('/matched_gaia_stars')
-                cat_psfstars = hdfstore.get('/matched_stars')
+            # First load catalogs
+            cat1_df = _get_cat_from_name(cat1, refexp=refexp)
+            cat2_df = _get_cat_from_name(cat2)
 
-            # Match aperture catalog to Gaia
-            cat_aperstars = ListTable.from_filename(quadrant_path.joinpath("standalone_stars.list")).df
+            if refexp:
+                cat1_gaia_df = _get_gaia_cat(refexp)
+                cat2_gaia_df = _get_gaia_cat()
+            else:
+                cat1_gaia_df = _get_gaia_cat()
+                cat2_gaia_df = cat1_gaia_df
 
-            i = match_pixel_space(cat_gaia[['x', 'y']].to_records(), cat_aperstars[['x', 'y']].to_records(), radius=1.)
+            if _is_aperture(cat1):
+                cat1_df['gaiaid'] = match_to_gaia(cat1_df, cat1_gaia_df)
 
-            cat_psfstars = cat_psfstars.iloc[i[i>=0]].reset_index(drop=True)
-            cat_gaia = cat_gaia.iloc[i[i>=0]].reset_index(drop=True)
-            cat_aperstars = cat_aperstars.iloc[i>=0].reset_index(drop=True)
+            if _is_aperture(cat2):
+                cat2_df['gaiaid'] = match_to_gaia(cat2_df, cat2_gaia_df)
+
+            # Match catalogs to Gaia
+            # i = match_pixel_space(cat_gaia_df[['x', 'y']].to_records(), cat2_df[['x', 'y']].to_records(), radius=1.)
+
+            # cat2_df = cat2_df.iloc[i[i>=0]].reset_index(drop=True)
+            # cat_gaia_df = cat_gaia_df.iloc[i[i>=0]].reset_index(drop=True)
+            # cat1_df = cat1_df.iloc[i>=0].reset_index(drop=True)
+            print(cat1_df)
+            print(cat2_df)
+            cat1_df, cat2_df, cat_gaia_df = match_by_gaia_catalogs(cat1_df, cat2_df, cat1_gaia_df, cat2_gaia_df)
 
             # Convert ADU flux into mag
-            cat_psfstars['mag'] = -2.5*np.log10(cat_psfstars['flux'])
-            cat_aperstars['mag'] = -2.5*np.log10(cat_aperstars['apfl6'])
-            cat_psfstars['emag'] = -1.08*cat_psfstars['eflux']/cat_psfstars['flux']
-            cat_aperstars['emag'] = -1.08*cat_aperstars['eapfl6']/cat_aperstars['apfl6']
-            aper_size = list(set(cat_aperstars['rad5']))[0]
+            cat1_df['mag'] = -2.5*np.log10(cat1_df[cat1])
+            cat2_df['mag'] = -2.5*np.log10(cat2_df[cat2])
+            cat1_df['emag'] = -1.08*cat1_df['e'+cat1]/cat1_df[cat1]
+            cat2_df['emag'] = -1.08*cat2_df['e'+cat2]/cat2_df[cat2]
+
+            if _is_aperture(cat1):
+                aper_size_1 = list(set(cat1_df['rad'+cat1[-1]]))[0]
+
+            if _is_aperture(cat2):
+                aper_size_2 = list(set(cat2_df['rad'+cat2[-1]]))[0]
 
             # Compute delta flux between PSF and aperture photometry
-            deltamag = (cat_psfstars['mag'] - cat_aperstars['mag']).to_numpy()
+            deltamag = (cat1_df['mag'] - cat2_df['mag']).to_numpy()
             deltamag = deltamag - np.mean(deltamag)
-            edeltamag = np.sqrt(cat_psfstars['emag']**2+cat_aperstars['emag']**2).to_numpy()
+            edeltamag = np.sqrt(cat1_df['emag']**2+cat2_df['emag']**2).to_numpy()
 
             # Bin delta flux
             plt.figure(figsize=(7., 4.))
-            gmag_binned, deltamag_binned, edeltamag_binned = binplot(cat_gaia['gmag'].to_numpy(), deltamag, robust=True, data=False, scale=True, weights=1./edeltamag**2, bins=np.linspace(min_mag, max_mag, 8), color='black', zorder=15)
+            gmag_binned, deltamag_binned, edeltamag_binned = binplot(cat_gaia_df['gmag'].to_numpy(), deltamag, robust=True, data=False, scale=True, weights=1./edeltamag**2, bins=np.linspace(min_mag, max_mag, 8), color='black', zorder=15)
 
             bin_mask = (edeltamag_binned > 0.)
             gmag_binned = gmag_binned[bin_mask]
@@ -116,13 +171,22 @@ def psfstudy(band_path, ztfname, filtercode, logger, args):
             deltamag_bin = bin_high-bin_low
 
             # Start plot
-            plt.title("Aperture - PSF [mag]\n({}-{}-{}) CCD={} Q={}\nAperture size={:.2f}\nSky level={:.2f}".format(year, month, day, ccdid, qid, aper_size, skylev))
+            name1 = _cat_to_name(cat1)
+            name2 = _cat_to_name(cat2)
+
+            if _is_aperture(cat1):
+                name1 += " {:.2f} px".format(aper_size_1)
+
+            if _is_aperture(cat2):
+                name2 += " {:.2f} px".format(aper_size_2)
+
+            plt.title("{} - {} [mag]\n({}-{}-{}) CCD={} Q={}\nSky level={:.2f}".format(name1, name2, year, month, day, ccdid, qid, skylev))
             plt.grid()
             gmag_space = np.linspace(min_mag, max_mag, 100)
             plt.plot(gmag_space, poly0(gmag_space), ls='-', lw=1.5, color='grey', label="Constant - $\chi^2_\\nu={:.3f}$".format(poly0_chi2), zorder=10)
             plt.plot(gmag_space, poly1(gmag_space), ls='dotted', lw=1.5, color='grey', label="Linear - $\chi^2_\\nu={:.3f}$".format(poly1_chi2), zorder=10)
             plt.plot(gmag_space, poly2(gmag_space), ls='--', lw=1.5, color='grey', label="Quadratic - $\chi^2_\\nu={:.3f}$".format(poly2_chi2), zorder=10)
-            plt.errorbar(cat_gaia['gmag'].to_numpy(), deltamag, yerr=edeltamag, lw=0., marker='.', markersize=1.5, zorder=0, color='xkcd:light blue')
+            plt.errorbar(cat_gaia_df['gmag'].to_numpy(), deltamag, yerr=edeltamag, lw=0., marker='.', markersize=1.5, zorder=0, color='xkcd:light blue')
             plt.legend(fontsize='small', loc='upper left')
             plt.xlabel("$g_\mathrm{Gaia}$ [mag]")
             plt.ylabel("$\Delta_M$ [mag]")
@@ -158,90 +222,36 @@ def psfstudy(band_path, ztfname, filtercode, logger, args):
 
     # d = [_process_quadrant(quadrant_path) for quadrant_path in quadrant_paths]
 
-    tasks = [delayed(_process_quadrant)(quadrant_path) for quadrant_path in quadrant_paths]
+    tasks = [delayed(_process_quadrant)(quadrant_path, 'flux', 'apfl6') for quadrant_path in quadrant_paths]
     results = compute(tasks)
 
+    # pairs = [('flux', 'apfl6'), ('refflux', 'flux')]
+    pairs = [('refflux', 'flux'), ('flux', 'apfl6')]
     print("")
     print("Done.")
     results = list(filter(lambda x: x is not None, results[0]))
     df = pd.DataFrame(results)
-    print(df)
     df.to_parquet(band_path.joinpath("myquadrants.parquet"))
 
-        # for ccdid in range(1, 17):
-        #     delta_mags[exposure][ccdid] = {}
-        #     for qid in range(1, 5):
-        #         delta_mags[exposure][ccdid][qid-1] = []
+    cmap = 'coolwarm'
+    def _plot_focal_plane(exposure, vmin, vmax, val):
+        cm = ScalarMappable(cmap=cmap)
+        cm.set_clim(vmin=vmin, vmax=vmax)
 
-        #         key = 'mag'
-        #         refexposure_quadrant = band_path.joinpath("{}_c{}_o_q{}".format(refexposure, str(ccdid).zfill(2), qid))
-        #         exposure_quadrant = band_path.joinpath("{}_c{}_o_q{}".format(exposure, str(ccdid).zfill(2), qid))
-        #         cat_ref, cat_exp, cat_gaia = match_gaia_catalogs(refexposure_quadrant, exposure_quadrant)
+        fig = plt.figure(figsize=(5., 6.), constrained_layout=False)
+        f1, f2 = fig.subfigures(ncols=1, nrows=2, height_ratios=[12., 0.3], wspace=-1., hspace=-1.)
+        f1.suptitle("\n{}-{}-{}\n$\Delta m$ [mag]".format(exposure[4:8], exposure[8:10], filtercode), fontsize='large')
+        plot_ztf_focal_plan_values(f1, delta_mags[exposure], vmin=vmin, vmax=vmax, cmap=cmap, scalar=True)
+        ax2 = f2.add_subplot(clip_on=False)
+        f2.subplots_adjust(bottom=-5, top=5.)
+        ax2.set_position((0.2, 0, 0.6, 1))
+        cb = f1.colorbar(cm, cax=ax2, orientation='horizontal')
+        ax2.set_clip_on(False)
+        ax2.minorticks_on()
+        ax2.tick_params(direction='inout')
+        plt.savefig(output_path.joinpath("{}-{}_dmag_focal_plane.png".format(exposure, filtercode)), dpi=200., bbox_inches='tight', pad_inches=0.1)
+        plt.close()
 
-        #         cat_exp['mag'] = -2.5*np.log10(cat_exp['flux'])
-        #         cat_exp['emag'] = -1.08*cat_exp['eflux']/cat_exp['flux']
-
-        #         gmag_binned, mag_binned, emag_binned = binplot(cat_gaia['gmag'], cat_exp['mag'], robust=True, data=False, weights=1./cat_exp['emag']**2, bins=np.linspace(min_mag, max_mag, 15))
-
-        #         poly0, ([poly0_chi2], _, _, _) = Polynomial.fit(gmag_binned, mag_binned, 0, w=1./emag_binned, full=True)
-        #         poly1, ([poly1_chi2], _, _, _) = Polynomial.fit(gmag_binned, mag_binned, 0, w=1./emag_binned, full=True)
-        #         poly2, ([poly2_chi2], _, _, _) = Polynomial.fit(gmag_binned, mag_binned, 0, w=1./emag_binned, full=True)
-
-        #         d_mag = cat_ref['mag'] - cat_exp['mag']
-        #         d_mag = d_mag - np.mean(d_mag)
-        #         #delta_mags[exposure][ccdid][qid] = [d_mag, cat_gaia['gmag']]
-
-        #         low_mag, high_mag = _bin_dmag(d_mag, cat_gaia['gmag'])
-        #         delta = high_mag-low_mag
-        #         if delta < vmin:
-        #             vmin = delta
-        #         if delta > vmax:
-        #             vmax = delta
-
-        #         plt.figure(figsize=(7., 4.))
-        #         plt.title("{}-{}: {} - CCD={}, Q={}".format(exposure[4:8], exposure[8:10], filtercode, ccdid, qid))
-        #         plt.plot(cat_gaia['gmag'], d_mag, '.')
-        #         plt.xlabel("$g_\mathrm{Gaia}$ [mag]")
-        #         plt.ylabel("$\Delta m$ [mag]")
-        #         plt.axhline(y=low_mag, xmin=0., xmax=(low_band-min_mag)/(max_mag-min_mag), color='black')
-        #         plt.axhline(y=high_mag, xmin=(high_band-min_mag)/(max_mag-min_mag), xmax=1., color='black')
-        #         props = dict(boxstyle='round', facecolor='xkcd:light blue', alpha=1.)
-        #         plt.text(16.5, -0.12, "$\Delta m={:.2f}$ mag".format(delta), bbox=props)
-        #         plt.axvline(low_band, color='black')
-        #         plt.axvline(high_band, color='black')
-        #         plt.ylim([-0.2, 0.2])
-        #         plt.xlim([min_mag, max_mag])
-        #         plt.fill_betweenx([-0.2, 0.2], high_band, 19., color='None', alpha=0.9, edgecolor='black', hatch='/', lw=0.3)
-        #         plt.fill_betweenx([-0.2, 0.2], 13., low_band, color='None', alpha=0.9, edgecolor='black', hatch='/', lw=0.3)
-        #         plt.grid()
-        #         plt.tight_layout()
-        #         plt.savefig(exposure_path.joinpath("{}_{}_{}.png".format(exposure, ccdid, qid)), dpi=200.)
-        #         # plt.savefig("out/{}_{}_{}.png".format(exposure, ccdid, qid), dpi=200.)
-        #         plt.close()
-
-        #         delta_mags[exposure][ccdid][qid-1] = delta
-
-    # cmap = 'coolwarm'
-    # def _plot_focal_plane_dmag(exposure, vmin, vmax):
-    #     cm = ScalarMappable(cmap=cmap)
-    #     cm.set_clim(vmin=vmin, vmax=vmax)
-
-    #     fig = plt.figure(figsize=(5., 6.), constrained_layout=False)
-    #     f1, f2 = fig.subfigures(ncols=1, nrows=2, height_ratios=[12., 0.3], wspace=-1., hspace=-1.)
-    #     f1.suptitle("\n{}-{}-{}\n$\Delta m$ [mag]".format(exposure[4:8], exposure[8:10], filtercode), fontsize='large')
-    #     plot_ztf_focal_plan_values(f1, delta_mags[exposure], vmin=vmin, vmax=vmax, cmap=cmap, scalar=True)
-    #     ax2 = f2.add_subplot(clip_on=False)
-    #     f2.subplots_adjust(bottom=-5, top=5.)
-    #     ax2.set_position((0.2, 0, 0.6, 1))
-    #     cb = f1.colorbar(cm, cax=ax2, orientation='horizontal')
-    #     ax2.set_clip_on(False)
-    #     ax2.minorticks_on()
-    #     ax2.tick_params(direction='inout')
-    #     plt.savefig(output_path.joinpath("{}-{}_dmag_focal_plane.png".format(exposure, filtercode)), dpi=200., bbox_inches='tight', pad_inches=0.1)
-    #     plt.close()
-
-    # vext = max([abs(vmin), abs(vmax)])
-    # print(vext)
-
-    # for exposure in exposures:
-    #     _plot_focal_plane_dmag(exposure, -vext, vext)
+    fp_vals = {'PSF-Aper': {'limits': 0.2, 'val': lambda x: x.deltamag}}
+    for exposure in exposures:
+        _plot_focal_plane_dmag(exposure, -vext, vext)

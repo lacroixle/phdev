@@ -31,6 +31,8 @@ argparser.add_argument('-v', type=int, dest='verbosity', default=0, help="Verbos
 argparser.add_argument('--cosmodr', type=pathlib.Path, help="Cosmo DR folder.")
 argparser.add_argument('--off-mul', dest='off_mul', type=int, default=3, help="Off SN 1a image statistics multiplier.")
 argparser.add_argument('--plot', action='store_true', help="If set, will plot the lightcurve. Only when --ztfname is set.")
+argparser.add_argument('--fp', action='store_true', help="If set, enable forced photometry lightcurves retrieving.")
+argparser.add_argument('--onoff', type=pathlib.Path)
 
 args = argparser.parse_args()
 
@@ -51,12 +53,20 @@ else:
     print("Cosmo DR folder not set! Either set COSMO_DR_FOLDER environnement variable or use the --cosmodr parameter.")
     exit(-1)
 
+if args.onoff:
+    args.onoff = args.onoff.expanduser().resolve()
+    onoff_df = pd.read_csv(args.onoff, index_col='ztfname')
 
-salt_df = pd.read_csv(cosmo_dr_folder.joinpath("tables/archived/2021oct26/DR2_SALT2fit_params.csv"), delimiter=",", index_col="name")
-redshift_df = pd.read_csv(cosmo_dr_folder.joinpath("tables/archived/2021oct26/DR2_redshifts.csv"), delimiter=",", index_col="ztfname")
-coords_df = pd.read_csv(cosmo_dr_folder.joinpath("tables/archived/2021oct26/ztfdr2_coords.csv"), delimiter=" ", index_col="ztfname")
+# salt_df = pd.read_csv(cosmo_dr_folder.joinpath("tables/archived/2021oct26/DR2_SALT2fit_params.csv"), delimiter=",", index_col="name")
+# redshift_df = pd.read_csv(cosmo_dr_folder.joinpath("tables/archived/2021oct26/DR2_redshifts.csv"), delimiter=",", index_col="ztfname")
+# coords_df = pd.read_csv(cosmo_dr_folder.joinpath("tables/archived/2021oct26/ztfdr2_coords.csv"), delimiter=" ", index_col="ztfname")
+salt_df = pd.read_csv(cosmo_dr_folder.joinpath("params/DR2_SALT2fit_params.csv"), index_col='name')
+redshift_df = pd.read_csv(cosmo_dr_folder.joinpath("params/DR2_redshifts.csv"), index_col='ztfname')
+coords_df = pd.read_csv(cosmo_dr_folder.joinpath("ztfdr2_coords.csv"), delimiter=' ', index_col='ztfname')
 
-lightcurve_folder = cosmo_dr_folder.joinpath("lightcurves/previous_versions/2021oct26").expanduser().resolve()
+
+# lightcurve_folder = cosmo_dr_folder.joinpath("lightcurves/previous_versions/2021oct26").expanduser().resolve()
+lightcurve_folder = cosmo_dr_folder.joinpath("lightcurves").expanduser().resolve()
 # salt_df = pd.read_csv(cosmo_dr_folder.joinpath("tables/ztfdr2_salt2_params.csv"))
 # redshift_df = pd.read_csv(cosmo_dr_folder.joinpath("tables/ztfdr2_redshifts.csv"))
 # coords_df = pd.read_csv(cosmo_dr_folder.joinpath("tables/ztfdr2_coordinates.csv"))
@@ -97,7 +107,8 @@ def estimate_lc_params(ztfname):
 
     def extract_interval(ztfname, t0_inf, t0_sup, off_mul, do_sql_request=True):
         # First load forced photometry lightcurve (useful for plotting)
-        fp_lc_df = pd.read_csv(lightcurve_folder.joinpath("{}_LC.csv".format(ztfname)), delimiter="\s+", index_col="mjd")
+        if args.fp:
+            fp_lc_df = pd.read_csv(lightcurve_folder.joinpath("{}_LC.csv".format(ztfname)), delimiter="\s+", index_col="mjd")
 
         # Then retrieve available quadrants covering the host gallaxy position
         sql_lc_df = None
@@ -162,9 +173,20 @@ def estimate_lc_params(ztfname):
         rcids = [pair[1] for pair in field_rcid_pairs]
 
         # Zero order SN event time interval
-        t_0 = salt_df.loc[ztfname, "t0"]
-        t_inf = t_0 - t0_inf
-        t_sup = t_0 + t0_sup
+        if args.onoff and ztfname in onoff_df.index:
+            t_0 = onoff_df.loc[ztfname, 't0']
+            t_inf = onoff_df.loc[ztfname, 't_inf']
+            t_sup = onoff_df.loc[ztfname, 't_sup']
+
+            if np.isnan(t_inf):
+                t_inf = sql_lc_df.index.min()
+
+            if np.isnan(t_sup):
+                t_sup = sql_lc_df.index.max()
+        else:
+            t_0 = salt_df.loc[ztfname, 't0']
+            t_inf = t_0 - t0_inf
+            t_sup = t_0 + t0_sup
 
         # Get gaia calibrators
         if output_folder:
@@ -196,21 +218,36 @@ def estimate_lc_params(ztfname):
         def _compute_min_max_interval(lc_df, t_inf, t_sup, filtercode):
             lc_f_df = lc_df.loc[lc_df['filtercode'] == filtercode]
 
-            obs_count = len(lc_f_df.loc[t_inf:t_sup])
+            if args.onoff and ztfname in onoff_df.index:
+                t_min = onoff_df.loc[ztfname, 't_min']
+                t_max = onoff_df.loc[ztfname, 't_max']
 
-            if obs_count == 0:
-                return None
+                if np.isnan(t_min):
+                    t_min = lc_f_df.index.min()
 
-            idx_min = max(0, int(len(lc_f_df[:t_inf]) - off_mul*obs_count))
-            idx_max = min(len(lc_f_df), int(len(lc_f_df[:t_sup]) + off_mul*obs_count)) - 1
+                if np.isnan(t_max):
+                    t_max = lc_f_df.index.max()
+            else:
+                obs_count = len(lc_f_df.loc[t_inf:t_sup])
 
-            t_min = lc_f_df.iloc[idx_min].name
-            t_max = lc_f_df.iloc[idx_max].name
+                if obs_count == 0:
+                    return None
 
-            return {'sql_lc': lc_f_df.loc[t_min:t_max],
-                    'fp_lc': fp_lc_df.loc[fp_lc_df['filter'] == 'ztf{}'.format(filtercode[1])].loc[t_min:t_max],
-                    't_min': t_min,
-                    't_max': t_max}
+                idx_min = max(0, int(len(lc_f_df[:t_inf]) - off_mul*obs_count))
+                idx_max = min(len(lc_f_df), int(len(lc_f_df[:t_sup]) + off_mul*obs_count)) - 1
+
+                t_min = lc_f_df.iloc[idx_min].name
+                t_max = lc_f_df.iloc[idx_max].name
+
+            if args.fp:
+                return {'sql_lc': lc_f_df.loc[t_min:t_max],
+                        'fp_lc': fp_lc_df.loc[fp_lc_df['filter'] == 'ztf{}'.format(filtercode[1])].loc[t_min:t_max],
+                        't_min': t_min,
+                        't_max': t_max}
+            else:
+                return {'sql_lc': lc_f_df.loc[t_min:t_max],
+                        't_min': t_min,
+                        't_max': t_max}
             # return {'sql_lc': lc_f_df.loc[t_min:t_max],
             #         'fp_lc': None,
             #         't_min': t_min,
@@ -245,9 +282,10 @@ def estimate_lc_params(ztfname):
 
     def plot_lightcurve(ax, zfilter):
         if lc_dict[zfilter]:
-            to_plot = np.all([np.abs(stats.zscore(lc_dict[zfilter]['fp_lc']['flux_err'])) < 3, np.abs(stats.zscore(lc_dict[zfilter]['fp_lc']['flux'])) < 4], axis=0)
 
-            lc_dict[zfilter]['fp_lc']['flux'][to_plot].plot(ax=ax, yerr=lc_dict[zfilter]['fp_lc']['flux_err'][to_plot], linestyle='None', marker='.', color=zfilter_plot_color[zfilter])
+            if 'fp_lc' in lc_dict[zfilter].keys():
+                to_plot = np.all([np.abs(stats.zscore(lc_dict[zfilter]['fp_lc']['flux_err'])) < 3, np.abs(stats.zscore(lc_dict[zfilter]['fp_lc']['flux'])) < 4], axis=0)
+                lc_dict[zfilter]['fp_lc']['flux'][to_plot].plot(ax=ax, yerr=lc_dict[zfilter]['fp_lc']['flux_err'][to_plot], linestyle='None', marker='.', color=zfilter_plot_color[zfilter])
             plot_obs_count(ax, lc_dict[zfilter]['sql_lc'], t_0, t_inf, t_sup)
             ax.grid(ls='--', linewidth=0.8)
             ax.set_xlabel("MJD")

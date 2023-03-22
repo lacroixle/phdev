@@ -158,20 +158,20 @@ def get_cat_size(catalog_filename):
     return len(cat)
 
 
-# def match_gaia_catalogs(quadrant1_path, quadrant2_path):
-#     cat1_stars = pd.read_hdf(quadrant1_path.joinpath("matched_stars.hd5"), '/matched_stars')
-#     cat1_gaia = pd.read_hdf(quadrant1_path.joinpath("matched_stars.hd5"), '/matched_gaia_stars')
-#     cat2_stars = pd.read_hdf(quadrant2_path.joinpath("matched_stars.hd5"), '/matched_stars')
-#     cat2_gaia = pd.read_hdf(quadrant2_path.joinpath("matched_stars.hd5"), '/matched_gaia_stars')
+def match_to_gaia(cat_df, cat_gaia_df):
+    i = match_pixel_space(cat_gaia_df, cat_df)
+    return cat_gaia_df.iloc[i[i>=0]].gaiaid
 
-#     cat1_stars.set_index(cat1_gaia['gaiaid'], inplace=True)
-#     cat2_stars.set_index(cat2_gaia['gaiaid'], inplace=True)
-#     cat1_gaia.set_index('gaiaid', inplace=True)
-#     cat2_gaia.set_index('gaiaid', inplace=True)
 
-#     indices = [idx for idx in cat1_stars.index if idx in cat2_stars.index]
+def match_by_gaia_catalogs(cat1_df, cat2_df, cat1_gaia_df, cat2_gaia_df):
+    cat1_gaia_df.set_index('gaiaid', inplace=True)
+    cat2_gaia_df.set_index('gaiaid', inplace=True)
+    cat1_df.set_index(cat1_gaia_df.index, inplace=True)
+    cat2_df.set_index(cat2_gaia_df.index, inplace=True)
 
-#     return cat1_stars.loc[indices], cat2_stars.loc[indices], cat1_gaia.loc[indices]
+    indices = [idx for idx in cat1_stars.index if idx in cat2_stars.index]
+
+    return cat1_stars.loc[indices], cat2_stars.loc[indices], cat1_gaia.loc[indices]
 
 
 def apply_space_motion(ra, dec, pm_ra, pm_dec, refmjd, newmjd):

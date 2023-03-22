@@ -292,7 +292,8 @@ if __name__ == '__main__':
     argparser.add_argument('--dump-node-info', action='store_true')
     argparser.add_argument('--log-overwrite', action='store_true', help="If set, all logs will be overwritten.")
     argparser.add_argument('--parallel-reduce', action='store_true', help="If set, parallelize reduce operations (if op has a parallel codepath).")
-    argparser.add_argument('--refexp', type=int)
+    argparser.add_argument('--refexp', type=str)
+    argparser.add_argument('--compress', action='store_true', help="If set, work with compressed working directory")
 
     logger = logging.getLogger("main")
     #logger.addHandler(logging.StreamHandler())
@@ -309,6 +310,9 @@ if __name__ == '__main__':
     filtercodes = ztf_filtercodes[:3]
     if args.filtercode != 'all':
         filtercodes = [args.filtercode]
+
+    print("Run parameters:")
+    print(args)
 
     # Read ztfnames
     ztfnames = None
@@ -341,19 +345,19 @@ if __name__ == '__main__':
     print(" -> ".join(funcs))
 
     # Temporary folder creation
-    if args.quadrant_workspace or args.scratch:
-        import signal
-        import atexit
-        def delete_tree_at_exit(tree_path):
-            shutil.rmtree(tree_path, ignore_errors=True)
+    # if args.quadrant_workspace or args.scratch:
+    #     import signal
+    #     import atexit
+    #     def delete_tree_at_exit(tree_path):
+    #         shutil.rmtree(tree_path, ignore_errors=True)
 
-        if args.quadrant_workspace:
-            args.quadrant_workspace.mkdir(exist_ok=True, parents=True)
-            atexit.register(delete_tree_at_exit, tree_path=args.quadrant_workspace)
+    #     if args.quadrant_workspace:
+    #         args.quadrant_workspace.mkdir(exist_ok=True, parents=True)
+    #         atexit.register(delete_tree_at_exit, tree_path=args.quadrant_workspace)
 
-        if args.scratch:
-            args.scratch.mkdir(exist_ok=True, parents=True)
-            atexit.register(delete_tree_at_exit, tree_path=args.scratch)
+    #     if args.scratch:
+    #         args.scratch.mkdir(exist_ok=True, parents=True)
+    #         atexit.register(delete_tree_at_exit, tree_path=args.scratch)
 
     # Allocate cluster
     if args.cluster_worker > 0:
@@ -476,7 +480,7 @@ if __name__ == '__main__':
                             return to_ignore
                         shutil.copytree(band_path, scratch_band_path, symlinks=True, dirs_exist_ok=True, ignore=_from_scratch_ignore)
                     else:
-                        shutil.copytree(args.wd.joinpath("{}/{}".format(ztfname, filtercode)), scratch_band_path)
+                        shutil.copytree(args.wd.joinpath("{}/{}".format(ztfname, filtercode)), scratch_band_path, symlinks=True)
 
     print("")
     print("Running. ", end="", flush=True)

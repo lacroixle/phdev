@@ -945,27 +945,31 @@ def filter_psfstars_count(band_path, ztfname, filtercode, logger, args):
 def filter_astro_chi2(band_path, ztfname, filtercode, logger, args):
     from deppol_utils import noprocess_quadrants
     import pandas as pd
+    import numpy as np
 
     noprocess = noprocess_quadrants(band_path)
 
-    chi2_path = band_path.joinpath("astrometry/ref2px_plots/chi2_quadrants.csv")
+    chi2_path = band_path.joinpath("astrometry/ref2px_chi2_quadrants.csv")
     if not chi2_path.exists():
         logger.info("Could not find file {}!".format(chi2_path))
-        return
+        return False
 
     chi2_df = pd.read_csv(chi2_path, index_col=0)
 
-    to_filter = (chi2_df['chi2'] >= args.astro_max_chi2)
-    logger.info("{} quadrants flagged as having astrometry chi2 >= {}.".format(sum(to_filter), args.astro_max_chi2))
+    to_filter = (np.any([chi2_df['chi2'] >= args.astro_max_chi2, chi2_df['chi2'].isna()], axis=0))
+    to_filter = (np.any([chi2_df['chi2'].isna()], axis=0))
+    logger.info("{} quadrants flagged as having astrometry chi2 >= {} or NaN values.".format(sum(to_filter), args.astro_max_chi2))
 
     quadrants_to_flag = 0
-    for quadrant in chi2_df.loc[to_filter].index.tolist():
-        with open(band_path.joinpath("noprocess"), 'a') as f:
+    with open(band_path.joinpath("noprocess"), 'a') as f:
+        for quadrant in chi2_df.loc[to_filter].index.tolist():
             if quadrant not in noprocess:
                 f.write("{}\n".format(quadrant))
                 quadrants_to_flag += 1
 
     logger.info("{} quadrants added to the noprocess list.".format(quadrants_to_flag))
+
+    return True
 
 
 def filter_seeing(band_path, ztfname, filtercode, logger, args):
