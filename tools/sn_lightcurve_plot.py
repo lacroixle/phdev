@@ -24,10 +24,10 @@ from astropy.coordinates import SkyCoord
 from astropy.wcs import utils
 import matplotlib
 import matplotlib.pyplot as plt
-import dask
-from dask import delayed, compute
-from dask.distributed import Client, LocalCluster, wait, get_worker
-from dask_jobqueue import SLURMCluster, SGECluster
+# import dask
+# from dask import delayed, compute
+# from dask.distributed import Client, LocalCluster, wait, get_worker
+# from dask_jobqueue import SLURMCluster, SGECluster
 import ztfquery.io
 from ztfimg.science import ScienceQuadrant
 import numpy as np
@@ -74,6 +74,7 @@ if __name__ == '__main__':
     argparser.add_argument('--output', type=pathlib.Path, required=True)
     argparser.add_argument('--no-fp', action='store_true', help="Set to disable forced photometry comparison (e.g. when not available).")
     argparser.add_argument('--mag', action='store_true', help="If set, plot lightcurve in mag unit, else in ADU.")
+    argparser.add_argument('-j', type=int, default=1)
 
     args = argparser.parse_args()
     args.wd = args.wd.expanduser().resolve()
@@ -293,7 +294,7 @@ if __name__ == '__main__':
             for j, fieldid in enumerate(lc_info['fieldids']):
                 sn_flux = lc_info['lc_fp'][lc_info['lc_fp']['field_id'] == fieldid]
                 to_plot = ~np.any([~(np.abs(stats.zscore(sn_flux['flux_err'])) < 2.), ~(np.abs(stats.zscore(sn_flux['flux'])) < 5)], axis=0)
-                print("To plot: {} ({} removed)".format(sum(to_plot), len(sn_flux)-sum(to_plot)))
+                #print("To plot: {} ({} removed)".format(sum(to_plot), len(sn_flux)-sum(to_plot)))
                 plt.errorbar(sn_flux.index[to_plot], sn_flux['flux'][to_plot], yerr=sn_flux['flux_err'][to_plot], color='black', ms=5., lw=0., marker=idx_to_marker[j], ls='', label=str(fieldid), elinewidth=1.)
 
             plt.legend(title="Field ID")
@@ -353,18 +354,22 @@ if __name__ == '__main__':
         plt.savefig(args.output.joinpath("{}_pos.png".format(ztfname)), dpi=200.)
         plt.close()
 
+        mode = 'w'
+        for filtercode in lc_infos.keys():
+            lc_infos[filtercode]['sn_flux'].to_hdf(args.output.joinpath("SMP_{}.hd5".format(ztfname)), key=filtercode, mode=mode)
+            mode = 'a'
+
         if not args.no_fp:
             plt.subplots(ncols=2, nrows=3, constrained_layout=True, figsize=(15., 9.))
             first = True
             for i, filtercode in enumerate(filtercodes):
                 if filtercode in lc_infos.keys():
                     _plot_fp_diff(lc_infos[filtercode], i, first)
-                    mode = 'a'
-                    if first:
-                        mode = 'w'
-                    lc_infos[filtercode]['sn_flux'].to_hdf(args.output.joinpath("SMP_{}.hd5".format(ztfname)), key=filtercode, mode=mode)
+                    # mode = 'a'
+                    # if first:
+                    #     mode = 'w'
 
-                    first = False
+                    # first = False
 
                     # Save
                 else:
@@ -372,7 +377,7 @@ if __name__ == '__main__':
                     ax.text(0.5, 0.5, "No data", fontsize=30, transform=ax.transAxes, horizontalalignment='center', verticalalignment='center')
                     ax.axis('off')
 
-            plt.savefig(args.output.joinpath("{}_fp_diff.svg".format(ztfname)), dpi=200.)
+            plt.savefig(args.output.joinpath("{}_fp_diff.png".format(ztfname)), dpi=200.)
             plt.close()
 
             # Other version of the same plot, better suited for publications...
@@ -389,7 +394,13 @@ if __name__ == '__main__':
                     fig.align_ylabels(axs=axs)
                     plt.tight_layout()
                     plt.savefig(args.output.joinpath("{}_{}_fp_diff.pdf".format(ztfname, filtercode)))
+                    plt.close()
 
-    for ztfname in ztfnames:
-        plot_ztf_lightcurve(ztfname)
         gc.collect()
+
+
+    p = Parallel(n_jobs=args.j)(delayed(plot_ztf_lightcurve)(ztfname) for ztfname in ztfnames)
+
+    # for ztfname in ztfnames:
+    #     plot_ztf_lightcurve(ztfname)
+    #     gc.collect()
