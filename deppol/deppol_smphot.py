@@ -173,7 +173,7 @@ def smphot_stars(band_path, ztfname, filtercode, logger, args):
 
     logger.info("Total star count: {}".format(len(calib_df)))
     calib_df = calib_df.iloc[idxc]
-    calib_df = calib_df.iloc[:50]
+    calib_df = calib_df.iloc[:100]
     logger.info("Total star count in a 0.35 deg radius around SN: {}".format(len(calib_df)))
     calib_table = ListTable(None, calib_df)
 
