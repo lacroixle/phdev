@@ -177,7 +177,7 @@ if __name__ == '__main__':
             with fits.open(sn_folder.joinpath("smphot_output/{}.fits".format(lc_info['t0_exp_file']))) as hdul:
                 lc_info['t0_sn_stamp'] = hdul[0].data
 
-            z = ScienceQuadrant.from_filename(lc_info['t0_exp_file']+"_sciimg.fits")
+            z = ScienceQuadrant.from_filename(lc_info['t0_exp_file']+"_sciimg.fits", use_dask=False)
             t0_quadrant = z.get_dataclean()
 
             # sn_host_stamp = np.array(stamp_it(t0_quadrant, fit_px_t0[0], fit_px_t0[1], args.stamp_size, asarray=True))

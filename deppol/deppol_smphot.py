@@ -2,6 +2,7 @@
 
 from deppol_utils import run_and_log
 
+
 def reference_quadrant(band_path, ztfname, filtercode, logger, args):
     """
 
@@ -84,7 +85,11 @@ def reference_quadrant(band_path, ztfname, filtercode, logger, args):
 
 
 def smphot(band_path, ztfname, filtercode, logger, args):
+    import numpy as np
+    import pandas as pd
+
     from deppol_utils import run_and_log
+    from utils import get_ref_quadrant_from_band_folder, ListTable
 
     logger.info("Running scene modeling")
 
@@ -92,6 +97,18 @@ def smphot(band_path, ztfname, filtercode, logger, args):
     smphot_output.mkdir(exist_ok=True)
 
     returncode = run_and_log(["mklc", "-t", band_path.joinpath("mappings"), "-O", smphot_output, "-v", band_path.joinpath("{}_driver_{}".format(ztfname, filtercode))], logger=logger)
+
+    logger.info("Deleting unuseful *.fits files...")
+    sn_parameters = pd.read_hdf(args.lc_folder.joinpath("{}.hd5".format(ztfname)), key='sn_info')
+    fit_df = ListTable.from_filename(smphot_output.joinpath("lc2fit.dat")).df
+    t0 = sn_parameters['t0mjd'].item()
+    t0_idx = np.argmin(np.abs(fit_df['Date']-t0))
+    t0_quadrant = fit_df.iloc[t0_idx]['name']
+    to_delete_list = list(smphot_output.glob("*.fits"))
+    print("Keeping t0 image {}".format(t0_quadrant))
+    to_delete_list.remove(smphot_output.joinpath(t0_quadrant+".fits"))
+    for to_delete in to_delete_list:
+        to_delete.unlink()
 
     return (returncode == 0)
 
@@ -156,7 +173,7 @@ def smphot_stars(band_path, ztfname, filtercode, logger, args):
 
     logger.info("Total star count: {}".format(len(calib_df)))
     calib_df = calib_df.iloc[idxc]
-    calib_df = calib_df.iloc[:5]
+    calib_df = calib_df.iloc[:50]
     logger.info("Total star count in a 0.35 deg radius around SN: {}".format(len(calib_df)))
     calib_table = ListTable(None, calib_df)
 

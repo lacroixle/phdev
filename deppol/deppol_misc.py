@@ -957,8 +957,10 @@ def filter_astro_chi2(band_path, ztfname, filtercode, logger, args):
     chi2_df = pd.read_csv(chi2_path, index_col=0)
 
     to_filter = (np.any([chi2_df['chi2'] >= args.astro_max_chi2, chi2_df['chi2'].isna()], axis=0))
-    to_filter = (np.any([chi2_df['chi2'].isna()], axis=0))
+    # to_filter = (np.any([chi2_df['chi2'].isna()], axis=0))
     logger.info("{} quadrants flagged as having astrometry chi2 >= {} or NaN values.".format(sum(to_filter), args.astro_max_chi2))
+    logger.info("List of filtered quadrants:")
+    logger.info(chi2_df.loc[to_filter])
 
     quadrants_to_flag = 0
     with open(band_path.joinpath("noprocess"), 'a') as f:

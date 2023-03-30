@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 
+import os
 import pathlib
 import subprocess
 import time
 from collections.abc import Iterable
 import json
+import tarfile
+import shutil
 
 
 def run_and_log(cmd, logger=None, return_log=False):
@@ -106,3 +109,46 @@ def noprocess_quadrants(band_path):
                     noprocess.append(quadrant)
 
     return noprocess
+
+
+def build_catalogs_from_band(ztfname, filtercode, band_path):
+    quadrants = band_path.glob("ztf_*")
+    # Build aperture photometry catalog
+
+    pass
+
+
+def tar_band(ztfname, filtercode, band_path, scratch_band_path):
+    files = band_path.glob("*")
+
+    # We should remove catalogs
+
+    hdf_file = band_path.joinpath("{}-{}.hd5".format(ztfname, filtercode))
+    tar_file = band_path.joinpath("{}-{}.tar.gz".format(ztfname, filtercode))
+
+    os.chdir(scratch_band_path)
+    files = [f for f in list(band_path.glob("*"))]
+
+    if hdf_file in files:
+        files.remove(hdf_file)
+
+    if tar_file in files:
+        files.remove(tar_file)
+
+    tar = tarfile.TarFile(tar_file, mode='w', debug=0)
+    [tar.add(f.name) for f in files]
+    tar.close()
+
+    for f in files:
+        if f.is_dir():
+            shutil.rmtree(f)
+        else:
+            f.unlink()
+
+
+def untar_band(ztfname, filtercode, band_path, scratch_band_path):
+    os.chdir(scratch_band_path)
+    tar_file = band_path.joinpath("{}-{}.tar.gz".format(ztfname, filtercode))
+    tar = tarfile.TarFile(tar_file)
+    tar.extractall()
+    tar.close()

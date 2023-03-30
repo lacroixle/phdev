@@ -91,7 +91,7 @@ if __name__ == '__main__':
                         raise FileNotFoundError(sciimg_path)
 
                     # Dead mask
-                    z = ScienceQuadrant.from_filename(sciimg_path)
+                    z = ScienceQuadrant.from_filename(sciimg_path, use_dask=False)
 
                     # First create filter path
                     args.output.joinpath("{}/{}".format(ztfname, filtercode)).mkdir(exist_ok=True)

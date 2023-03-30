@@ -16,9 +16,10 @@ from dask import delayed, compute, visualize
 from dask.distributed import Client, LocalCluster, wait, get_worker
 from dask_jobqueue import SLURMCluster
 from dask.graph_manipulation import bind, checkpoint
-
 import pandas as pd
 from dask import config as cfg
+
+from deppol_utils import tar_band, untar_band, build_catalogs_from_band
 
 cfg.set({'distributed.scheduler.worker-ttl': None})
 
@@ -399,6 +400,37 @@ if __name__ == '__main__':
         _op.__name__ = func
         return _op
 
+    # visualize(jobs, filename="out.svg", optimize_graph=True)
+
+    print("", flush=True)
+    if args.compress:
+        cd = os.getcwd()
+    if args.scratch:
+        print("Moving data into scratch folder.", flush=True)
+        for ztfname in ztfnames:
+            for filtercode in filtercodes:
+                band_path = args.wd.joinpath("{}/{}".format(ztfname, filtercode))
+                if band_path.exists():
+                    scratch_band_path = args.scratch.joinpath("{}/{}".format(ztfname, filtercode))
+                    if args.compress and band_path.joinpath("{}-{}.tar.gz".format(ztfname, filtercode)).exists():
+                        print("Untaring file {} into {}".format(band_path.joinpath("{}-{}.tar.gz".format(ztfname, filtercode)), args.scratch))
+                        untar_band(ztfname, filtercode, band_path, scratch_band_path)
+                    else:
+                        print("Moving {}-{} into {}".format(ztfname, filtercode, scratch_band_path), flush=True)
+                        shutil.rmtree(scratch_band_path, ignore_errors=True)
+                        quadrant_folder = args.wd.joinpath("{}/{}".format(ztfname, filtercode))
+                        if args.from_scratch:
+                            def _from_scratch_ignore(current_folder, files):
+                                to_copy = [".dbstuff", "elixir.fits", "dead.fits.gz"]
+                                to_ignore = [str(f) for f in map(lambda x: pathlib.Path(x), files) if (str(f.name) not in to_copy) and not (pathlib.Path(current_folder).joinpath(f).is_dir() and str(f)[:4] == "ztf_")]
+                                return to_ignore
+                            shutil.copytree(band_path, scratch_band_path, symlinks=True, dirs_exist_ok=True, ignore=_from_scratch_ignore)
+                        else:
+                            shutil.copytree(args.wd.joinpath("{}/{}".format(ztfname, filtercode)), scratch_band_path, symlinks=True)
+
+    if args.compress:
+        os.chdir(cd)
+
     for ztfname in ztfnames:
         for filtercode in filtercodes:
             print("Building job list for {}-{}... ".format(ztfname, filtercode), flush=True, end="")
@@ -460,28 +492,6 @@ if __name__ == '__main__':
 
             jobs.append(last_job)
 
-    # visualize(jobs, filename="out.svg", optimize_graph=True)
-
-    print("", flush=True)
-    if args.scratch:
-        print("Moving data into scratch folder.", flush=True)
-        for ztfname in ztfnames:
-            for filtercode in filtercodes:
-                band_path = args.wd.joinpath("{}/{}".format(ztfname, filtercode))
-                if band_path.exists():
-                    scratch_band_path = args.scratch.joinpath("{}/{}".format(ztfname, filtercode))
-                    print("Moving {}-{} into {}".format(ztfname, filtercode, scratch_band_path), flush=True)
-                    shutil.rmtree(scratch_band_path, ignore_errors=True)
-                    quadrant_folder = args.wd.joinpath("{}/{}".format(ztfname, filtercode))
-                    if args.from_scratch:
-                        def _from_scratch_ignore(current_folder, files):
-                            to_copy = [".dbstuff", "elixir.fits", "dead.fits.gz"]
-                            to_ignore = [str(f) for f in map(lambda x: pathlib.Path(x), files) if (str(f.name) not in to_copy) and not (pathlib.Path(current_folder).joinpath(f).is_dir() and str(f)[:4] == "ztf_")]
-                            return to_ignore
-                        shutil.copytree(band_path, scratch_band_path, symlinks=True, dirs_exist_ok=True, ignore=_from_scratch_ignore)
-                    else:
-                        shutil.copytree(args.wd.joinpath("{}/{}".format(ztfname, filtercode)), scratch_band_path, symlinks=True)
-
     print("")
     print("Running. ", end="", flush=True)
 
@@ -515,11 +525,23 @@ if __name__ == '__main__':
         print("Scratch folder: {}".format(args.scratch))
         print("Working directory: {}".format(args.wd))
 
-        to_ignore = ["elixir.fits", "dead.fits.gz"]
-        if args.discard_calibrated:
-            to_ignore.extend(["calibrated.fits", "weight.fz"])
+        if args.compress:
+            for ztfname in ztfnames:
+                for filtercode in filtercodes:
+                    band_path = args.wd.joinpath("{}/{}".format(ztfname, filtercode))
+                    if band_path.exists():
+                        scratch_band_path = args.scratch.joinpath("{}/{}".format(ztfname, filtercode))
+                        # Build summary catalogs and copy them to sps
+                        build_catalogs_from_band(ztfname, filtercode, scratch_band_path)
 
-        print("Ignoring files {}".format(to_ignore))
-        shutil.copytree(args.scratch, args.wd, dirs_exist_ok=True, ignore=shutil.ignore_patterns(*to_ignore))
-        shutil.rmtree(args.scratch)
-        print("Done")
+                        # Tar remaining files
+                        tar_band(ztfname, filtercode, band_path, scratch_band_path)
+        else:
+            to_ignore = ["elixir.fits", "dead.fits.gz"]
+            if args.discard_calibrated:
+                to_ignore.extend(["calibrated.fits", "weight.fz"])
+
+            print("Ignoring files {}".format(to_ignore))
+            shutil.copytree(args.scratch, args.wd, dirs_exist_ok=True, ignore=shutil.ignore_patterns(*to_ignore))
+            shutil.rmtree(args.scratch)
+            print("Done")

@@ -446,10 +446,10 @@ def astrometry_fit(band_path, ztfname, filtercode, logger, args):
                                               space_indices=dp.quadrant_index[measure_mask])
 
     ref2px_chi2_quadrant = np.bincount(dp.quadrant_index[measure_mask], weights=np.sqrt(ref2px_residuals[0]**2+ref2px_residuals[1]**2))/np.bincount(dp.quadrant_index[measure_mask])
+    ref2px_chi2_quadrant[reference_index] = 0.
     ref2px_chi2_quadrant = np.pad(ref2px_chi2_quadrant, (0, len(dp.quadrant_set) - len(ref2px_chi2_quadrant)), constant_values=np.nan)
 
     df_ref2px_chi2_quadrant = pd.DataFrame(data=ref2px_chi2_quadrant, index=dp.quadrant_set, columns=['chi2'])
-    print(df_ref2px_chi2_quadrant.loc[df_ref2px_chi2_quadrant['chi2'].isna()])
     df_ref2px_chi2_quadrant.to_csv(save_folder_path.joinpath("ref2px_chi2_quadrants.csv"), sep=",")
     return True
 
