@@ -20,6 +20,7 @@ import pandas as pd
 from dask import config as cfg
 
 from deppol_utils import tar_band, untar_band, build_catalogs_from_band
+from lightcurve import Exposure, Lightcurve
 
 cfg.set({'distributed.scheduler.worker-ttl': None})
 
@@ -34,14 +35,16 @@ import deppol_misc
 
 #poloka_func.append({'map': deppol_misc.psf_study, 'reduce': deppol_misc.psf_study_reduce})
 poloka_func.append({'map': deppol_misc.clean, 'reduce': deppol_misc.clean_reduce})
-poloka_func.append({'map': deppol_misc.match_gaia, 'reduce': deppol_misc.match_gaia_reduce})
+poloka_func.append({'reduce': deppol_misc.retrieve_catalogs})
+poloka_func.append({'map': deppol_misc.match_catalogs})
 poloka_func.append({'map': deppol_misc.clean, 'reduce': deppol_misc.clean_reduce})
-poloka_func.append({'map': deppol_misc.stats, 'reduce': deppol_misc.stats_reduce})
+# poloka_func.append({'map': deppol_misc.stats, 'reduce': deppol_misc.stats_reduce})
 poloka_func.append({'reduce': deppol_misc.filter_seeing})
 poloka_func.append({'reduce': deppol_misc.filter_psfstars_count})
 poloka_func.append({'reduce': deppol_misc.filter_astro_chi2})
 poloka_func.append({'map': deppol_misc.discard_calibrated, 'rm': deppol_misc.discard_calibrated_rm})
-poloka_func.append({'reduce': deppol_misc.seeing_study})
+# poloka_func.append({'reduce': deppol_misc.seeing_study})
+poloka_func.append({'map': deppol_misc.catalogs_to_ds9regions})
 
 
 import deppol_psfstudy
@@ -49,16 +52,13 @@ poloka_func.append({'reduce': deppol_psfstudy.psfstudy})
 
 
 import deppol_preprocess
-
-poloka_func.append({'map': deppol_preprocess.load_calibrated})
 poloka_func.append({'map': deppol_preprocess.make_catalog, 'rm': deppol_preprocess.make_catalog_rm})
 poloka_func.append({'map': deppol_preprocess.mkcat2, 'rm': deppol_preprocess.mkcat2_rm})
 poloka_func.append({'map': deppol_preprocess.makepsf, 'rm': deppol_preprocess.makepsf_rm})
-poloka_func.append({'map': deppol_preprocess.preprocess})
+poloka_func.append({'map': deppol_preprocess.preprocess, 'rm': deppol_preprocess.preprocess_rm})
 
 
 import deppol_smphot
-
 poloka_func.append({'reduce': deppol_smphot.reference_quadrant})
 poloka_func.append({'reduce': deppol_smphot.smphot})
 poloka_func.append({'reduce': deppol_smphot.smphot_plot})
@@ -103,48 +103,53 @@ def dump_node_config(args):
             run_and_log(["ls", "-lah", os.environ['TMPDIR']], logger)
 
 
-def map_op(quadrant, wd, ztfname, filtercode, func, args):
+def map_op(exposure_name, wd, name, filtercode, func, args):
     try:
+        exposure = Exposure(Lightcurve(ztfname, filtercode, wd), exposure_name)
+
         start_time = time.perf_counter()
-        quadrant_path = wd.joinpath("{}/{}/{}".format(ztfname, filtercode, quadrant))
-        band_path = wd.joinpath("{}/{}".format(ztfname, filtercode))
+        exposure_path = wd.joinpath("{}/{}/{}".format(name, filtercode, exposure_name))
+        lightcurve_path = wd.joinpath("{}/{}".format(name, filtercode))
 
         logger = None
         if func != 'clean':
-            if quadrant in noprocess_quadrants(band_path):
+            if exposure_name in exposure.lightcurve.get_noprocess():
                 return
 
-            logger = logging.getLogger(quadrant)
+            logger = logging.getLogger(exposure_name)
             logger.setLevel(logging.INFO)
 
-            if args.quadrant_workspace:
-                quadrant_workspace = args.quadrant_workspace.joinpath(quadrant)
-                shutil.copytree(quadrant_path, quadrant_workspace, symlinks=False, dirs_exist_ok=True)
-                quadrant_path = quadrant_workspace
+            if args.exposure_workspace:
+                # If exposure working directory is specified (such as using /dev/shm), rebuild the exposure object accordingly
+                exposure_workspace = args.exposure_workspace.joinpath(exposure_name)
+                shutil.copytree(exposure_path, exposure_workspace, symlinks=False, dirs_exist_ok=True)
+                exposure_path = exposure_workspace
+                exposure = Exposure(Lightcurve(name, filtercode, wd), exposure_name, path=exposure_path)
 
-            logger_mode = 'a'
-            if args.log_overwrite and (func == args.func.split(",")[0]):
-                logger_mode = 'w'
+            # logger_mode = 'a'
+            # if args.log_overwrite and (func == args.func.split(",")[0]):
+            #     logger_mode = 'w'
 
-            logger.addHandler(logging.FileHandler(str(quadrant_path.joinpath("output.log")), mode=logger_mode))
+            #logger.addHandler(logging.FileHandler(str(exposure_path.joinpath("output.log")), mode=logger_mode))
+            logger.addHandler(logging.FileHandler(str(exposure_path.joinpath("output.log")), mode='a'))
             logger.info("")
             logger.info("="*80)
             logger.info("{}-{}".format(ztfname, filtercode))
             logger.info(datetime.datetime.today())
-            logger.info("Running map operation \"{}\" on quadrant {}.".format(func, quadrant))
-            logger.info("Quadrant directory: {}".format(quadrant_path))
+            logger.info("Running map operation \"{}\" on exposure {}.".format(func, exposure_name))
+            logger.info("Exposure directory: {}".format(exposure_path))
             logger.info("Working directory: {}".format(wd))
 
         result = False
         try:
             start_time = time.perf_counter()
-            result = poloka_func[func]['map'](quadrant_path, ztfname, filtercode, logger, args)
+            result = poloka_func[func]['map'](exposure, logger, args)
         except Exception as e:
             if func != 'clean':
                 logger.error(traceback.format_exc())
 
-            print("{}-{}: {}".format(ztfname, filtercode, func))
-            print("Quadrant: {}".format(quadrant))
+            print("{}-{}: {}".format(name, filtercode, func))
+            print("Exposure: {}".format(exposure_name))
             print(e)
             print(traceback.format_exc())
             result = False
@@ -154,15 +159,15 @@ def map_op(quadrant, wd, ztfname, filtercode, func, args):
                 logger.info("End of func \"{}\".".format(func))
 
                 if result:
-                    quadrant_path.joinpath("{}.success".format(func)).touch()
+                    exposure_path.joinpath("{}.success".format(func)).touch()
                 else:
-                    quadrant_path.joinpath("{}.fail".format(func)).touch()
+                    exposure_path.joinpath("{}.fail".format(func)).touch()
 
                 # Remove intermediate files if any
                 if args.rm_intermediates and 'rm' in poloka_func[func].keys():
                     logger.info("Removing intermediate files...")
                     for f in poloka_func[func]['rm']:
-                        to_remove = quadrant_path.joinpath(f)
+                        to_remove = exposure_path.joinpath(f)
                         if to_remove.exists():
                             to_remove.unlink()
                         else:
@@ -170,46 +175,48 @@ def map_op(quadrant, wd, ztfname, filtercode, func, args):
                             logger.warning(" Full path: {}".format(to_remove))
 
                 if args.dump_timings:
-                    dump_timings(start_time, end_time, quadrant_path.joinpath("timings_{}".format(func)))
+                    dump_timings(start_time, end_time, exposure_path.joinpath("timings_{}".format(func)))
 
-                if args.quadrant_workspace:
-                    logger.info("Copying quadrant data from temporary working directory back into original.")
-                    quadrant_path.joinpath("elixir.fits").unlink()
-                    shutil.copytree(quadrant_path, wd.joinpath("{}/{}/{}".format(ztfname, filtercode, quadrant)), dirs_exist_ok=True)
-                    logger.info("Erasing quadrant data from temporary working directory.")
-                    shutil.rmtree(quadrant_path)
+                if args.exposure_workspace:
+                    logger.info("Copying exposure data from temporary working directory back into original.")
+                    exposure_path.joinpath("elixir.fits").unlink()
+                    shutil.copytree(exposure_path, wd.joinpath("{}/{}/{}".format(name, filtercode, exposure_name)), dirs_exist_ok=True)
+                    logger.info("Erasing exposure data from temporary working directory.")
+                    shutil.rmtree(exposure_path)
 
                 [handler.close() for handler in logger.handlers] # Needed to flush last msg
 
     except Exception as e:
-        print("Exception raised for quadrant {} in {}-{}!".format(quadrant, ztfname, filtercode))
+        print("Exception raised for exposure {} in {}-{}!".format(exposure_name, ztfname, filtercode))
         traceback.print_exc()
-        print("{} content:".format(quadrant_path))
-        print(list(quadrant_path.glob("*")))
+        print("{} content:".format(exposure_path))
+        print(list(exposure_path.glob("*")))
         return False
     else:
         return result
 
 
-def reduce_op(wd, ztfname, filtercode, func, save_stats, args):
-    band_path = wd.joinpath("{}/{}".format(ztfname, filtercode))
+def reduce_op(wd, name, filtercode, func, save_stats, args):
+    lightcurve_path = wd.joinpath("{}/{}".format(ztfname, filtercode))
+    lightcurve = Lightcurve(name, filtercode, wd)
     # If we want to agregate run statistics on the previous map operation
     # if save_stats and results is not None and any(results) and func != 'clean':
     #     results_df = pd.DataFrame([result for result in results if result is not None], columns=['result', 'time_end', 'time_start', 'worker_id'])
     #     results_df.to_csv(folder.joinpath("results_{}.csv".format(func)), index=False)
 
-    if func != 'clean':
-        pass
+    # if func != 'clean':
+    #     pass
 
     start_time = time.perf_counter()
     if func != 'clean' and 'reduce' in poloka_func[func].keys():
-        logger = logging.getLogger("{}-{}".format(ztfname, filtercode))
+        logger = logging.getLogger("{}-{}".format(name, filtercode))
         if not logger.handlers:
-            logger_mode = 'a'
-            if args.log_overwrite:
-                logger_mode = 'w'
+            # logger_mode = 'a'
+            # if args.log_overwrite:
+            #     logger_mode = 'w'
 
-            logger.addHandler(logging.FileHandler(band_path.joinpath("output.log"), mode=logger_mode))
+            #logger.addHandler(logging.FileHandler(band_path.joinpath("output.log"), mode=logger_mode))
+            logger.addHandler(logging.FileHandler(band_path.joinpath("output.log"), mode='a'))
             logger.addHandler(logging.StreamHandler())
             logger.setLevel(logging.INFO)
 
@@ -223,36 +230,38 @@ def reduce_op(wd, ztfname, filtercode, func, save_stats, args):
 
     if 'reduce' in poloka_func[func].keys():
         try:
-            result = poloka_func[func]['reduce'](band_path, ztfname, filtercode, logger, args)
+            #result = poloka_func[func]['reduce'](band_path, ztfname, filtercode, logger, args)
+            result = poloka_func[func]['reduce'](lightcurve, logger, args)
         except Exception as e:
             result = False
             if func != 'clean':
-                logger.error("{}-{}: {}".format(ztfname, filtercode, func))
+                logger.error("{}-{}: {}".format(name, filtercode, func))
                 logger.error(traceback.format_exc())
             else:
-                print("{}-{}: {}".format(ztfname, filtercode, func))
+                print("{}-{}: {}".format(name, filtercode, func))
                 traceback.print_exc()
         finally:
+            end_time = time.perf_counter()
             if func != 'clean':
                 logger.info("="*80)
 
                 if result:
-                    band_path.joinpath("{}.success".format(func)).touch()
+                    lightcurve_path.joinpath("{}.success".format(func)).touch()
                 else:
-                    band_path.joinpath("{}.fail".format(func)).touch()
+                    lightcurve_path.joinpath("{}.fail".format(func)).touch()
             else:
                 return 0
 
-    end_time = time.perf_counter()
     if args.dump_timings and func != 'clean':
         map_start_time = None
         map_end_time = None
         if 'map' in poloka_func[func].keys():
-            quadrants = quadrants_from_band_path(band_path, None, check_files=["{}.success".format(func)])
-            timings = [load_timings(quadrant.joinpath("timings_{}".format(func))) for quadrant in quadrants if quadrant.joinpath("{}.success".format(func)).exists()]
+            # quadrants = quadrants_from_band_path(band_path, None, check_files=["{}.success".format(func)])
+            exposures = lightcurve.get_exposures(files_to_check="{}.success".format(func))
+            timings = [load_timings(exposure.path.joinpath("timings_{}".format(func))) for exposure in exposures if exposure.joinpath("{}.success".format(func)).exists()]
             timings_df = pd.DataFrame.from_records(timings)
-            timings_df['quadrant'] = list(map(lambda x: x.name, quadrants))
-            timings_df.set_index('quadrant', inplace=True)
+            timings_df['exposure'] = list(map(lambda x: x.name, exposures))
+            timings_df.set_index('exposure', inplace=True)
 
             map_start_time = timings_df['start'].min()
             map_end_time = timings_df['end'].max()
@@ -276,25 +285,27 @@ if __name__ == '__main__':
     argparser.add_argument('--cluster-worker', type=int, default=0)
     argparser.add_argument('--scratch', type=pathlib.Path, help="")
     argparser.add_argument('--from-scratch', action='store_true', help="When using scratch, does not transfer from distant directory first.")
-    argparser.add_argument('--quadrant-workspace', type=pathlib.Path, help="Quadrant workspace directory to use instead of the one given by --wd. Useful to acceleratre IOs by moving onto a SSD disk or in memory mapped filesystem.")
+    argparser.add_argument('--exposure-workspace', type=pathlib.Path, help="Exposure workspace directory to use instead of the one given by --wd. Useful to acceleratre IOs by moving onto a SSD disk or in memory mapped filesystem.")
     argparser.add_argument('--lc-folder', dest='lc_folder', type=pathlib.Path)
     argparser.add_argument('--astro-degree', type=int, default=3, help="Degree of ref->quadrant polynomial transformations for relative astrometric.")
     argparser.add_argument('--dump-timings', action='store_true')
     argparser.add_argument('--rm-intermediates', action='store_true', help="Remove intermediate files generated by Poloka.")
     argparser.add_argument('--synchronous-compute', action='store_true', help="Run computation synchronously on the main thread. Usefull for debugging and plotting on the fly.")
-    argparser.add_argument('--astro-min-mag', type=float, default=-8.)
+    argparser.add_argument('--astro-min-mag', type=float, default=None)
     argparser.add_argument('--log-std', action='store_true', help="If set, output log to standard output.")
     argparser.add_argument('--max-seeing', type=float, default=4.)
-    argparser.add_argument('--photom-max-star-chi2', type=float, default=1.)
-    argparser.add_argument('--min-psfstars', type=int, default=50)
+    argparser.add_argument('--photom-max-star-chi2', type=float, default=0.1)
+    argparser.add_argument('--min-psfstars', type=int, default=None)
     argparser.add_argument('--use-raw', action='store_true', help="If set, uses raw images instead of science images.")
-    argparser.add_argument('--astro-max-chi2', type=float, default=0.1)
+    argparser.add_argument('--astro-max-chi2', type=float, default=0.5)
     argparser.add_argument('--discard-calibrated', action='store_true')
     argparser.add_argument('--dump-node-info', action='store_true')
     argparser.add_argument('--log-overwrite', action='store_true', help="If set, all logs will be overwritten.")
     argparser.add_argument('--parallel-reduce', action='store_true', help="If set, parallelize reduce operations (if op has a parallel codepath).")
     argparser.add_argument('--refexp', type=str)
     argparser.add_argument('--compress', action='store_true', help="If set, work with compressed working directory")
+    argparser.add_argument('--photom-cat', choices=['gaia', 'ps1', 'ubercal'], type=str, help="Star catalog to use for relative photometry.")
+    argparser.add_argument('--use-gaia-stars', action='store_true', help="If set, uses Gaia to find stars (ie to build the standalone_stars.list catalog)")
 
     logger = logging.getLogger("main")
     #logger.addHandler(logging.StreamHandler())
@@ -302,8 +313,8 @@ if __name__ == '__main__':
     args = argparser.parse_args()
     args.wd = args.wd.expanduser().resolve()
 
-    if args.quadrant_workspace:
-        args.quadrant_workspace = args.quadrant_workspace.expanduser().resolve()
+    if args.exposure_workspace:
+        args.exposure_workspace = args.exposure_workspace.expanduser().resolve()
 
     if args.scratch:
         args.scratch = args.scratch.expanduser().resolve()

@@ -3,7 +3,7 @@
 from deppol_utils import run_and_log
 
 
-def reference_quadrant(band_path, ztfname, filtercode, logger, args):
+def reference_quadrant(lightcurve, logger, args):
     """
 
     """
@@ -11,56 +11,70 @@ def reference_quadrant(band_path, ztfname, filtercode, logger, args):
     import pathlib
     import pandas as pd
     import numpy as np
-    from astropy.wcs import WCS
-    from astropy.io import fits
-    from astropy.coordinates import SkyCoord
-    from utils import get_header_from_quadrant_path, read_list
-    from deppol_utils import quadrants_from_band_path
 
     # Determination of the best seeing quadrant
     # First determine the most represented field
     logger.info("Determining best seeing quadrant...")
-    quadrant_paths = quadrants_from_band_path(band_path, logger, check_files="psfstars.list")
+    exposures = lightcurve.get_exposures(files_to_check="psfstars.list")
+    seeings = dict([(exposure.name, (exposure.exposure_header['seeing'], exposure.field)) for exposure in exposures])
+    seeings_df = pd.DataFrame({'seeing': list(map(lambda x: x.exposure_header['seeing'], exposures)),
+                               'fieldid': list(map(lambda x: x.field, exposures)),
+                               'star_count': list(map(lambda x: len(x.get_matched_catalog('psfstars')), exposures))},
+                              index=list(map(lambda x: x.name, exposures)))
 
-    seeings = {}
-    for quadrant_path in quadrant_paths:
-        quadrant_header = get_header_from_quadrant_path(quadrant_path)
-        seeings[quadrant_path] = (quadrant_header['seseeing'], quadrant_header['fieldid'])
+    print(seeings_df.sort_values('star_count'))
 
-    fieldids = list(set([seeing[1] for seeing in seeings.values()]))
-    fieldids_count = [sum([1 for f in seeings.values() if f[1]==fieldid]) for fieldid in fieldids]
-    maxcount_field = fieldids[np.argmax(fieldids_count)]
+    fieldids = seeings_df.value_counts(subset='fieldid').index.tolist()
+    fieldids_count = seeings_df.value_counts(subset='fieldid').values
+    maxcount_fieldid = fieldids[0]
 
-    logger.info("Computing reference quadrants from {} quadrants".format(len(quadrant_paths)))
+    logger.info("Computing reference exposure from {} exposures".format(len(exposures)))
     logger.info("{} different field ids".format(len(fieldids)))
     logger.info("Field ids: {}".format(fieldids))
     logger.info("Count: {}".format(fieldids_count))
-    logger.info("Max quadrant field={}".format(maxcount_field))
+    logger.info("Max quadrant field={}".format(maxcount_fieldid))
+    logger.info("Determining the minimum number of stars the reference must have")
+    if args.min_psfstars:
+        logger.info("  --min-psfstars defined.")
+        min_psfstars = args.min_psfstars
+    else:
+        logger.info("  --min-psfstars not defined, use 3(N+1)(N+2) with N the relative astrometry polynomial degree.")
+        min_psfstars = 2*(args.astro_degree+1)*(args.astro_degree+2)
+    logger.info("Minimum stars for reference={}".format(min_psfstars))
 
-    seeing_df = pd.DataFrame([[quadrant, seeings[quadrant][0]] for quadrant in seeings.keys() if seeings[quadrant][1]==maxcount_field], columns=['quadrant', 'seeing'])
-    seeing_df = seeing_df.set_index(['quadrant'])
-
-    # Remove exposure where small amounts of stars are detected
-    seeing_df['n_standalonestars'] = list(map(lambda x: len(read_list(pathlib.Path(x).joinpath("standalone_stars.list"))[1]), seeing_df.index))
-    seeing_df = seeing_df.loc[seeing_df['n_standalonestars'] >= 25]
-
-    idxmin = seeing_df.idxmin().values[0]
-    minseeing = seeing_df.at[idxmin, 'seeing']
+    idxmin = seeings_df.loc[seeings_df['fieldid']==maxcount_fieldid].loc[seeings_df['star_count']>=min_psfstars]['seeing'].idxmin()
+    minseeing = seeings_df.loc[idxmin, 'seeing']
 
     logger.info("Best seeing quadrant: {}". format(idxmin))
     logger.info("  with seeing={}".format(minseeing))
+    logger.info("  psfstars count={}".format(len(lightcurve.exposures[idxmin].get_catalog('psfstars.list').df)))
 
-    logger.info("Reading SN1a parameters")
-    sn_parameters = pd.read_hdf(args.lc_folder.joinpath("{}.hd5".format(ztfname)), key='sn_info')
+    logger.info("Writing into {}".format(lightcurve.path.joinpath("reference_exposure")))
+    with open(lightcurve.path.joinpath("reference_exposure"), 'w') as f:
+        f.write(idxmin)
 
-    logger.info("Reading reference WCS")
-    with fits.open(pathlib.Path(idxmin).joinpath("calibrated.fits")) as hdul:
-        w = WCS(hdul[0].header)
+    return True
 
-    ra_px, dec_px = w.world_to_pixel(SkyCoord(ra=sn_parameters['sn_ra'], dec=sn_parameters['sn_dec'], unit='deg'))
+
+def smphot(lightcurve, logger, args):
+    import numpy as np
+    import pandas as pd
+    from astropy.wcs import WCS
+    from astropy.coordinates import SkyCoord
+
+    from utils import ListTable
 
     logger.info("Writing driver file")
-    driver_path = band_path.joinpath("{}_driver_{}".format(ztfname, filtercode))
+    exposures = lightcurve.get_exposures()
+    reference_exposure = lightcurve.get_reference_exposure()
+
+    logger.info("Reading SN1a parameters")
+    sn_parameters = pd.read_hdf(args.lc_folder.joinpath("{}.hd5".format(lightcurve.name)), key='sn_info')
+
+    ra_px, dec_px = lightcurve.exposures[reference_exposure].wcs.world_to_pixel(SkyCoord(ra=sn_parameters['sn_ra'], dec=sn_parameters['sn_dec'], unit='deg'))
+
+    logger.info("Writing driver file")
+    driver_path = lightcurve.path.joinpath("smphot_driver")
     logger.info("Writing driver file at location {}".format(driver_path))
     with open(driver_path, 'w') as f:
         f.write("OBJECTS\n")
@@ -68,71 +82,56 @@ def reference_quadrant(band_path, ztfname, filtercode, logger, args):
                                                                                 dec_px[0],
                                                                                 sn_parameters['t_inf'].values[0],
                                                                                 sn_parameters['t_sup'].values[0],
-                                                                                ztfname,
-                                                                                filtercode))
+                                                                                lightcurve.name,
+                                                                                lightcurve.filterid))
         f.write("IMAGES\n")
-        for quadrant_path in quadrant_paths:
-            f.write("{}\n".format(quadrant_path))
+        for exposure in exposures:
+            f.write("{}\n".format(exposure.path))
         f.write("PHOREF\n")
-        f.write("{}\n".format(idxmin))
+        f.write("{}\n".format(str(lightcurve.path.joinpath(reference_exposure))))
         f.write("PMLIST\n")
-        f.write(str(band_path.joinpath("astrometry/pmcatalog.list")))
+        f.write(str(lightcurve.path.joinpath("astrometry/pmcatalog.list")))
 
-    with open(band_path.joinpath("reference_quadrant"), 'w') as f:
-        f.write(str(idxmin.name))
-
-    return True
-
-
-def smphot(band_path, ztfname, filtercode, logger, args):
-    import numpy as np
-    import pandas as pd
-
-    from deppol_utils import run_and_log
-    from utils import get_ref_quadrant_from_band_folder, ListTable
 
     logger.info("Running scene modeling")
 
-    smphot_output = band_path.joinpath("smphot_output")
-    smphot_output.mkdir(exist_ok=True)
+    lightcurve.smphot_path.mkdir(exist_ok=True)
 
-    returncode = run_and_log(["mklc", "-t", band_path.joinpath("mappings"), "-O", smphot_output, "-v", band_path.joinpath("{}_driver_{}".format(ztfname, filtercode))], logger=logger)
+    returncode = run_and_log(["mklc", "-t", lightcurve.mappings_path, "-O", lightcurve.smphot_path, "-v", lightcurve.driver_path], logger=logger)
 
     logger.info("Deleting unuseful *.fits files...")
-    sn_parameters = pd.read_hdf(args.lc_folder.joinpath("{}.hd5".format(ztfname)), key='sn_info')
-    fit_df = ListTable.from_filename(smphot_output.joinpath("lc2fit.dat")).df
+    sn_parameters = pd.read_hdf(args.lc_folder.joinpath("{}.hd5".format(lightcurve.name)), key='sn_info')
+    fit_df = ListTable.from_filename(lightcurve.smphot_path.joinpath("lc2fit.dat")).df
     t0 = sn_parameters['t0mjd'].item()
     t0_idx = np.argmin(np.abs(fit_df['Date']-t0))
-    t0_quadrant = fit_df.iloc[t0_idx]['name']
-    to_delete_list = list(smphot_output.glob("*.fits"))
-    print("Keeping t0 image {}".format(t0_quadrant))
-    to_delete_list.remove(smphot_output.joinpath(t0_quadrant+".fits"))
+    t0_exposure = fit_df.iloc[t0_idx]['name']
+    to_delete_list = list(lightcurve.smphot_path.glob("*.fits"))
+    print("Keeping t0 image {}".format(t0_exposure))
+    to_delete_list.remove(lightcurve.smphot_path.joinpath(t0_exposure+".fits"))
+
     for to_delete in to_delete_list:
         to_delete.unlink()
 
     return (returncode == 0)
 
 
-def smphot_plot(band_path, ztfname, filtercode, logger, args):
-    # import matplotlib.pyplot as plt
-    # matplotlib.use('Agg')
+def smphot_plot(lightcurve, logger, args):
+    import matplotlib
+    import matplotlib.pyplot as plt
 
-    # logger.info("Running pmfit plots")
-    # driver_path = band_path.joinpath("{}_driver_{}".format(ztfname, filtercode))
-    # gaia_path = band_path.joinpath("{}/{}/gaia.npy".format(ztfname, filtercode))
-    # run_and_log(["pmfit", driver_path, "--gaia={}".format(gaia_path), "--outdir={}".format(cwd.joinpath("pmfit")), "--plot-dir={}".format(cwd.joinpath("pmfit_plot")), "--plot", "--mu-max=20."], logger=logger)
+    from utils import ListTable
+    matplotlib.use('Agg')
 
-    # logger.info("Running smphot plots")
-    # with open(band_path.joinpath("smphot_output/lightcurve_sn.dat"), 'r') as f:
-    #     _, sn_flux_df = list_format.read_list(f)
+    logger.info("Running smphot plots")
+    sn_flux_df = ListTable.from_filename(lightcurve.smphot_path.joinpath("lightcurve_sn.dat")).df
 
-    # plt.errorbar(sn_flux_df['mjd'], sn_flux_df['flux'], yerr=sn_flux_df['varflux'], fmt='.k')
-    # plt.xlabel("MJD")
-    # plt.ylabel("Flux")
-    # plt.title("Calibrated lightcurve - {} - {}".format(ztfname, filtercode))
-    # plt.grid()
-    # plt.savefig(band_path.joinpath("{}-{}_smphot_lightcurve.png".format(ztfname, filtercode)), dpi=300)
-    # plt.close()
+    plt.errorbar(sn_flux_df['mjd'].to_numpy(), sn_flux_df['flux'].to_numpy(), yerr=sn_flux_df['varflux'].to_numpy(), fmt='.k')
+    plt.xlabel("MJD")
+    plt.ylabel("Flux")
+    plt.title("Calibrated lightcurve - {}-{}".format(lightcurve.name, lightcurve.filterid))
+    plt.grid()
+    plt.savefig(lightcurve.smphot_path.joinpath("{}-{}_smphot_lightcurve.png".format(lightcurve.name, lightcurve.filterid)), dpi=300)
+    plt.close()
 
     return True
 
@@ -147,7 +146,7 @@ def _run_star_mklc(i, smphot_stars_folder, mapping_folder, driver_path):
         f.write(return_log)
 
 
-def smphot_stars(band_path, ztfname, filtercode, logger, args):
+def smphot_stars(lightcurve, logger, args):
     import pandas as pd
     from dask import delayed, compute
     import numpy as np
@@ -156,36 +155,52 @@ def smphot_stars(band_path, ztfname, filtercode, logger, args):
     import astropy.units as u
 
     # Build calibration catalog
-    gaia_stars_df = pd.read_parquet(band_path.joinpath("gaia_stars.parquet"))
+    cat_stars_df = lightcurve.get_ext_catalog(args.photom_cat)
 
-    calib_df = gaia_stars_df[['ra', 'dec', 'gmag', 'rpmag', 'e_rpmag', 'e_gmag']].rename(columns={'rpmag': 'magr', 'e_rpmag': 'emagr', 'gmag': 'magg', 'e_gmag': 'emagg'})
-    calib_df['magi'] = calib_df['magr']
-    calib_df['emagi'] = calib_df['emagr']
-    calib_df.insert(2, column='n', value=1)
-    calib_df['ristar'] = list(range(len(gaia_stars_df)))
+    cat_indices = list(set(pd.concat([exposure.get_catalog("cat_indices.hd5", key='ext_cat_indices')['indices'] for exposure in lightcurve.get_exposures(files_to_check="cat_indices.hd5")]).tolist()))
+    cat_stars_df = cat_stars_df.iloc[cat_indices]
 
-    gaia_stars_skycoords = SkyCoord(ra=gaia_stars_df['ra'], dec=gaia_stars_df['dec'], unit='deg')
+    logger.info("Building calibration catalog using {}".format(args.photom_cat))
+    if args.photom_cat == 'gaia':
+        calib_df = cat_stars_df[['ra', 'dec', 'Gmag', 'RPmag', 'e_RPmag', 'e_Gmag']].rename(columns={'RPmag': 'magr', 'e_RPmag': 'emagr', 'Gmag': 'magg', 'e_Gmag': 'emagg'})
+        calib_df['magi'] = calib_df['magr']
+        calib_df['emagi'] = calib_df['emagr']
+        calib_df.insert(2, column='n', value=1)
+        calib_df['ristar'] = list(range(len(cat_stars_df)))
+    elif args.photom_cat == 'ps1':
+        calib_df = cat_stars_df[['ra', 'dec', 'gmag', 'rmag', 'imag', 'e_gmag', 'e_rmag', 'e_imag']].rename(
+            columns={'gmag': 'magg', 'rmag': 'magr', 'imag': 'magi', 'e_gmag': 'emagg', 'e_rmag': 'emagr', 'e_imag': 'emagi'})
+        calib_df.insert(2, column='n', value=1)
+        calib_df['ristar'] = list(range(len(cat_stars_df)))
+
+        # Replace nan incertitudes to 0... probably not the best thing to do
+        calib_df[['emagg', 'emagr', 'emagi']] = calib_df[['emagg', 'emagr', 'emagi']].fillna(0.)
+
+    elif args.photom_cat == 'ubercal':
+        raise NotImplementedError
+    else:
+        raise NotImplementedError
+
+    gaia_stars_skycoords = SkyCoord(ra=cat_stars_df['ra'], dec=cat_stars_df['dec'], unit='deg')
 
     # Filter stars by SN proximity (in some radius defined by --smphot-stars-radius)
-    sn_parameters = pd.read_hdf(args.lc_folder.joinpath("{}.hd5".format(ztfname)), key='sn_info')
+    sn_parameters = pd.read_hdf(args.lc_folder.joinpath("{}.hd5".format(lightcurve.name)), key='sn_info')
     sn_skycoord = SkyCoord(ra=sn_parameters['sn_ra'], dec=sn_parameters['sn_dec'], unit='deg')
     idxc, idxcatalog, d2d, d3d = sn_skycoord.search_around_sky(gaia_stars_skycoords, 0.35*u.deg)
 
     logger.info("Total star count: {}".format(len(calib_df)))
     calib_df = calib_df.iloc[idxc]
-    calib_df = calib_df.iloc[:100]
+    calib_df = calib_df.iloc[:100] # For testing, we choose 100 stars
     logger.info("Total star count in a 0.35 deg radius around SN: {}".format(len(calib_df)))
     calib_table = ListTable(None, calib_df)
 
-    smphot_stars_folder = band_path.joinpath("smphot_stars")
-    smphot_stars_folder.mkdir(exist_ok=True)
+    print(calib_df)
 
-    stars_calib_cat_path = smphot_stars_folder.joinpath("calib_stars_cat.list")
+    lightcurve.smphot_stars_path.mkdir(exist_ok=True)
+
+    stars_calib_cat_path = lightcurve.smphot_stars_path.joinpath("calib_stars_cat.list")
+    smphot_stars_cat_path = lightcurve.smphot_stars_path.joinpath("smphot_stars_cat.list")
     calib_table.write_to(stars_calib_cat_path)
-
-    driver_path = band_path.joinpath("{}_driver_{}".format(ztfname, filtercode))
-    mapping_folder = band_path.joinpath("mappings")
-    smphot_stars_cat_path = smphot_stars_folder.joinpath("smphot_stars_cat.list")
 
     if args.parallel_reduce:
         # If parallel reduce enable, split up the catalog
@@ -195,19 +210,19 @@ def smphot_stars(band_path, ztfname, filtercode, logger, args):
         calib_dfs = np.array_split(calib_df, n)
         jobs = []
         for i, calib_df in enumerate(calib_dfs):
-            calib_stars_folder = smphot_stars_folder.joinpath("mklc_{}".format(i))
+            calib_stars_folder = lightcurve.smphot_stars_path.joinpath("mklc_{}".format(i))
             calib_stars_folder.mkdir(exist_ok=True)
             calib_table = ListTable(None, calib_df)
             calib_table.write_to(calib_stars_folder.joinpath("calib_stars_cat_{}.list".format(i)))
 
         logger.info("Submitting into scheduler")
-        jobs = [delayed(_run_star_mklc)(i, smphot_stars_folder, mapping_folder, driver_path) for i in list(range(n))]
+        jobs = [delayed(_run_star_mklc)(i, lightcurve.smphot_stars_path, lightcurve.mappings_path, lightcurve.path.joinpath("smphot_driver")) for i in list(range(n))]
         compute(jobs)
         logger.info("Computation done, concatening catalogs")
 
         # Concatenate output catalog together
         #calib_cat_paths = [smphot_stars_folder.joinpath("smphot_stars_cat_{}.list".format(i)) for i in range(n)]
-        calib_cat_paths = list(smphot_stars_folder.glob("mklc_*/smphot_stars_cat_*.list"))
+        calib_cat_paths = list(lightcurve.smphot_stars_path.glob("mklc_*/smphot_stars_cat_*.list"))
         calib_cat_tables = [ListTable.from_filename(calib_cat_path) for calib_cat_path in calib_cat_paths]
 
         calib_cat_df = pd.concat([calib_cat_table.df for calib_cat_table in calib_cat_tables])
@@ -219,17 +234,17 @@ def smphot_stars(band_path, ztfname, filtercode, logger, args):
         logger.info("Done")
 
         logger.info("Deleting unuseful *.fits files...")
-        to_delete_list = list(smphot_stars_folder.glob("mklc_*/*.fits"))
+        to_delete_list = list(lightcurve.smphot_stars_path.glob("mklc_*/*.fits"))
         for to_delete in to_delete_list:
             to_delete.unlink()
 
     else:
         # Run on a single worker
         logger.info("Running mklc onto the main worker")
-        run_and_log(["mklc", "-t", band_path.joinpath("mappings"), "-O", smphot_stars_folder, "-v", driver_path, "-o", smphot_stars_cat_path, '-c', stars_calib_cat_path, "-f", "1"], logger=logger)
+        run_and_log(["mklc", "-t", lightcurve.mappings_path, "-O", lightcurve.smphot_stars_path, "-v", lightcurve.path.joinpath("smphot_driver"), "-o", smphot_stars_cat_path, '-c', stars_calib_cat_path, "-f", "1"], logger=logger)
         logger.info("Done")
         logger.info("Deleting unuseful *.fits files...")
-        to_delete_list = list(smphot_stars_folder.glob("*.fits"))
+        to_delete_list = list(lightcurve.smphot_stars_path.glob("*.fits"))
         for to_delete in to_delete_list:
             to_delete.unlink()
 
@@ -241,7 +256,7 @@ class ConstantStarModel:
         pass
 
 
-def smphot_stars_plot(band_path, ztfname, filtercode, logger, args):
+def smphot_stars_plot(lightcurve, logger, args):
     from utils import ListTable
     import matplotlib.pyplot as plt
     from scipy.stats import norm
@@ -255,8 +270,8 @@ def smphot_stars_plot(band_path, ztfname, filtercode, logger, args):
     from saunerie.linearmodels import LinearModel, RobustLinearSolver
     matplotlib.use('Agg')
 
-    smphot_stars_output = band_path.joinpath("smphot_stars_output")
-    calib_table = ListTable.from_filename(smphot_stars_output.joinpath("calib_cat.list"))
+    smphot_stars_output = lightcurve.smphot_stars_path
+    calib_table = ListTable.from_filename(smphot_stars_output.joinpath("smphot_stars_cat.list"))
 
     stars_df = calib_table.df[calib_table.df['flux'] >= 0.]
     # Remove negative fluxes
@@ -468,9 +483,9 @@ def smphot_stars_plot(band_path, ztfname, filtercode, logger, args):
         ax.xaxis.set_minor_locator(AutoMinorLocator())
         ax.yaxis.set_minor_locator(AutoMinorLocator())
         # plt.errorbar(stars_df.loc[star_mask]['mjd'], stars_df.loc[star_mask]['flux'], yerr=stars_df.loc[star_mask]['error'], marker='.', color='black', ls='')
-        plt.errorbar(stars_df.loc[star_mask]['mjd'], stars_df.loc[star_mask]['m'], yerr=stars_df.loc[star_mask]['em'], marker='.', color='black', ls='')
+        plt.errorbar(stars_df.loc[star_mask]['mjd'].to_numpy(), stars_df.loc[star_mask]['m'].to_numpy(), yerr=stars_df.loc[star_mask]['em'].to_numpy(), marker='.', color='black', ls='')
         if len(outlier_star_mask) > 0.:
-            plt.errorbar(outlier_stars_df.loc[outlier_star_mask]['mjd'], outlier_stars_df.loc[outlier_star_mask]['m'], yerr=outlier_stars_df.loc[outlier_star_mask]['em'], marker='x', color='black', ls='')
+            plt.errorbar(outlier_stars_df.loc[outlier_star_mask]['mjd'].to_numpy(), outlier_stars_df.loc[outlier_star_mask]['m'].to_numpy(), yerr=outlier_stars_df.loc[outlier_star_mask]['em'].to_numpy(), marker='x', color='black', ls='')
         plt.axhline(m, color='black')
         plt.grid(linestyle='--', color='black')
         plt.xlabel("MJD")

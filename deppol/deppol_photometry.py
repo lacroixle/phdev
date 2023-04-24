@@ -18,13 +18,13 @@ class ZPModel():
         self.params = self.init_params()
 
     def init_params(self):
-        quadrant_count = len(self.dp.quadrant_set)
+        exposure_count = len(self.dp.exposure_set)
         color_coeffs = [('k_{}'.format(k+1), 1) for k in range(self.degree)]
-        fp = FitParameters([*color_coeffs, ('zp', quadrant_count)])
+        fp = FitParameters([*color_coeffs, ('zp', exposure_count)])
         return fp
 
     def sigma(self, pedestal=0.):
-        return np.sqrt(self.dp.emag**2+self.dp.gaia_emag**2+pedestal**2)
+        return np.sqrt(self.dp.emag**2+self.dp.cat_emag**2+pedestal**2)
 
     @property
     def W(self):
@@ -35,8 +35,9 @@ class ZPModel():
         """
         self.params.free = p
 
-        zp = self.params['zp'].full[self.dp.quadrant_index]
-        col = self.dp.bpmag - self.dp.rpmag
+        zp = self.params['zp'].full[self.dp.exposure_index]
+        col = self.dp.colormag
+        # col = self.dp.bpmag - self.dp.rpmag
         k_i = [self.params['k_{}'.format(k+1)].full[0] for k in range(self.degree)]
 
         # v = k * col + zp
@@ -62,7 +63,7 @@ class ZPModel():
 
         # dmdzp
         ii.append(i)
-        jj.append(self.params['zp'].indexof(self.dp.quadrant_index))
+        jj.append(self.params['zp'].indexof(self.dp.exposure_index))
         vv.append(np.full(N, 1.))
 
         ii = np.hstack(ii)
@@ -81,7 +82,7 @@ def _fit_photometry(model, logger):
     p = model.params.free.copy()
     v, J = model(p, jac=1)
     H = J.T @ model.W @ J
-    B = J.T @ model.W @ (model.dp.mag - model.dp.gaia_mag)
+    B = J.T @ model.W @ (model.dp.mag - model.dp.cat_mag)
     fact = cholmod.cholesky(H.tocsc())
     p = fact(B)
     model.params.free = p
@@ -91,24 +92,24 @@ def _fit_photometry(model, logger):
 
 def _filter_noisy_stars(model, y_model, threshold, logger):
     logger.info("Removing noisy stars...")
-    res = y_model - (model.dp.mag - model.dp.gaia_mag)
-    chi2 = np.bincount(model.dp.gaiaid_index, weights=res**2)/np.bincount(model.dp.gaiaid_index)
+    res = y_model - (model.dp.mag - model.dp.cat_mag)
+    chi2 = np.sqrt(np.bincount(model.dp.catid_index, weights=res**2)/np.bincount(model.dp.catid_index))
 
     logger.info("Chi2 treshold={}".format(threshold))
-    noisy_stars = model.dp.gaiaid_set[chi2 > threshold]
-    noisy_measurements = np.any([model.dp.gaiaid == noisy_star for noisy_star in noisy_stars], axis=0)
+    noisy_stars = model.dp.catid_set[chi2 > threshold]
+    noisy_measurements = np.any([model.dp.catid == noisy_star for noisy_star in noisy_stars], axis=0)
 
     model.dp.compress(~noisy_measurements)
     logger.info("Filtered {} stars...".format(len(noisy_stars)))
     return ZPModel(model.dp)
 
 
-def _dump_photoratios(model, y_model, reference_quadrant, save_folder_path):
-    zp_ref = model.params['zp'].full[model.dp.quadrant_map[reference_quadrant]]
+def _dump_photoratios(model, y_model, reference_exposure, save_folder_path):
+    zp_ref = model.params['zp'].full[model.dp.exposure_map[reference_exposure]]
 
     alphas = {}
-    for quadrant in model.dp.quadrant_set:
-        alphas[quadrant] = 10**(-0.4*(model.params['zp'].full[model.dp.quadrant_map[quadrant]] - zp_ref))
+    for exposure in model.dp.exposure_set:
+        alphas[exposure] = 10**(-0.4*(model.params['zp'].full[model.dp.exposure_map[exposure]] - zp_ref))
 
     # TODO: compute error on alpha
     alphas_df = pd.DataFrame(data={'expccd': list(alphas.keys()), 'alpha': list(alphas.values())})
@@ -116,38 +117,55 @@ def _dump_photoratios(model, y_model, reference_quadrant, save_folder_path):
 
     ndof = len(y_model) - len(model.params.free)
     #chi2 = np.sum((y_model - (model.dp.mag - model.dp.gaia_mag))**2/y_model)
-    chi2 = np.sum((y_model - (model.dp.mag - model.dp.gaia_mag))**2/np.sqrt(model.dp.emag**2+model.dp.gaia_emag**2))
+    chi2 = np.sum((y_model - (model.dp.mag - model.dp.cat_mag))**2/np.sqrt(model.dp.emag**2+model.dp.cat_emag**2))
 
-    photom_ratios_table = ListTable({'CHI2': chi2, 'NDOF': ndof, 'RCHI2': chi2/ndof, 'REF': reference_quadrant}, alphas_df)
+    photom_ratios_table = ListTable({'CHI2': chi2, 'NDOF': ndof, 'RCHI2': chi2/ndof, 'REF': reference_exposure}, alphas_df)
     photom_ratios_table.write_to(save_folder_path.joinpath("photom_ratios.ntuple"))
 
 
-def photometry_fit(band_path, ztfname, filtercode, logger, args):
+def photometry_fit(lightcurve, logger, args):
     import pandas as pd
     from croaks import DataProxy
-    from utils import filtercode2gaiaband, make_index_from_list, get_ref_quadrant_from_band_folder
+    from utils import filtercode2extcatband, make_index_from_list, get_ref_quadrant_from_band_folder
     import pickle
 
-    save_folder_path = band_path.joinpath("photometry")
+    save_folder_path = lightcurve.photometry_path
     save_folder_path.mkdir(exist_ok=True)
-    band_path.joinpath("mappings").mkdir(exist_ok=True)
+    lightcurve.mappings_path.mkdir(exist_ok=True)
 
     logger.info("Building DataProxy")
+
     # Build a dataproxy from measures and augment it
-    matched_stars_df = pd.read_parquet(band_path.joinpath("matched_stars.parquet"))
+    matched_stars_df = lightcurve.extract_star_catalog(['psfstars', args.photom_cat])
+    matched_stars_df.to_csv("out.csv")
 
-    matched_stars_df['gaia_mag'] = matched_stars_df[filtercode2gaiaband[filtercode]]
-    matched_stars_df['gaia_emag'] = matched_stars_df['e_{}'.format(filtercode2gaiaband[filtercode])]
+    exposures_df = lightcurve.extract_exposure_catalog()
+    for column in exposures_df.columns:
+        matched_stars_df[column] = exposures_df.loc[matched_stars_df['exposure'], column].to_numpy()
 
-    # Filter out non linear response
-    # matched_stars_df = matched_stars_df.loc[((matched_stars_df['bpmag'] - matched_stars_df['rpmag']) > 0.5)]
-    # matched_stars_df = matched_stars_df.loc[((matched_stars_df['bpmag'] - matched_stars_df['rpmag']) < 1.5)]
-    matched_stars_df = matched_stars_df.loc[(matched_stars_df['colormag'] > 0.5)]
-    matched_stars_df = matched_stars_df.loc[(matched_stars_df['colormag'] < 1.5)]
+    matched_stars_df['mag'] = -2.5*np.log10(matched_stars_df['psfstars_flux'])
+    matched_stars_df['emag'] = 1.08*matched_stars_df['psfstars_eflux']/matched_stars_df['psfstars_flux']
+    matched_stars_df['cat_mag'] = matched_stars_df['{}_{}'.format(args.photom_cat, filtercode2extcatband[args.photom_cat][lightcurve.filterid])]
+    matched_stars_df['cat_emag'] = matched_stars_df['{}_e_{}'.format(args.photom_cat, filtercode2extcatband[args.photom_cat][lightcurve.filterid])]
+
+    if args.photom_cat == 'gaia':
+        matched_stars_df['colormag'] = matched_stars_df['gaia_BPmag'] - matched_stars_df['gaia_RPmag']
+        matched_stars_df.rename(columns={'gaia_Source': 'catid'}, inplace=True)
+        # Filter out non linear response
+        matched_stars_df = matched_stars_df.loc[(matched_stars_df['colormag'] > 0.5)]
+        matched_stars_df = matched_stars_df.loc[(matched_stars_df['colormag'] < 1.5)]
+    elif args.photom_cat == 'ps1':
+        matched_stars_df['colormag'] = matched_stars_df['ps1_gmag'] - matched_stars_df['ps1_zmag']
+        matched_stars_df.rename(columns={'ps1_objID': 'catid'}, inplace=True)
+        matched_stars_df = matched_stars_df.loc[(matched_stars_df['colormag'] > 0.5)]
+
+    matched_stars_df = matched_stars_df[['mag', 'emag', 'cat_mag', 'cat_emag', 'colormag', 'exposure', 'catid', 'mjd', 'rcid', 'airmass']]
+    matched_stars_df.dropna(inplace=True)
+
 
     kwargs = dict([(keyword, keyword) for keyword in matched_stars_df.columns])
 
-    dp_index_list = ['quadrant', 'mjd', 'gaiaid', 'rcid', 'gaia_mag']
+    dp_index_list = ['exposure', 'catid', 'rcid', 'mjd']
     dp = DataProxy(matched_stars_df.to_records(), **kwargs)
     make_index_from_list(dp, dp_index_list)
 
@@ -168,12 +186,12 @@ def photometry_fit(band_path, ztfname, filtercode, logger, args):
         pickle.dump(new_model, f)
 
     logger.info("Computing photometric ratios")
-    _dump_photoratios(new_model, y_new_model, get_ref_quadrant_from_band_folder(band_path), band_path.joinpath("mappings"))
+    _dump_photoratios(new_model, y_new_model, lightcurve.get_reference_exposure(), lightcurve.mappings_path)
 
     return True
 
 
-def photometry_fit_plot(band_path, ztfname, filtercode, logger, args):
+def photometry_fit_plot(lightcurve, logger, args):
     import pickle
     import matplotlib
     import matplotlib.pyplot as plt
@@ -195,11 +213,11 @@ def photometry_fit_plot(band_path, ztfname, filtercode, logger, args):
 
         k_i = [model.params['k_{}'.format(k+1)].full[0] for k in range(model.degree)]
         zp = model.params['zp'].full[:]
-        res = y_model - (model.dp.mag - model.dp.gaia_mag)
-        chi2 = np.bincount(model.dp.gaiaid_index, weights=res**2)/np.bincount(model.dp.gaiaid_index)
-        measurement_chi2 = np.array([chi2[model.dp.gaiaid_map[gaiaid]] for gaiaid in model.dp.gaiaid])
+        res = y_model - (model.dp.mag - model.dp.cat_mag)
+        chi2 = np.bincount(model.dp.catid_index, weights=res**2)/np.bincount(model.dp.catid_index)
+        measurement_chi2 = np.array([chi2[model.dp.catid_map[catid]] for catid in model.dp.catid])
 
-        plt.plot([model.dp.gaiaid_map[gaiaid] for gaiaid in model.dp.gaiaid_set], np.sqrt(chi2), '.', color='black')
+        plt.plot([model.dp.catid_map[catid] for catid in model.dp.catid_set], np.sqrt(chi2), '.', color='black')
         plt.grid()
         plt.xlabel("Star index")
         plt.ylabel("RMS Res")
@@ -211,19 +229,19 @@ def photometry_fit_plot(band_path, ztfname, filtercode, logger, args):
         plt.grid()
         _show("sigma_mag")
 
-        rms = [np.std(model.dp.mag[model.dp.gaiaid==gaiaid]-model.params['zp'].full[model.dp.quadrant_index[model.dp.gaiaid==gaiaid]], ddof=1) for gaiaid in model.dp.gaiaid_set]
+        rms = [np.std(model.dp.mag[model.dp.catid==catid]-model.params['zp'].full[model.dp.exposure_index[model.dp.catid==catid]], ddof=1) for catid in model.dp.catid_set]
 
-        plt.plot(range(len(model.dp.gaiaid_set)), rms, '.', color='xkcd:light blue')
-        plt.xlabel("Gaia star #")
+        plt.plot(range(len(model.dp.catid_set)), rms, '.', color='xkcd:light blue')
+        plt.xlabel("Cat star #")
         plt.ylabel("Lightcurve RMS")
         plt.grid()
         _show("rms_star")
 
-        plt.plot(model.dp.gaia_mag_set, rms, '.', color='xkcd:light blue')
-        plt.xlabel("$g_G$")
-        plt.ylabel("Lightcurve RMS")
-        plt.grid()
-        _show("rms_mag")
+        # plt.plot(model.dp.cat_mag_set, rms, '.', color='xkcd:light blue')
+        # plt.xlabel("$g_G$")
+        # plt.ylabel("Lightcurve RMS")
+        # plt.grid()
+        # _show("rms_mag")
 
         # bins=50
         # pull_hist = np.histogram2d(model.dp.ra, model.dp.dec, weights=res/model.sigma(), bins=bins)[0]/np.histogram2d(model.dp.ra, model.dp.dec, weights=1./model.sigma(), bins=bins)[0]
@@ -238,49 +256,49 @@ def photometry_fit_plot(band_path, ztfname, filtercode, logger, args):
         s = np.std(pull)
         n = 4. # Limit multiplier for more consistant plots
 
-        plt.subplot(1, 2, 1)
-        #plt.plot(model.dp.mag, pull, ',', color='black')
-        for i, rcid in enumerate(model.dp.rcid_set):
-            mask = (model.dp.rcid == rcid)
-            plt.scatter(model.dp.mag[mask], pull[mask], c=measurement_chi2[mask], s=0.05, marker=idx2markerstyle[i], label="{}".format(rcid))
-        cbar = plt.colorbar()
-        cbar.set_label("$\\chi^2_p$")
-        plt.legend()
-        plt.ylim(-n*s, n*s)
-        plt.xlabel("m")
-        plt.ylabel("pull")
-        plt.grid()
+        # plt.subplot(1, 2, 1)
+        # #plt.plot(model.dp.mag, pull, ',', color='black')
+        # for i, rcid in enumerate(model.dp.rcid_set):
+        #     mask = (model.dp.rcid == rcid)
+        #     plt.scatter(model.dp.mag[mask], pull[mask], c=measurement_chi2[mask], s=0.05, marker=idx2markerstyle[i], label="{}".format(rcid))
+        # cbar = plt.colorbar()
+        # cbar.set_label("$\\chi^2_p$")
+        # plt.legend()
+        # plt.ylim(-n*s, n*s)
+        # plt.xlabel("m")
+        # plt.ylabel("pull")
+        # plt.grid()
 
-        ax = plt.subplot(1, 2, 2)
-        plt.hist(pull, range=[-n*s, n*s], bins=50, orientation='horizontal', histtype='step', color='black', density=True)
-        x = np.linspace(-n*s, n*s, 100)
-        plt.plot(norm.pdf(x, loc=m, scale=s), x)
-        plt.text(0., -0.1, "$\\sigma={:.5f}, \\mu={:.5f}$".format(s, m), transform=ax.transAxes)
-        plt.xticks([])
-        plt.yticks([])
-        _show("pull_mag")
+        # ax = plt.subplot(1, 2, 2)
+        # plt.hist(pull, range=[-n*s, n*s], bins=50, orientation='horizontal', histtype='step', color='black', density=True)
+        # x = np.linspace(-n*s, n*s, 100)
+        # plt.plot(norm.pdf(x, loc=m, scale=s), x)
+        # plt.text(0., -0.1, "$\\sigma={:.5f}, \\mu={:.5f}$".format(s, m), transform=ax.transAxes)
+        # plt.xticks([])
+        # plt.yticks([])
+        # _show("pull_mag")
 
-        xbinned_mag, yplot_pull, pull_dispersion = binplot(model.dp.mag, pull, data=True, rms=True, scale=False)
-        plt.xlabel("$m$")
-        plt.ylabel("pull")
-        _show("pull_profile")
+        # xbinned_mag, yplot_pull, pull_dispersion = binplot(model.dp.mag, pull, data=True, rms=True, scale=False)
+        # plt.xlabel("$m$")
+        # plt.ylabel("pull")
+        # _show("pull_profile")
 
-        plt.plot(xbinned_mag, pull_dispersion, color='black')
-        plt.grid()
-        plt.xlabel("m")
-        plt.ylabel("pull RMS")
-        _show("pull_rms")
+        # plt.plot(xbinned_mag, pull_dispersion, color='black')
+        # plt.grid()
+        # plt.xlabel("m")
+        # plt.ylabel("pull RMS")
+        # _show("pull_rms")
 
-        for rcid in model.dp.rcid_set:
-            mask = model.dp.rcid == rcid
-            plt.hist2d(model.dp.x[mask], model.dp.y[mask], weights=res[mask], bins=100, vmin=-0.5, vmax=0.5)
-            plt.title("Residuals, rcid={}, n_measurements={}".format(rcid, len(res[mask])))
-            plt.axis('equal')
-            plt.axis('off')
-            plt.xlabel("$x$")
-            plt.ylabel("$y$")
-            plt.colorbar()
-            _show("quad_{}".format(rcid))
+        # for rcid in model.dp.rcid_set:
+        #     mask = model.dp.rcid == rcid
+        #     plt.hist2d(model.dp.x[mask], model.dp.y[mask], weights=res[mask], bins=100, vmin=-0.5, vmax=0.5)
+        #     plt.title("Residuals, rcid={}, n_measurements={}".format(rcid, len(res[mask])))
+        #     plt.axis('equal')
+        #     plt.axis('off')
+        #     plt.xlabel("$x$")
+        #     plt.ylabel("$y$")
+        #     plt.colorbar()
+        #     _show("quad_{}".format(rcid))
 
         # ZP distribution
         plt.hist(zp, bins=40, histtype='step', color='black')
@@ -310,7 +328,7 @@ def photometry_fit_plot(band_path, ztfname, filtercode, logger, args):
         _show("res_day_index")
 
         #Residuals/star
-        plt.plot(model.dp.gaiaid_index, res, ',', color='red')
+        plt.plot(model.dp.catid_index, res, ',', color='red')
         plt.grid()
         plt.xlabel("Star")
         plt.ylabel("Residual")
@@ -324,7 +342,7 @@ def photometry_fit_plot(band_path, ztfname, filtercode, logger, args):
         _show("res_airmass")
 
         # Residuals/color
-        plt.plot(model.dp.bpmag - model.dp.rpmag, res, ',', color='red')
+        plt.plot(model.dp.colormag, res, ',', color='red')
         plt.xlabel("$B_p-R_p$")
         plt.ylabel("Residual")
         plt.grid()
@@ -337,7 +355,7 @@ def photometry_fit_plot(band_path, ztfname, filtercode, logger, args):
         plt.grid()
         _show("res_mag")
 
-    save_folder_path = band_path.joinpath("photometry")
+    save_folder_path = lightcurve.photometry_path
 
     # First do residuals plot of the relative photometry models (non filtered and filtered)
     with open(save_folder_path.joinpath("model.pickle"), 'rb') as f:
@@ -353,4 +371,4 @@ def photometry_fit_plot(band_path, ztfname, filtercode, logger, args):
     plot_filter_folder.mkdir(exist_ok=True)
 
     _do_plots(model, save_folder=plot_no_filter_folder)
-    _do_plots(model, save_folder=plot_filter_folder)
+    _do_plots(filtered_model, save_folder=plot_filter_folder)

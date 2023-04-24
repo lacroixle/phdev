@@ -3,116 +3,134 @@
 from deppol_utils import run_and_log
 
 
-def load_calibrated(quadrant_path, ztfname, filtercode, logger, args):
+def make_catalog(exposure, logger, args):
     from ztfquery.io import get_file
     from shutil import copyfile
     from utils import get_header_from_quadrant_path
     import pathlib
 
-    logger.info("Retrieving science image...")
-    if not args.use_raw:
-        image_path = pathlib.Path(get_file(quadrant_path.name + "_sciimg.fits", downloadit=False))
-
-    logger.info("Located at {}".format(image_path))
-    if not image_path.exists():
-        logger.error("Science image does not exist on disk!")
+    logger.info("Retrieving science exposure...")
+    try:
+        image_path = exposure.retrieve_exposure()
+    except FileNotFoundError as e:
+        logger.error(e)
         return False
 
-    copyfile(image_path, quadrant_path.joinpath("calibrated.fits"))
+    logger.info("Found at {}".format(image_path))
 
-    # logger.info("Dumping header content")
-    # hdr = get_header_from_quadrant_path(quadrant_path)
-    # with open(quadrant_path.joinpath("calibrated_hdr"), 'wb') as f:
-    #     hdr.tofile(f, sep='\n', overwrite=False, padding=True)
-
-    return True
-
-
-def make_catalog(quadrant_path, ztfname, filtercode, logger, args):
-    from ztfquery.io import get_file
-    from shutil import copyfile
-    from utils import get_header_from_quadrant_path
-    import pathlib
-
-    logger.info("Retrieving science image...")
-    if not args.use_raw:
-        image_path = pathlib.Path(get_file(quadrant_path.name + "_sciimg.fits", downloadit=False))
-
-    logger.info("Located at {}".format(image_path))
-    if not image_path.exists():
-        logger.error("Science image does not exist on disk!")
-        return False
-
-    copyfile(image_path, quadrant_path.joinpath("calibrated.fits"))
-
-    run_and_log(["make_catalog", quadrant_path, "-O", "-S"], logger)
+    run_and_log(["make_catalog", exposure.path, "-O", "-S"], logger)
 
     logger.info("Dumping header content")
-    hdr = get_header_from_quadrant_path(quadrant_path)
-    with open(quadrant_path.joinpath("calibrated_hdr"), 'wb') as f:
-        hdr.tofile(f, sep='\n', overwrite=True, padding=False)
+    exposure.update_exposure_header()
 
-    return quadrant_path.joinpath("se.list").exists()
+    return exposure.path.joinpath("se.list").exists()
 
 
 make_catalog_rm = ["low.fits.gz", "miniback.fits", "segmentation.cv.fits", "segmentation.fits"]
 
 
-def mkcat2(quadrant_path, ztfname, filtercode, logger, args):
-    import matplotlib
-    import matplotlib.pyplot as plt
-    matplotlib.use('Agg')
+def mkcat2(exposure, logger, args):
+    from itertools import chain
     import numpy as np
+    from scipy.sparse import dok_matrix
+    from utils import match_pixel_space
 
-    from utils import read_list
+    run_and_log(["mkcat2", exposure.path, "-o"], logger)
 
-    run_and_log(["mkcat2", quadrant_path, "-o"], logger)
-    # if quadrant_path.joinpath("standalone_stars.list").exists():
-    #     se_list = read_list(quadrant_path.joinpath("aperse.list"))
-    #     plt.plot(np.sqrt(se_list[1]['gmxx']), np.sqrt(se_list[1]['gmyy']), '.')
-    #     plt.xlabel("$\sqrt{M_g^{xx}}$")
-    #     plt.ylabel("$\sqrt{M_g^{yy}}$")
-    #     plt.grid()
-    #     plt.xlim(0., 10.)
-    #     plt.ylim(0., 10.)
-    #     plt.axis('equal')
-    #     plt.savefig(quadrant_path.joinpath("moments_plan.png"), dpi=300.)
-    #     plt.close()
-    #     return True
-    # else:
-    #     return False
+    if args.use_gaia_stars:
+        # Find standalone stars using Gaia
+        logger.info("Using Gaia catalog to identify stars")
+        aperse_cat = exposure.get_catalog("aperse.list")
+        standalone_stars_cat = exposure.get_catalog("standalone_stars.list")
+        gaia_stars_df = exposure.get_ext_catalog('gaia', project=True)[['x', 'y']].dropna()
 
-    return quadrant_path.joinpath("standalone_stars.list").exists()
+        # Removing measures that are too close to each other
+        # Min distance should be a function of seeing idealy
+        min_dist = 20.
+        n = len(aperse_cat.df)
+        X = np.tile(aperse_cat.df['x'].to_numpy(), (n, 1))
+        Y = np.tile(aperse_cat.df['y'].to_numpy(), (n, 1))
+        dist = np.sqrt((X-X.T)**2+(Y-Y.T)**2)
+        dist_mask = (dist <= min_dist)
+        sp = dok_matrix(dist_mask)
+        keys = list(filter(lambda x: x[0]!=x[1], list(sp.keys())))
+        too_close_idx = list(set(list(chain(*keys))))
+        keep_idx = list(filter(lambda x: x not in too_close_idx, range(n)))
+
+        logger.info("aperse catalog: {} measures".format(n))
+        logger.info("Out of which, {} are too close to each other (min distance={})".format(len(too_close_idx), min_dist))
+        logger.info("{} measures are kept".format(len(keep_idx)))
+
+        aperse_cat.df = aperse_cat.df.iloc[keep_idx]
+
+        i = match_pixel_space(gaia_stars_df[['x', 'y']].to_records(), aperse_cat.df[['x', 'y']].to_records(), radius=0.5)
+        gaia_indices = i[i>=0]
+        cat_indices = np.arange(len(aperse_cat.df))[i>=0]
+
+        standalone_stars_df = aperse_cat.df.iloc[cat_indices]
+        logger.info("Old star count={}".format(len(standalone_stars_cat.df)))
+        logger.info("New star count={}".format(len(standalone_stars_df)))
+
+        # import matplotlib.pyplot as plt
+        # plt.subplot(1, 2, 1)
+        # plt.hist(standalone_stars_cat.df['neid'], bins='auto')
+        # plt.subplot(1, 2, 2)
+        # plt.hist(standalone_stars_df['neid'], bins='auto')
+        # plt.show()
+
+        exposure.path.joinpath("standalone_stars.list").rename("standalone_stars.old.list")
+        standalone_stars_cat.df = standalone_stars_df
+        standalone_stars_cat.write()
+
+        # draw_star_shape = True
+        # if draw_star_shape:
+        #     print(exposure.name)
+        #     from matplotlib.patches import Ellipse
+        #     import numpy as np
+
+        #     aperse_cat = exposure.get_catalog("aperse.list")
+        #     standalone_stars_cat = exposure.get_catalog("standalone_stars.list")
+        #     x, y, _, sigma_x, sigma_y, corr = aperse_cat.header['starshape']
+
+        #     fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(8., 8.))
+        #     plt.suptitle("$N_s={}$, seeing={}".format(len(standalone_stars_cat.df), standalone_stars_cat.header['seeing']))
+        #     ax.add_patch(Ellipse((x, y), width=5.*sigma_x, height=5.*sigma_y, fill=False, color='red'))
+        #     plt.plot(np.sqrt(aperse_cat.df['gmxx'].to_numpy()), np.sqrt(aperse_cat.df['gmyy'].to_numpy()), '.')
+        #     plt.plot(np.sqrt(standalone_stars_cat.df['gmxx'].to_numpy()), np.sqrt(standalone_stars_cat.df['gmyy'].to_numpy()), '.', color='red')
+        #     plt.plot([x], [y], 'x')
+        #     plt.xlim(0., 2.)
+        #     plt.ylim(0., 2.)
+        #     plt.grid()
+        #     plt.show()
+        #     plt.close()
+
+
+    return exposure.path.joinpath("standalone_stars.list").exists()
 
 
 mkcat2_rm = []
 
 
-def makepsf(quadrant_path, ztfname, filtercode, logger, args):
+def makepsf(exposure, logger, args):
     from utils import get_header_from_quadrant_path
 
-    run_and_log(["makepsf", quadrant_path, "-f"], logger)
+    run_and_log(["makepsf", exposure.path, "-f"], logger)
 
     logger.info("Dumping header content")
-    hdr = get_header_from_quadrant_path(quadrant_path)
-    with open(quadrant_path.joinpath("calibrated_hdr"), 'wb') as f:
-        hdr.tofile(f, sep='\n', overwrite=True, padding=False)
+    exposure.update_exposure_header()
 
-    return quadrant_path.joinpath("psfstars.list").exists()
+    return exposure.path.joinpath("psfstars.list").exists()
 
-
-#makepsf_rm = ["psf_resid_tuple.fit", "psf_res_stack.fits", "psf_resid_image.fits", "psf_resid_tuple.dat", "calibrated.fits", "weight.fz"]
 makepsf_rm = ["psf_resid_tuple.fit", "psf_res_stack.fits", "psf_resid_image.fits", "psf_resid_tuple.dat"]
 
 
-def preprocess(quadrant_path, ztfname, filtercode, logger, args):
-    if not make_catalog(quadrant_path, logger, args):
+def preprocess(exposure, logger, args):
+    if not make_catalog(exposure, logger, args):
         return False
 
-    if not mkcat2(quadrant_path, logger, args):
+    if not mkcat2(exposure, logger, args):
         return False
 
-    return makepsf(quadrant_path, logger, args)
+    return makepsf(exposure, logger, args)
 
-
-pipeline_rm = make_catalog_rm + mkcat2_rm + makepsf_rm
+preprocess_rm = make_catalog_rm + mkcat2_rm + makepsf_rm

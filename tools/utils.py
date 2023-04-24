@@ -31,10 +31,14 @@ ztf_latitude = 33.3573 # deg E
 ztf_altitude = 1668. # m
 
 gaiarefmjd = Time(2015.5, format='byear').mjd
+j2000mjd = Time(2000.0, format='jyear').mjd
 
-filtercode2gaiaband = {'zg': 'bpmag',
-                       'zr': 'rpmag',
-                       'zi': 'rpmag'} # Not a great workaround
+filtercode2extcatband = {'gaia': {'zg': 'BPmag',
+                                  'zr': 'RPmag',
+                                  'zi': 'RPmag'}, # Not a great workaround
+                         'ps1': {'zg': 'gmag',
+                                 'zr': 'rmag',
+                                 'zi': 'zmag'}}
 
 filtercode2ztffid = {'zg': 1,
                      'zr': 2,
@@ -132,14 +136,6 @@ def make_index_from_list(dp, index_list):
     Calls make_index() of DataProxy dp on all index names in index_list
     """
     [dp.make_index(index) for index in index_list]
-
-
-def cat_to_ds9regions(cat, filename, radius=5., color='green'):
-    with open(filename, 'w') as f:
-        f.write("global color={} dashlist=8 3 width=1 font=\"helvetica 10 normal roman\" select=1 highlite=1 dash=0 fixed=0 edit=1 move=1 delete=1 include=1 source=1\n".format(color))
-        f.write("image\n")
-        for c in cat:
-            f.write("circle {} {} 5\n".format(c['x'], c['y']))
 
 
 def match_pixel_space(refcat, cat, radius=1.):
@@ -260,17 +256,12 @@ def contained_in_exposure(objects, wcs, return_mask=False):
         #tl = (max([sc_ra(tl_radec), sc_ra(bl_radec)]), min([sc_dec(tl_radec), sc_dec(tr_radec)]))
         #br = (min([sc_ra(tr_radec), sc_ra(br_radec)]), max([sc_dec(bl_radec), sc_dec(br_radec)]))
 
-        print(tl)
-        print(br)
         o = sc_array(objects)
         if tl[0] < br[0]:
-            print("PROUT")
             mask = (o[0] > tl[0]) & (o[0] < br[0]) & (o[1] > tl[1]) & (o[1] < br[1])
             #br[0], tl[0] = tl[0], br[0]
         else:
             mask = (o[0] < tl[0]) & (o[0] > br[0]) & (o[1] > tl[1]) & (o[1] < br[1])
-
-        print(sum(mask))
 
     if return_mask:
         return mask

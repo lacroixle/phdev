@@ -11,7 +11,7 @@ from sksparse import cholmod
 from utils import get_wcs_from_quadrant, quadrant_width_px, quadrant_height_px, gaiarefmjd
 
 
-def wcs_residuals(band_path, ztfname, filtercode, logger, args):
+def wcs_residuals(lightcurve, logger, args):
     """
 
     """
@@ -22,9 +22,29 @@ def wcs_residuals(band_path, ztfname, filtercode, logger, args):
     from saunerie.plottools import binplot
     matplotlib.use('Agg')
 
-    save_folder_path= band_path.joinpath("wcs_residuals_plots")
+    logger.info("Generating star catalog")
+    matched_stars_df = lightcurve.extract_star_catalog(['psfstars', 'gaia'], project=True)
+
+    matched_stars_df.rename({'gaia_ra': 'ra',
+                             'gaia_dec': 'dec',
+                             'psfstars_x': 'x',
+                             'psfstars_y': 'y',
+                             'psfstars_sx': 'sx',
+                             'psfstars_sy': 'sy',
+                             'gaia_pmRA': 'pmra',
+                             'gaia_pmDE': 'pmdec',
+                             'gaia_BPmag': 'bpmag',
+                             'gaia_RPmag': 'rpmag',
+                             'gaia_Source': 'gaiaid',
+                             'gaia_Gmag': 'mag',
+                             'name': 'exposure'},
+                            axis='columns', inplace=True)
+    matched_stars_df = matched_stars_df[['exposure', 'gaiaid', 'ra', 'dec', 'x', 'y', 'gaia_x', 'gaia_y', 'sx', 'sy', 'pmra', 'pmdec', 'mag', 'bpmag', 'rpmag']]
+    matched_stars_df.dropna(inplace=True)
+    logger.info("N={}".format(len(matched_stars_df)))
+
+    save_folder_path= lightcurve.path.joinpath("wcs_residuals_plots")
     save_folder_path.mkdir(exist_ok=True)
-    matched_stars_df = pd.read_parquet(band_path.joinpath("matched_stars.parquet"))
 
     ################################################################################
     # Residuals distribution
@@ -49,14 +69,14 @@ def wcs_residuals(band_path, ztfname, filtercode, logger, args):
     # Residuals/magnitude
     plt.subplots(nrows=2, ncols=1, figsize=(15., 10.))
     plt.subplot(2, 1, 1)
-    plt.scatter(matched_stars_df['mag'], matched_stars_df['x']-matched_stars_df['gaia_x'], c=np.sqrt(matched_stars_df['pmra']**2+matched_stars_df['pmde']**2), marker='+', s=0.05)
+    plt.scatter(matched_stars_df['mag'], matched_stars_df['x']-matched_stars_df['gaia_x'], c=np.sqrt(matched_stars_df['pmra']**2+matched_stars_df['pmdec']**2), marker='+', s=0.05)
     plt.xlabel("$m$ [mag]")
     plt.ylabel("$x-x_\\mathrm{Gaia}$ [pixel]")
     plt.colorbar()
     plt.grid()
 
     plt.subplot(2, 1, 2)
-    plt.scatter(matched_stars_df['mag'], matched_stars_df['y']-matched_stars_df['gaia_y'], c=np.sqrt(matched_stars_df['pmra']**2+matched_stars_df['pmde']**2), marker='+', s=0.05)
+    plt.scatter(matched_stars_df['mag'], matched_stars_df['y']-matched_stars_df['gaia_y'], c=np.sqrt(matched_stars_df['pmra']**2+matched_stars_df['pmdec']**2), marker='+', s=0.05)
     plt.xlabel("$m$ [mag]")
     plt.ylabel("$y-y_\\mathrm{Gaia}$ [pixel]")
     plt.colorbar()
@@ -117,12 +137,12 @@ class AstromModel():
     """
 
     """
-    def __init__(self, degree, quadrant_count):
+    def __init__(self, degree, exposure_count):
         self.degree = degree
-        self.params = self.init_params(quadrant_count)
+        self.params = self.init_params(exposure_count)
 
-    def init_params(self, quadrant_count):
-        self.tp2px = compfuncs.BiPol2D(deg=self.degree, key='quadrant', n=quadrant_count)
+    def init_params(self, exposure_count):
+        self.tp2px = compfuncs.BiPol2D(deg=self.degree, key='exposure', n=exposure_count)
         return fp.FitParameters(self.tp2px.get_struct())
 
     def sigma(self, dp):
@@ -131,18 +151,18 @@ class AstromModel():
     def W(self, dp):
         return sparse.dia_array((1./self.sigma(dp)**2, 0), shape=(2*len(dp.nt), 2*len(dp.nt)))
 
-    def __call__(self, x, pm, mjd, quadrant_indices, jac=False):
+    def __call__(self, x, pm, mjd, exposure_indices, jac=False):
         # Correct for proper motion in tangent plane
         dT = mjd - gaiarefmjd
         x = x + pm*dT
 
         if not jac:
-            xy = self.tp2px(x, p=self.params, quadrant=quadrant_indices)
+            xy = self.tp2px(x, p=self.params, exposure=exposure_indices)
 
             return xy
         else:
             # Derivatives wrt polynomial
-            xy, df, (i, j, vals) = self.tp2px.derivatives(x, p=self.params, quadrant=quadrant_indices)
+            xy, df, (i, j, vals) = self.tp2px.derivatives(x, p=self.params, exposure=exposure_indices)
 
             ii = [np.hstack([i, i+x.shape[1]])]
             jj = [np.tile(j, 2).ravel()]
@@ -157,8 +177,8 @@ class AstromModel():
 
             return xy, J_model
 
-    def residuals(self, x, y, pm, mjd, quadrant_indices):
-        y_model = self.__call__(x, pm, mjd, quadrant_indices)
+    def residuals(self, x, y, pm, mjd, exposure_indices):
+        y_model = self.__call__(x, pm, mjd, exposure_indices)
         return y_model - y
 
 
@@ -167,7 +187,7 @@ def _fit_astrometry(model, dp, logger):
 
     start_time = time.perf_counter()
     p = model.params.free.copy()
-    v, J = model(np.array([dp.tpx, dp.tpy]), np.array([dp.pmtpx, dp.pmtpy]), dp.mjd, dp.quadrant_index, jac=True)
+    v, J = model(np.array([dp.tpx, dp.tpy]), np.array([dp.pmtpx, dp.pmtpy]), dp.mjd, dp.exposure_index, jac=True)
     H = J.T @ model.W(dp) @ J
     B = J.T @ model.W(dp) @ np.hstack((dp.x, dp.y))
     fact = cholmod.cholesky(H.tocsc())
@@ -197,7 +217,7 @@ def _filter_noisy(model, res_x, res_y, field, threshold, logger):
     return AstromModel(model.dp, degree=model.degree)
 
 
-def astrometry_fit(band_path, ztfname, filtercode, logger, args):
+def astrometry_fit(lightcurve, logger, args):
     import pickle
     import pandas as pd
     import numpy as np
@@ -205,32 +225,56 @@ def astrometry_fit(band_path, ztfname, filtercode, logger, args):
     import matplotlib
     import matplotlib.pyplot as plt
     from croaks import DataProxy
-    from utils import get_ref_quadrant_from_band_folder, ztf_latitude, BiPol2D_fit, create_2D_mesh_grid, poly2d_to_file, ListTable, get_mjd_from_quadrant_path
+    from utils import ztf_latitude, BiPol2D_fit, create_2D_mesh_grid, poly2d_to_file, ListTable
 
     matplotlib.use('Agg')
 
-    reference_quadrant = get_ref_quadrant_from_band_folder(band_path)
+    lightcurve.astrometry_path.mkdir(exist_ok=True)
+    lightcurve.mappings_path.mkdir(exist_ok=True)
 
-    sn_parameters_df = pd.read_hdf(args.lc_folder.joinpath("{}.hd5".format(ztfname)), key='sn_info')
+    reference_exposure = lightcurve.get_reference_exposure()
+    logger.info("Reference exposure: {}".format(reference_exposure))
+
+    sn_parameters_df = pd.read_hdf(args.lc_folder.joinpath("{}.hd5".format(lightcurve.name)), key='sn_info')
 
     # Define plot saving folder
-    save_folder_path= band_path.joinpath("astrometry")
-    save_folder_path.mkdir(exist_ok=True)
-    band_path.joinpath("mappings").mkdir(exist_ok=True)
+    lightcurve.astrometry_path.mkdir(exist_ok=True)
 
     # Load data
-    matched_stars_df = pd.read_parquet(band_path.joinpath("matched_stars.parquet"))
-    logger.info("Before cuts, N={}".format(len(matched_stars_df)))
-    logger.info(" Total quadrants={}".format(len(set(matched_stars_df['quadrant']))))
+    logger.info("Generating star catalog")
+    matched_stars_df = lightcurve.extract_star_catalog(['psfstars', 'gaia'])
+    matched_stars_df['mag'] = -2.5*np.log10(matched_stars_df['psfstars_flux'])
+    matched_stars_df['emag'] = 1.08*matched_stars_df['psfstars_eflux']/matched_stars_df['psfstars_flux']
 
-    # Do cut in magnitude
-    matched_stars_df = matched_stars_df.loc[matched_stars_df['mag'] < args.astro_min_mag]
+    # Add exposure informations
+    exposures_df = lightcurve.extract_exposure_catalog()
+    for column in exposures_df.columns:
+        matched_stars_df[column] = exposures_df.loc[matched_stars_df['exposure'], column].to_numpy()
 
-    # Do cut in seeing
-    matched_stars_df = matched_stars_df.loc[matched_stars_df['seeing'] <= 4.]
+    matched_stars_df.rename({'gaia_ra': 'ra',
+                             'gaia_dec': 'dec',
+                             'psfstars_x': 'x',
+                             'psfstars_y': 'y',
+                             'psfstars_sx': 'sx',
+                             'psfstars_sy': 'sy',
+                             'gaia_pmRA': 'pmra',
+                             'gaia_pmDE': 'pmdec',
+                             'gaia_BPmag': 'bpmag',
+                             'gaia_RPmag': 'rpmag',
+                             'gaia_Source': 'gaiaid',
+                             'gaia_Gmag': 'cat_mag',
+                             'gaia_e_Gmag': 'cat_emag',
+                             'name': 'exposure'},
+                            axis='columns', inplace=True)
+    matched_stars_df = matched_stars_df[['exposure', 'gaiaid', 'ra', 'dec', 'x', 'y', 'sx', 'sy', 'pmra', 'pmdec', 'cat_mag', 'cat_emag', 'mag', 'emag', 'bpmag', 'rpmag', 'mjd', 'seeing', 'z', 'ha', 'airmass', 'rcid']]
+    matched_stars_df.dropna(inplace=True)
+    matched_stars_df.to_csv("out.csv")
+    logger.info("N={}".format(len(matched_stars_df)))
+    if args.astro_min_mag:
+        logger.info("Filtering out faint stars (magnitude cut={} [mag])".format(args.astro_min_mag))
+        matched_stars_df = matched_stars_df.loc[matched_stars_df['mag']<=args.astro_min_mag]
+        logger.info("N={}".format(len(matched_stars_df)))
 
-    logger.info("After cuts, N={}".format(len(matched_stars_df)))
-    logger.info(" Total quadrants={}".format(len(set(matched_stars_df['quadrant']))))
     # Compute parallactic angle
     parallactic_angle_sin = np.cos(np.deg2rad(ztf_latitude))*np.sin(np.deg2rad(matched_stars_df['ha']))/np.sin(np.deg2rad(matched_stars_df['z']))
     parallactic_angle_cos = np.sqrt(1.-parallactic_angle_sin**2)
@@ -244,7 +288,6 @@ def astrometry_fit(band_path, ztfname, filtercode, logger, args):
         tpx, tpy, e_tpx, e_tpy = gnomonic.gnomonic_projection(np.deg2rad(ra), np.deg2rad(dec), np.deg2rad(ra_center), np.deg2rad(dec_center), np.zeros_like(ra), np.zeros_like(ra))
 
         tpdx, tpdy = gnomonic.gnomonic_dxy(np.deg2rad(ra), np.deg2rad(dec), np.deg2rad(ra_center), np.deg2rad(dec_center))
-
 
         tpdx = tpdx.T.reshape(-1, 1, 2)
         tpdy = tpdy.T.reshape(-1, 1, 2)
@@ -279,31 +322,31 @@ def astrometry_fit(band_path, ztfname, filtercode, logger, args):
 
     # Build dataproxy for model
     dp = DataProxy(matched_stars_df.to_records(),
-                   x='x', sx='sx', sy='sy', y='y', ra='ra', dec='dec', quadrant='quadrant', mag='mag', gaiaid='gaiaid', mjd='mjd',
+                   x='x', sx='sx', sy='sy', y='y', ra='ra', dec='dec', exposure='exposure', mag='mag', cat_mag='cat_mag', gaiaid='gaiaid', mjd='mjd',
                    bpmag='bpmag', rpmag='rpmag', seeing='seeing', z='z', airmass='airmass', tpx='tpx', tpy='tpy', pmtpx='pmtpx', pmtpy='pmtpy',
                    parallactic_angle_x='parallactic_angle_x', parallactic_angle_y='parallactic_angle_y', color='color',
                    centered_color='centered_color', rcid='rcid', pmra='pmra', pmdec='pmdec')
 
-    dp.make_index('quadrant')
+    dp.make_index('exposure')
     dp.make_index('gaiaid')
     dp.make_index('color')
     dp.make_index('rcid')
 
     # Compute index of reference quadrant
-    reference_index = dp.quadrant_map[reference_quadrant]
+    reference_index = dp.exposure_map[reference_exposure]
 
     ################################################################################
     # Tangent space to pixel space
 
     # Build model
-    tp2px_model = AstromModel(args.astro_degree, len(dp.quadrant_set))
+    tp2px_model = AstromModel(args.astro_degree, len(dp.exposure_set))
     # Model fitting
     _fit_astrometry(tp2px_model, dp, logger)
 
     # Dump proper motion catalog
     def _dump_pm_catalog():
-        refdate = get_mjd_from_quadrant_path(band_path.joinpath(reference_quadrant))
-        gaia_stars_df = pd.read_parquet(band_path.joinpath("gaia_stars.parquet"))
+        refmjd = float(lightcurve.exposures[reference_exposure].mjd)
+        gaia_stars_df = lightcurve.get_ext_catalog('gaia').rename(columns={'pmRA': 'pmra', 'pmDE': 'pmdec'})
 
         tpx, tpy, pmtpx, pmtpy = _project_tp(gaia_stars_df['ra'].to_numpy(), gaia_stars_df['dec'].to_numpy(),
                                              sn_parameters_df['sn_ra'].to_numpy(), sn_parameters_df['sn_dec'].to_numpy(),
@@ -312,8 +355,8 @@ def astrometry_fit(band_path, ztfname, filtercode, logger, args):
         tp = np.array([tpx, tpy])
         pmtp = np.array([pmtpx, pmtpy])
 
-        refxy = tp2px_model(tp, pmtp, [refdate]*len(gaia_stars_df), [reference_index]*len(gaia_stars_df))
-        _, d_tp2px, _ = tp2px_model.tp2px.derivatives(tp, tp2px_model.params, quadrant=[reference_index]*len(gaia_stars_df))
+        refxy = tp2px_model(tp, pmtp, [refmjd]*len(gaia_stars_df), [reference_index]*len(gaia_stars_df))
+        _, d_tp2px, _ = tp2px_model.tp2px.derivatives(tp, tp2px_model.params, exposure=[reference_index]*len(gaia_stars_df))
         srefxy = np.zeros_like(refxy)
         rhoxy = np.zeros_like(refxy[0])
         flux = np.zeros_like(refxy[0])
@@ -332,7 +375,7 @@ def astrometry_fit(band_path, ztfname, filtercode, logger, args):
         plt.ylabel("$\\mu_{y_t}$")
         plt.grid()
 
-        plt.savefig(save_folder_path.joinpath("mu_tp_quadrant.png"), dpi=300.)
+        plt.savefig(lightcurve.astrometry_path.joinpath("mu_tp_exposure.png"), dpi=300.)
         plt.close()
 
         plt.hist(np.sqrt(pm[0]**2+pm[1]**2), bins=100, histtype='step')
@@ -340,8 +383,8 @@ def astrometry_fit(band_path, ztfname, filtercode, logger, args):
         plt.ylabel("Count")
         plt.grid()
 
-        plt.savefig(save_folder_path.joinpath("mu_quadrant_dist.png"), dpi=300.)
-        plt.close
+        plt.savefig(lightcurve.astrometry_path.joinpath("mu_exposure_dist.png"), dpi=300.)
+        plt.close()
 
         df_dict = {'x': refxy[0], 'y': refxy[1], 'sx': srefxy[0], 'sy': srefxy[1], 'rhoxy': rhoxy, 'flux': flux, 'pmx': pm[0], 'pmy': pm[1]}
         df = pd.DataFrame(data=df_dict)
@@ -354,18 +397,18 @@ def astrometry_fit(band_path, ztfname, filtercode, logger, args):
                    'pmx': "proper motion along x (pixels/day)",
                    'pmy': "proper motion along y (pixels/day)"}
 
-        pmcatalog_listtable = ListTable({'REFDATE': refdate}, df, df_desc, "BaseStar 3 PmStar 1")
-        pmcatalog_listtable.write_to(save_folder_path.joinpath("pmcatalog.list"))
+        pmcatalog_listtable = ListTable({'REFDATE': refmjd}, df, df_desc, "BaseStar 3 PmStar 1")
+        pmcatalog_listtable.write_to(lightcurve.astrometry_path.joinpath("pmcatalog.list"))
 
 
     ################################################################################
-    # Pixel space to tangent space for reference quadrant
+    # Pixel space to tangent space for reference exposure
     #
 
     grid_res = 100
     def _ref2tp_polymodel(degree):
-        logger.info("Reference quadrant={}".format(reference_quadrant))
-        wcs = get_wcs_from_quadrant(band_path.joinpath(reference_quadrant))
+        logger.info("Reference exposure={}".format(reference_exposure))
+        wcs = lightcurve.exposures[reference_exposure].wcs
 
         # project corner points to sky then to tangent plane
         logger.info("  Projecting corner points to tangent plane using WCS")
@@ -382,11 +425,11 @@ def astrometry_fit(band_path, ztfname, filtercode, logger, args):
         grid_points_tp = create_2D_mesh_grid(np.linspace(np.min(corner_points_tpx), np.max(corner_points_tpx), grid_res),
                                              np.linspace(np.min(corner_points_tpy), np.max(corner_points_tpy), grid_res)).T
 
-        grid_points_px = tp2px_model.tp2px(grid_points_tp, tp2px_model.params, quadrant=[reference_index]*grid_points_tp.shape[1])
+        grid_points_px = tp2px_model.tp2px(grid_points_tp, tp2px_model.params, exposure=[reference_index]*grid_points_tp.shape[1])
 
         logger.info("  Fitting using polynomial of degree {}".format(degree))
-        save_folder_path.joinpath("ref2tp_plots").mkdir(exist_ok=True)
-        ref2tp_model = BiPol2D_fit(grid_points_px, grid_points_tp, degree, control_plots=save_folder_path.joinpath("ref2tp_plots"))
+        lightcurve.astrometry_path.joinpath("ref2tp_plots").mkdir(exist_ok=True)
+        ref2tp_model = BiPol2D_fit(grid_points_px, grid_points_tp, degree, control_plots=lightcurve.astrometry_path.joinpath("ref2tp_plots"))
 
         return ref2tp_model
 
@@ -396,65 +439,65 @@ def astrometry_fit(band_path, ztfname, filtercode, logger, args):
     ################################################################################
     # Reference pixel space to pixel space
 
-    logger.info("Transforming reference pixel space to quadrants pixel space")
+    logger.info("Transforming reference pixel space to exposures pixel space")
 
     grid_res = 25
 
-    # Point grid position in quadrant (pixel) space
+    # Point grid position in exposure (pixel) space
     grid_points_px = create_2D_mesh_grid(np.linspace(0., quadrant_width_px, grid_res), np.linspace(0., quadrant_height_px, grid_res)).T
 
     # Reference pixel space to tangent space
     ref_grid_tp = ref2tp_model(grid_points_px)
 
     # Reference tangent space to quadrant pixel space for each quadrant
-    space_indices = np.concatenate([np.full(ref_grid_tp.shape[1], i) for i, _ in enumerate(dp.quadrant_set)])
-    ref_grid_px = tp2px_model.tp2px(np.tile(np.array([ref_grid_tp[0], ref_grid_tp[1]]), (1, len(dp.quadrant_set))), tp2px_model.params, quadrant=space_indices)
+    space_indices = np.concatenate([np.full(ref_grid_tp.shape[1], i) for i, _ in enumerate(dp.exposure_set)])
+    ref_grid_px = tp2px_model.tp2px(np.tile(np.array([ref_grid_tp[0], ref_grid_tp[1]]), (1, len(dp.exposure_set))), tp2px_model.params, exposure=space_indices)
 
-    ref_idx = dp.quadrant_map[reference_quadrant]
+    ref_idx = dp.exposure_map[reference_exposure]
     ref_mask = (space_indices==ref_idx)
 
-    logger.info("Composing polynomials to get ref -> quadrant in pixel space")
+    logger.info("Composing polynomials to get ref -> exposure in pixel space")
 
     # Polynomials for reference pixel space to quadrant pixel spaces
-    save_folder_path.joinpath("ref2px_plots").mkdir(exist_ok=True)
-    ref2px_model = BiPol2D_fit(np.tile(grid_points_px, (1, len(dp.quadrant_set))), ref_grid_px, args.astro_degree, space_indices,
-                               control_plots=save_folder_path.joinpath("ref2px_plots"), simultaneous_fit=False)
+    lightcurve.astrometry_path.joinpath("ref2px_plots").mkdir(exist_ok=True)
+    ref2px_model = BiPol2D_fit(np.tile(grid_points_px, (1, len(dp.exposure_set))), ref_grid_px, args.astro_degree, space_indices,
+                               control_plots=lightcurve.astrometry_path.joinpath("ref2px_plots"), simultaneous_fit=False)
 
-    logger.info("Saving coefficients to {}".format(save_folder_path.joinpath("ref2px_coeffs.csv")))
-    coeffs_df = pd.DataFrame(data=ref2px_model.coeffs, index=dp.quadrant_set)
-    coeffs_df.to_csv(save_folder_path.joinpath("ref2px_coeffs.csv"), sep=",")
+    logger.info("Saving coefficients to {}".format(lightcurve.astrometry_path.joinpath("ref2px_coeffs.csv")))
+    coeffs_df = pd.DataFrame(data=ref2px_model.coeffs, index=dp.exposure_set)
+    coeffs_df.to_csv(lightcurve.astrometry_path.joinpath("ref2px_coeffs.csv"), sep=",")
 
-    logger.info("Writing transformations files to {}".format(band_path.joinpath("mappings")))
-    poly2d_to_file(ref2px_model, dp.quadrant_set, band_path.joinpath("mappings"))
+    logger.info("Writing transformations files to {}".format(lightcurve.mappings_path))
+    poly2d_to_file(ref2px_model, dp.exposure_set, lightcurve.mappings_path)
 
-    logger.info("Writing proper motion catalog to {}".format(save_folder_path.joinpath("pmcatalog.list")))
+    logger.info("Writing proper motion catalog to {}".format(lightcurve.astrometry_path.joinpath("pmcatalog.list")))
     _dump_pm_catalog()
 
-    logger.info("Saving models to {}".format(save_folder_path.joinpath("models.pickle")))
-    with open(save_folder_path.joinpath("models.pickle"), 'wb') as f:
+    logger.info("Saving models to {}".format(lightcurve.astrometry_path.joinpath("models.pickle")))
+    with open(lightcurve.astrometry_path.joinpath("models.pickle"), 'wb') as f:
         pickle.dump({'tp2px': tp2px_model, 'ref2tp': ref2tp_model, 'ref2px': ref2px_model, 'dp': dp}, f)
 
-    logger.info("Filtering quadrants with bad chi2")
+    logger.info("Filtering exposures with bad chi2")
 
 
-    gaiaid_in_ref = dp.gaiaid[dp.quadrant_index == reference_index]
-    measure_mask = np.where(dp.quadrant_index != reference_index, np.isin(dp.gaiaid, gaiaid_in_ref), False)
+    gaiaid_in_ref = dp.gaiaid[dp.exposure_index == reference_index]
+    measure_mask = np.where(dp.exposure_index != reference_index, np.isin(dp.gaiaid, gaiaid_in_ref), False)
     in_ref = np.hstack([np.where(gaiaid == gaiaid_in_ref) for gaiaid in dp.gaiaid[measure_mask]]).flatten()
 
-    ref2px_residuals = ref2px_model.residuals(np.array([dp.x[dp.quadrant_index==reference_index][in_ref], dp.y[dp.quadrant_index==reference_index][in_ref]]),
+    ref2px_residuals = ref2px_model.residuals(np.array([dp.x[dp.exposure_index==reference_index][in_ref], dp.y[dp.exposure_index==reference_index][in_ref]]),
                                               np.array([dp.x[measure_mask], dp.y[measure_mask]]),
-                                              space_indices=dp.quadrant_index[measure_mask])
+                                              space_indices=dp.exposure_index[measure_mask])
 
-    ref2px_chi2_quadrant = np.bincount(dp.quadrant_index[measure_mask], weights=np.sqrt(ref2px_residuals[0]**2+ref2px_residuals[1]**2))/np.bincount(dp.quadrant_index[measure_mask])
-    ref2px_chi2_quadrant[reference_index] = 0.
-    ref2px_chi2_quadrant = np.pad(ref2px_chi2_quadrant, (0, len(dp.quadrant_set) - len(ref2px_chi2_quadrant)), constant_values=np.nan)
+    ref2px_chi2_exposure = np.bincount(dp.exposure_index[measure_mask], weights=np.sqrt(ref2px_residuals[0]**2+ref2px_residuals[1]**2))/np.bincount(dp.exposure_index[measure_mask])
+    ref2px_chi2_exposure[reference_index] = 0.
+    ref2px_chi2_exposure = np.pad(ref2px_chi2_exposure, (0, len(dp.exposure_set) - len(ref2px_chi2_exposure)), constant_values=np.nan)
 
-    df_ref2px_chi2_quadrant = pd.DataFrame(data=ref2px_chi2_quadrant, index=dp.quadrant_set, columns=['chi2'])
-    df_ref2px_chi2_quadrant.to_csv(save_folder_path.joinpath("ref2px_chi2_quadrants.csv"), sep=",")
+    df_ref2px_chi2_exposure = pd.DataFrame(data=ref2px_chi2_exposure, index=dp.exposure_set, columns=['chi2'])
+    df_ref2px_chi2_exposure.to_csv(lightcurve.astrometry_path.joinpath("ref2px_chi2_exposures.csv"), sep=",")
     return True
 
 
-def astrometry_fit_plot(band_path, ztfname, filtercode, logger, args):
+def astrometry_fit_plot(lightcurve, logger, args):
     import pickle
     from sksparse import cholmod
     from scipy.stats import norm
@@ -472,8 +515,8 @@ def astrometry_fit_plot(band_path, ztfname, filtercode, logger, args):
 
     matplotlib.use('Agg')
 
-    save_folder_path = band_path.joinpath("astrometry")
-    with open(save_folder_path.joinpath("models.pickle"), 'rb') as f:
+    save_folder_path = lightcurve.astrometry_path
+    with open(lightcurve.astrometry_path.joinpath("models.pickle"), 'rb') as f:
         models = pickle.load(f)
 
     dp = models['dp']
@@ -481,9 +524,15 @@ def astrometry_fit_plot(band_path, ztfname, filtercode, logger, args):
     ref2tp_model = models['ref2tp']
     ref2px_model = models['ref2px']
 
-    reference_quadrant = get_ref_quadrant_from_band_folder(band_path)
-    reference_index = dp.quadrant_map[reference_quadrant]
-    reference_mask = (dp.quadrant_index == reference_index)
+    reference_exposure = lightcurve.get_reference_exposure()
+    reference_index = dp.exposure_map[reference_exposure]
+    reference_mask = (dp.exposure_index == reference_index)
+
+    # Gaia magnitude distribution
+    plt.subplots(nrows=1, ncols=1, figsize=(6., 6.))
+    plt.hist(list(set(dp.cat_mag)), bins='auto', histtype='step', color='black')
+    plt.grid()
+    plt.savefig(lightcurve.astrometry_path.joinpath("gaia_mag_dist.png"), dpi=200.)
 
     ################################################################################
     ################################################################################
@@ -493,14 +542,14 @@ def astrometry_fit_plot(band_path, ztfname, filtercode, logger, args):
 
     logger.info("Plotting control plots for the ref2px model")
 
-    # First get stars that exist in both reference quadrant and other quadrants
-    gaiaid_in_ref = dp.gaiaid[dp.quadrant_index == reference_index]
-    measure_mask = np.where(dp.quadrant_index != reference_index, np.isin(dp.gaiaid, gaiaid_in_ref), False)
+    # First get stars that exist in both reference exposure and other exposures
+    gaiaid_in_ref = dp.gaiaid[dp.exposure_index == reference_index]
+    measure_mask = np.where(dp.exposure_index != reference_index, np.isin(dp.gaiaid, gaiaid_in_ref), False)
     in_ref = np.hstack([np.where(gaiaid == gaiaid_in_ref) for gaiaid in dp.gaiaid[measure_mask]]).flatten()
 
-    ref2px_residuals = ref2px_model.residuals(np.array([dp.x[dp.quadrant_index==reference_index][in_ref], dp.y[dp.quadrant_index==reference_index][in_ref]]),
+    ref2px_residuals = ref2px_model.residuals(np.array([dp.x[dp.exposure_index==reference_index][in_ref], dp.y[dp.exposure_index==reference_index][in_ref]]),
                                               np.array([dp.x[measure_mask], dp.y[measure_mask]]),
-                                              space_indices=dp.quadrant_index[measure_mask])
+                                              space_indices=dp.exposure_index[measure_mask])
 
     ref2px_save_folder_path= save_folder_path.joinpath("ref2px_plots")
 
@@ -562,7 +611,7 @@ def astrometry_fit_plot(band_path, ztfname, filtercode, logger, args):
 
     ################################################################################
     # Residuals / magnitude
-    plt.subplots(ncols=1, nrows=2, figsize=(10., 5.))
+    plt.subplots(ncols=1, nrows=2, figsize=(15., 5.))
     plt.subplot(2, 1, 1)
     plt.plot(dp.mag[measure_mask], ref2px_residuals[0]/np.sqrt(dp.sx[measure_mask]**2+dp.sy[measure_mask]**2), ',', color='black')
     # plt.ylim([-0.2, 0.2])
@@ -576,10 +625,10 @@ def astrometry_fit_plot(band_path, ztfname, filtercode, logger, args):
 
     ################################################################################
     # Residuals binplot / magnitude
-    plt.subplots(nrows=2, ncols=2, figsize=(15., 10.))
+    plt.subplots(nrows=2, ncols=2, figsize=(18., 10.))
     plt.subplot(2, 2, 1)
     #xbinned_mag, yplot_res, res_dispersion = binplot(dp.mag[measure_mask], ref2px_residuals[0]/np.sqrt(dp.sx[measure_mask]**2+dp.sy[measure_mask]**2), nbins=5, data=True, rms=True, scale=False)
-    xbinned_mag, yplot_res, res_dispersion = binplot(dp.mag[measure_mask], ref2px_residuals[0], nbins=5, data=True, rms=True, scale=False)
+    xbinned_mag, yplot_res, res_dispersion = binplot(dp.mag[measure_mask], ref2px_residuals[0], nbins=10, data=True, rms=True, scale=False)
     plt.xlabel("$m$ [mag]")
     plt.ylabel("$x-x_\\mathrm{fit}$ [pixel]")
     plt.grid()
@@ -590,7 +639,7 @@ def astrometry_fit_plot(band_path, ztfname, filtercode, logger, args):
     plt.ylabel("$\\sigma_{x-x_\\mathrm{fit}}$ [pixel]")
 
     plt.subplot(2, 2, 3)
-    xbinned_mag, yplot_res, res_dispersion = binplot(dp.mag[measure_mask], ref2px_residuals[1], nbins=5, data=True, rms=True, scale=False)
+    xbinned_mag, yplot_res, res_dispersion = binplot(dp.mag[measure_mask], ref2px_residuals[1], nbins=10, data=True, rms=True, scale=False)
     plt.xlabel("$m$ [mag]")
     plt.ylabel("$y-y_\\mathrm{fit}$ [pixel]")
     plt.grid()
@@ -649,23 +698,23 @@ def astrometry_fit_plot(band_path, ztfname, filtercode, logger, args):
     ################################################################################
 
     ################################################################################
-    # Partial chi2 per quadrant/gaia star
-    ref2px_chi2_quadrant = np.bincount(dp.quadrant_index[measure_mask], weights=np.sqrt(ref2px_residuals[0]**2+ref2px_residuals[1]**2))/np.bincount(dp.quadrant_index[measure_mask])
+    # Partial chi2 per exposure/gaia star
+    ref2px_chi2_exposure = np.bincount(dp.exposure_index[measure_mask], weights=np.sqrt(ref2px_residuals[0]**2+ref2px_residuals[1]**2))/np.bincount(dp.exposure_index[measure_mask])
     ref2px_chi2_gaiaid = np.bincount(dp.gaiaid_index[measure_mask], weights=np.sqrt(ref2px_residuals[0]**2+ref2px_residuals[1]**2))/np.bincount(dp.gaiaid_index[measure_mask])
     ref2px_chi2_gaiaid = np.pad(ref2px_chi2_gaiaid, (0, len(dp.gaiaid_set) - len(ref2px_chi2_gaiaid)), constant_values=np.nan)
 
-    df_ref2px_chi2_quadrant = pd.DataFrame(data=ref2px_chi2_quadrant, index=dp.quadrant_set, columns=['chi2'])
-    df_ref2px_chi2_quadrant.to_csv(ref2px_save_folder_path.joinpath("chi2_quadrants.csv"), sep=",")
+    df_ref2px_chi2_exposure = pd.DataFrame(data=ref2px_chi2_exposure, index=dp.exposure_set, columns=['chi2'])
+    df_ref2px_chi2_exposure.to_csv(ref2px_save_folder_path.joinpath("chi2_exposures.csv"), sep=",")
 
-    coeffs_df = pd.DataFrame(data=ref2px_model.coeffs, index=dp.quadrant_set)
+    coeffs_df = pd.DataFrame(data=ref2px_model.coeffs, index=dp.exposure_set)
     coeffs_df.to_csv(ref2px_save_folder_path.joinpath("ref2px_coeffs.csv"), sep=",")
 
     plt.figure()
-    plt.plot(range(len(ref2px_chi2_quadrant)), ref2px_chi2_quadrant, '.')
-    plt.xlabel("Quadrant index")
+    plt.plot(range(len(ref2px_chi2_exposure)), ref2px_chi2_exposure, '.')
+    plt.xlabel("Exposure index")
     plt.ylabel("$\\chi^2$")
     plt.grid()
-    plt.savefig(ref2px_save_folder_path.joinpath("chi2_quadrant.png"), dpi=200.)
+    plt.savefig(ref2px_save_folder_path.joinpath("chi2_exposure.png"), dpi=200.)
     plt.close()
 
     plt.figure()
@@ -738,28 +787,30 @@ def astrometry_fit_plot(band_path, ztfname, filtercode, logger, args):
     ################################################################################
 
     ################################################################################
-    # Residual vectors / quadrant
+    # Residual vectors / exposure
     ref2px_save_folder_path.joinpath("scatter").mkdir(exist_ok=True)
-    for quadrant in dp.quadrant_set:
-        quadrant_index = dp.quadrant_map[quadrant]
+    for exposure in dp.exposure_set:
+        exposure_index = dp.exposure_map[exposure]
         plt.subplots(nrows=1, ncols=2, figsize=(11., 5.))
-        plt.suptitle("Residual scatter/vector plot for {}".format(quadrant))
-        quadrant_mask = (dp.quadrant_index[measure_mask] == quadrant_index)
+        plt.suptitle("Residual scatter/vector plot for {}".format(exposure))
+        exposure_mask = (dp.exposure_index[measure_mask] == exposure_index)
 
         plt.subplot(1, 2, 1)
-        plt.quiver(dp.x[measure_mask][quadrant_mask], dp.y[measure_mask][quadrant_mask], ref2px_residuals[0][quadrant_mask], ref2px_residuals[1][quadrant_mask])
+        plt.quiver(dp.x[measure_mask][exposure_mask], dp.y[measure_mask][exposure_mask], ref2px_residuals[0][exposure_mask], ref2px_residuals[1][exposure_mask])
         plt.xlim(0., quadrant_width_px)
         plt.ylim(0., quadrant_height_px)
         plt.xlabel("$x$ [pixel]")
         plt.ylabel("$y$ [pixel]")
 
         plt.subplot(1, 2, 2)
-        plt.plot(ref2px_residuals[0][quadrant_mask], ref2px_residuals[1][quadrant_mask], ".", color='black')
-        plt.axis('equal')
+        plt.plot(ref2px_residuals[0][exposure_mask], ref2px_residuals[1][exposure_mask], ".", color='black')
+        plt.xlim(-0.6, 0.6)
+        plt.ylim(-0.6, 0.6)
+        # plt.axis('equal')
         plt.grid()
         plt.xlabel("$x$ [pixel]")
 
-        plt.savefig(ref2px_save_folder_path.joinpath("scatter/{}_residuals_vector.png".format(quadrant)))
+        plt.savefig(ref2px_save_folder_path.joinpath("scatter/{}_residuals_vector.png".format(exposure)))
         plt.close()
     ################################################################################
 
@@ -777,7 +828,7 @@ def astrometry_fit_plot(band_path, ztfname, filtercode, logger, args):
     ref2tp_save_folder_path.mkdir(exist_ok=True)
 
     plt.figure()
-    plt.suptitle("Ref -> tp residuals scatter (on reference quadrant)")
+    plt.suptitle("Ref -> tp residuals scatter (on reference exposure)")
     plt.plot(ref2tp_residuals[0], ref2tp_residuals[1], '.')
     plt.grid()
     plt.axis('equal')
@@ -791,7 +842,7 @@ def astrometry_fit_plot(band_path, ztfname, filtercode, logger, args):
     #
     logger.info("Plotting control plots for the tp2px model")
 
-    tp2px_residuals = tp2px_model.residuals(np.array([dp.tpx, dp.tpy]), np.array([dp.x, dp.y]), np.array([dp.pmtpx, dp.pmtpy]), dp.mjd, quadrant_indices=dp.quadrant_index)
+    tp2px_residuals = tp2px_model.residuals(np.array([dp.tpx, dp.tpy]), np.array([dp.x, dp.y]), np.array([dp.pmtpx, dp.pmtpy]), dp.mjd, exposure_indices=dp.exposure_index)
 
     tp2px_save_folder_path = save_folder_path.joinpath("tp2px_plots")
     tp2px_save_folder_path.mkdir(exist_ok=True)
@@ -955,18 +1006,18 @@ def astrometry_fit_plot(band_path, ztfname, filtercode, logger, args):
     ################################################################################
 
     ################################################################################
-    # Partial chi2 per quadrant/gaia star
-    tp2px_chi2_quadrant = np.bincount(dp.quadrant_index, weights=np.sqrt(tp2px_residuals[0]**2+tp2px_residuals[1]**2))/np.bincount(dp.quadrant_index)
+    # Partial chi2 per exposure/gaia star
+    tp2px_chi2_exposure = np.bincount(dp.exposure_index, weights=np.sqrt(tp2px_residuals[0]**2+tp2px_residuals[1]**2))/np.bincount(dp.exposure_index)
     tp2px_chi2_gaiaid = np.bincount(dp.gaiaid_index, weights=np.sqrt(tp2px_residuals[0]**2+tp2px_residuals[1]**2))/np.bincount(dp.gaiaid_index)
-    df_tp2px_chi2_quadrant = pd.DataFrame(data=tp2px_chi2_quadrant, index=dp.quadrant_set, columns=['chi2'])
-    df_tp2px_chi2_quadrant.to_csv(tp2px_save_folder_path.joinpath("chi2_quadrants.csv"), sep=",")
+    df_tp2px_chi2_exposure = pd.DataFrame(data=tp2px_chi2_exposure, index=dp.exposure_set, columns=['chi2'])
+    df_tp2px_chi2_exposure.to_csv(tp2px_save_folder_path.joinpath("chi2_exposures.csv"), sep=",")
 
     plt.figure()
-    plt.plot(range(len(tp2px_chi2_quadrant)), tp2px_chi2_quadrant, '.')
-    plt.xlabel("Quadrant index")
+    plt.plot(range(len(tp2px_chi2_exposure)), tp2px_chi2_exposure, '.')
+    plt.xlabel("Exposure index")
     plt.ylabel("$\\chi^2$")
     plt.grid()
-    plt.savefig(tp2px_save_folder_path.joinpath("chi2_quadrant.png"), dpi=200.)
+    plt.savefig(tp2px_save_folder_path.joinpath("chi2_exposure.png"), dpi=200.)
     plt.close()
 
     plt.figure()
@@ -999,52 +1050,52 @@ def astrometry_fit_plot(band_path, ztfname, filtercode, logger, args):
     ################################################################################
 
     ################################################################################
-    # Residual vectors / quadrant
+    # Residual vectors / exposure
     tp2px_save_folder_path.joinpath("scatter").mkdir(exist_ok=True)
-    for quadrant in dp.quadrant_set:
-        quadrant_index = dp.quadrant_map[quadrant]
+    for exposure in dp.exposure_set:
+        exposure_index = dp.exposure_map[exposure]
         plt.subplots(nrows=1, ncols=2, figsize=(11., 5.))
-        plt.suptitle("Residual scatter/vector plot for {}".format(quadrant))
-        quadrant_mask = (dp.quadrant_index == quadrant_index)
+        plt.suptitle("Residual scatter/vector plot for {}".format(exposure))
+        exposure_mask = (dp.exposure_index == exposure_index)
 
         plt.subplot(1, 2, 1)
-        plt.quiver(dp.x[quadrant_mask], dp.y[quadrant_mask], tp2px_residuals[0][quadrant_mask], tp2px_residuals[1][quadrant_mask])
+        plt.quiver(dp.x[exposure_mask], dp.y[exposure_mask], tp2px_residuals[0][exposure_mask], tp2px_residuals[1][exposure_mask])
         plt.xlim(0., quadrant_width_px)
         plt.ylim(0., quadrant_height_px)
         plt.xlabel("$x$ [pixel]")
         plt.ylabel("$y$ [pixel]")
 
         plt.subplot(1, 2, 2)
-        plt.plot(tp2px_residuals[0][quadrant_mask], tp2px_residuals[1][quadrant_mask], ".", color='black')
+        plt.plot(tp2px_residuals[0][exposure_mask], tp2px_residuals[1][exposure_mask], ".", color='black')
         plt.axis('equal')
         plt.grid()
         plt.xlabel("$x$ [pixel]")
         # plt.ylabel("$y$ [pixel]")
 
-        plt.savefig(tp2px_save_folder_path.joinpath("scatter/{}_residuals_vector.png".format(quadrant)))
+        plt.savefig(tp2px_save_folder_path.joinpath("scatter/{}_residuals_vector.png".format(exposure)))
         plt.close()
     ################################################################################
     ################################################################################
-    # Residuals / quadrant
-    # save_folder_path.joinpath("parallactic_angle_quadrant").mkdir(exist_ok=True)
-    # for quadrant in model.dp.quadrant_set:
-    #     quadrant_mask = (model.dp.quadrant == quadrant)
+    # Residuals / exposure
+    # save_folder_path.joinpath("parallactic_angle_exposure").mkdir(exist_ok=True)
+    # for exposure in model.dp.exposure_set:
+    #     exposure_mask = (model.dp.exposure == exposure)
     #     plt.subplots(ncols=2, nrows=1, figsize=(10., 5.))
     #     plt.subplot(1, 2, 1)
-    #     plt.quiver(model.dp.x[quadrant_mask], model.dp.y[quadrant_mask], model.dp.parallactic_angle_x[quadrant_mask], model.dp.parallactic_angle_y[quadrant_mask])
-    #     plt.xlim(0., utils.quadrant_width_px)
-    #     plt.ylim(0., utils.quadrant_height_px)
+    #     plt.quiver(model.dp.x[exposure_mask], model.dp.y[exposure_mask], model.dp.parallactic_angle_x[exposure_mask], model.dp.parallactic_angle_y[quadrant_mask])
+    #     plt.xlim(0., utils.exposure_width_px)
+    #     plt.ylim(0., utils.exposure_height_px)
     #     plt.xlabel("$x$ [pixel]")
     #     plt.xlabel("$y$ [pixel]")
 
     #     plt.subplot(1, 2, 2)
-    #     plt.quiver(model.dp.x[quadrant_mask], model.dp.y[quadrant_mask], res_x[quadrant_mask], res_y[quadrant_mask])
-    #     plt.xlim(0., utils.quadrant_width_px)
-    #     plt.ylim(0., utils.quadrant_height_px)
+    #     plt.quiver(model.dp.x[exposure_mask], model.dp.y[exposure_mask], res_x[exposure_mask], res_y[quadrant_mask])
+    #     plt.xlim(0., utils.exposure_width_px)
+    #     plt.ylim(0., utils.exposure_height_px)
     #     plt.xlabel("$x$ [pixel]")
     #     plt.xlabel("$y$ [pixel]")
 
-    #     plt.savefig(save_folder_path.joinpath("parallactic_angle_quadrant/parallactic_angle_{}.png".format(quadrant)), dpi=150.)
+    #     plt.savefig(save_folder_path.joinpath("parallactic_angle_exposure/parallactic_angle_{}.png".format(exposure)), dpi=150.)
     #     plt.close()
 
     ################################################################################
@@ -1086,24 +1137,24 @@ def astrometry_fit_plot(band_path, ztfname, filtercode, logger, args):
     ################################################################################
 
     ################################################################################
-    # Chi2/quadrant / seeing
-    plt.plot(dp.seeing, tp2px_chi2_quadrant[dp.quadrant_index], '.')
+    # Chi2/exposure / seeing
+    plt.plot(dp.seeing, tp2px_chi2_exposure[dp.exposure_index], '.')
     plt.xlabel("Seeing")
-    plt.ylabel("$\\chi^2_\\mathrm{quadrant}$")
+    plt.ylabel("$\\chi^2_\\mathrm{exposure}$")
     plt.grid()
 
-    plt.savefig(tp2px_save_folder_path.joinpath("chi2_quadrant_seeing.png"), dpi=300.)
+    plt.savefig(tp2px_save_folder_path.joinpath("chi2_exposure_seeing.png"), dpi=300.)
     plt.close()
     ################################################################################
 
     ################################################################################
-    # Chi2/quadrant / airmass
-    plt.plot(dp.airmass, tp2px_chi2_quadrant[dp.quadrant_index], '.')
+    # Chi2/exposure / airmass
+    plt.plot(dp.airmass, tp2px_chi2_exposure[dp.exposure_index], '.')
     plt.xlabel("Airmass")
-    plt.ylabel("$\\chi^2_\\mathrm{quadrant}$")
+    plt.ylabel("$\\chi^2_\\mathrm{exposure}$")
     plt.grid()
 
-    plt.savefig(tp2px_save_folder_path.joinpath("chi2_quadrant_airmass.png"), dpi=300.)
+    plt.savefig(tp2px_save_folder_path.joinpath("chi2_exposure_airmass.png"), dpi=300.)
     plt.close()
     ################################################################################
 
@@ -1135,11 +1186,11 @@ def astrometry_fit_plot(band_path, ztfname, filtercode, logger, args):
     ################################################################################
 
     ################################################################################
-    # Chi2 / quadrant index
-    plt.plot(range(len(dp.quadrant_set)), tp2px_chi2_quadrant, ".", color='black')
-    plt.xlabel("Quadrant #")
+    # Chi2 / exposure index
+    plt.plot(range(len(dp.exposure_set)), tp2px_chi2_exposure, ".", color='black')
+    plt.xlabel("Exposure #")
     plt.ylabel("$\\chi^2$")
     plt.grid()
-    plt.savefig(tp2px_save_folder_path.joinpath("chi2_quadrant.png"), dpi=300.)
+    plt.savefig(tp2px_save_folder_path.joinpath("chi2_exposure.png"), dpi=300.)
     plt.close()
     ################################################################################
