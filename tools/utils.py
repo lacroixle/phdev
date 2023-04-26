@@ -380,27 +380,34 @@ def read_list(f):
 def read_list_ext(f):
     # Extract global @ parameters
     header = {}
-    line = f.readline()
+    line = f.readline().strip()
     curline = 1
     while line[0] == "@":
         line = line[:-1]
-        splitted = line.split(" ")
+        splitted = line.split()
         key = splitted[0][1:]
+        splitted = splitted[1:]
 
-        try:
-            value = list(map(float, splitted[1:]))
+        first = splitted[0]
+        if first[0] == '-':
+            first = first[1:]
 
-            if len(value) == 1:
-                if str(int(splitted)) == splitted[1:]:
-                    value = int(value[0])
-                else:
-                    value = value[0]
+        if first.isdigit():
+            t = int
+        else:
+            try:
+                float(first)
+            except ValueError:
+                t = str
             else:
-                value = pd.array(value)
-        except:
-            value = splitted[1:][0]
+                t = float
 
-        header[key.lower()] = value
+        values = list(map(t, splitted))
+
+        if len(values) == 1:
+            values = values[0]
+
+        header[key.lower()] = values
 
         line = f.readline()
         curline += 1
