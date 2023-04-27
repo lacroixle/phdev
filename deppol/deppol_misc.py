@@ -822,18 +822,18 @@ def catalogs_to_ds9regions(exposure, logger, args):
 
 def compress_lightcurve(lightcurve, logger, args):
     # Store success rates and timings
-    exposures = lightcurve.get_exposures(ignore_noprocess=True)
-    func_status = {}
-    func_timings = {}
-    func_timings['exposure_count'] = len(exposures)
-    func_timings['noprocess_count'] = len(lightcurve.get_noprocess())
-    func_timings['total'] = []
+    # exposures = lightcurve.get_exposures(ignore_noprocess=True)
+    # func_status = {}
+    # func_timings = {}
+    # func_timings['exposure_count'] = len(exposures)
+    # func_timings['noprocess_count'] = len(lightcurve.get_noprocess())
+    # func_timings['total'] = []
 
-    funcs = args.func.split(',')
+    # funcs = args.func.split(',')
 
-    for func in funcs:
-        func_status[func] = lightcurve.func_status(func)
-        func_timings[func] = lightcurve.func_timing(func)
+    # for func in funcs:
+    #     func_status[func] = lightcurve.func_status(func)
+    #     func_timings[func] = lightcurve.func_timing(func)
 
     # Extract and compress all catalogs, headers then the whole working directory into a tar archive
     lightcurve.compress()

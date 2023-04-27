@@ -7,6 +7,7 @@ import tarfile
 import json
 from shutil import rmtree
 import os
+from itertools import chain
 
 from ztfquery.io import get_file
 from astropy.io import fits
@@ -201,11 +202,6 @@ class Exposure:
 
 
 class BaseLightcurve:
-    def __init__(self, name, filterid, wd):
-        pass
-
-
-class Lightcurve:
     def __init__(self, name, filterid, wd, exposure_regexp="ztf_*"):
         self.__name = name
         self.__filterid = filterid
@@ -218,6 +214,81 @@ class Lightcurve:
         self.__mappings_path = self.__path.joinpath("mappings")
         self.__smphot_path = self.__path.joinpath("smphot")
         self.__smphot_stars_path = self.__path.joinpath("smphot_stars")
+
+    @property
+    def path(self):
+        return self.__path
+
+    @property
+    def name(self):
+        return self.__name
+
+    @property
+    def filterid(self):
+        return self.__filterid
+
+    @property
+    def ext_catalogs_path(self):
+        return self.__ext_catalogs_path
+
+    @property
+    def astrometry_path(self):
+        return self.__astrometry_path
+
+    @property
+    def photometry_path(self):
+        return self.__photometry_path
+
+    @property
+    def mappings_path(self):
+        return self.__mappings_path
+
+    @property
+    def driver_path(self):
+        return self.__driver_path
+
+    @property
+    def smphot_path(self):
+        return self.__smphot_path
+
+    @property
+    def smphot_stars_path(self):
+        return self.__smphot_stars_path
+
+    @property
+    def noprocess_path(self):
+        return self.__noprocess_path
+
+    @property
+    def exposures(self):
+        raise NotImplementedError()
+
+    @property
+    def star_catalogs_name(self):
+        return ['aperstars', 'psfstars']
+
+    @property
+    def ext_star_catalogs_name(self):
+        return ['gaia', 'ps1', 'ubercal']
+
+
+class Lightcurve(BaseLightcurve):
+    def __init__(self, name, filterid, wd, is_compressed=False, exposure_regexp="ztf_*"):
+        super.__init__(name, filterid, wd)
+        self.__name = name
+        self.__filterid = filterid
+        self.__path = wd.joinpath("{}/{}".format(name, filterid))
+        self.__noprocess_path = self.__path.joinpath("noprocess")
+        self.__driver_path = self.__path.joinpath("smphot_driver")
+        self.__ext_catalogs_path = self.__path.joinpath("catalogs")
+        self.__astrometry_path = self.__path.joinpath("astrometry")
+        self.__photometry_path = self.__path.joinpath("photometry")
+        self.__mappings_path = self.__path.joinpath("mappings")
+        self.__smphot_path = self.__path.joinpath("smphot")
+        self.__smphot_stars_path = self.__path.joinpath("smphot_stars")
+
+        if is_compressed:
+            self.uncompress()
 
         self.__exposures = dict([(exposure_path.name, Exposure(self, exposure_path.name)) for exposure_path in list(self.__path.glob(exposure_regexp))])
 
@@ -493,6 +564,40 @@ class Lightcurve:
                 'reduce': reduce_timing,
                 'total': total_timing}
 
+    def compress_states(self):
+        exposures = self.get_exposures(ignore_noprocess=True)
+
+        files = list(chain(*[list(exposure.path.glob("*.success")) for exposure in exposures]))
+        files.extend(list(chain(*[list(exposure.path.glob("*.fail")) for exposure in exposures])))
+        files.extend(list(chain(*[list(exposure.path.glob("timings_*")) for exposure in exposures])))
+        files.extend(list(self.path.glob("*.success")))
+        files.extend(list(self.path.glob("*.fail")))
+        files.extend(list(self.path.glob("timings_*")))
+
+        if self.path.joinpath("timings_total") in files:
+            files.remove(self.path.joinpath("timings_total"))
+
+        self.path.joinpath("states.tar").unlink(missing_ok=True)
+        tar = tarfile.open(self.path.joinpath("states.tar"), 'w')
+
+        for f in files:
+            tar.add(f, f.relative_to(self.path))
+        tar.close()
+
+        # Remove files
+        [f.unlink() for f in files]
+
+    def uncompress_states(self, keep_compressed_files=False):
+        if not self.path.joinpath("states.tar").exists():
+            return
+
+        tar = tarfile.open(self.path.joinpath("states.tar"), 'r')
+        tar.extractall()
+        tar.close()
+
+        if not keep_compressed_files:
+            self.path.joinpath("states.tar").unlink()
+
     def compress(self):
         """
         Compress lightcurve into a big hdf and tar files (more efficient storage, limiting small files)
@@ -501,6 +606,9 @@ class Lightcurve:
         """
 
         exposures = self.get_exposures(ignore_noprocess=True)
+
+        tar_path = self.path.joinpath("lightcurve.tar")
+        tar_path.unlink(missing_ok=True)
 
         # Store catalogs into one big HDF file
         catalogs_to_store = ['standalone_stars', 'psfstars']
@@ -518,20 +626,24 @@ class Lightcurve:
 
                     hdfstore.put('{}/{}/df'.format(exposure.name, catalog), cat.df)
 
+            # Store noprocess exposures
+
         # Store headers
         headers = dict([(exposure.name, exposure.exposure_header) for exposure in exposures])
         with open(self.path.joinpath("headers.pickle"), 'wb') as f:
             pickle.dump(headers, f)
 
-        # Archive all files/folders
-        tar_path = self.path.joinpath("lightcurve.tar")
-        tar_path.unlink(missing_ok=True)
+        # First start with timings and func states
+        self.compress_states()
 
+        # Compress all the other files
         files = list(self.path.glob("*"))
         files.remove(self.path.joinpath("catalogs.hdf"))
         files.remove(self.path.joinpath("headers.pickle"))
+        files.remove(self.path.joinpath("states.tar"))
 
-        tar = tarfile.open(self.path.joinpath("lightcurve.tar"), 'w')
+
+        tar = tarfile.open(tar_path, 'w')
         for f in files:
             tar.add(f, f.relative_to(self.path))
         tar.close()
@@ -543,7 +655,9 @@ class Lightcurve:
             else:
                 f.unlink()
 
-    def uncompress(self, keep_compressed_files=True):
+    def uncompress(self, keep_compressed_files=False):
+        self.uncompress_states(keep_compressed_files=keep_compressed_files)
+
         if not self.path.joinpath("lightcurve.tar").exists():
             return
 

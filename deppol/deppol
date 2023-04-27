@@ -231,7 +231,6 @@ def reduce_op(wd, name, filtercode, func, save_stats, args):
 
     if 'reduce' in poloka_func[func].keys():
         try:
-            #result = poloka_func[func]['reduce'](band_path, ztfname, filtercode, logger, args)
             result = poloka_func[func]['reduce'](lightcurve, logger, args)
         except Exception as e:
             result = False
@@ -252,14 +251,15 @@ def reduce_op(wd, name, filtercode, func, save_stats, args):
                     lightcurve_path.joinpath("{}.fail".format(func)).touch()
             else:
                 return 0
+    else:
+        end_time = time.perf_counter()
 
     if args.dump_timings and func != 'clean':
         map_start_time = None
         map_end_time = None
         if 'map' in poloka_func[func].keys():
-            # quadrants = quadrants_from_band_path(band_path, None, check_files=["{}.success".format(func)])
             exposures = lightcurve.get_exposures(files_to_check="{}.success".format(func))
-            timings = [load_timings(exposure.path.joinpath("timings_{}".format(func))) for exposure in exposures if exposure.joinpath("{}.success".format(func)).exists()]
+            timings = [load_timings(exposure.path.joinpath("timings_{}".format(func))) for exposure in exposures if exposure.path.joinpath("{}.success".format(func)).exists()]
             timings_df = pd.DataFrame.from_records(timings)
             timings_df['exposure'] = list(map(lambda x: x.name, exposures))
             timings_df.set_index('exposure', inplace=True)
