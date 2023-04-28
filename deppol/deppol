@@ -46,6 +46,7 @@ poloka_func.append({'map': deppol_misc.discard_calibrated, 'rm': deppol_misc.dis
 # poloka_func.append({'reduce': deppol_misc.seeing_study})
 poloka_func.append({'map': deppol_misc.catalogs_to_ds9regions})
 poloka_func.append({'reduce': deppol_misc.compress_lightcurve})
+poloka_func.append({'reduce': deppol_misc.dummy})
 
 
 import deppol_psfstudy
@@ -354,9 +355,6 @@ if __name__ == '__main__':
             print(list(poloka_func.keys()))
             exit()
 
-    if args.compress:
-        funcs.append("compress_lightcurve")
-
     print("Running pipeline:")
     print(" -> ".join(funcs))
 
@@ -444,6 +442,7 @@ if __name__ == '__main__':
                     cd = args.scratch
                 else:
                     cd = args.wd
+
                 if not cd.joinpath("{}/{}/lightcurve.tar".format(ztfname, filtercode)).exists():
                     continue
 
@@ -554,3 +553,14 @@ if __name__ == '__main__':
         shutil.copytree(args.scratch, args.wd, dirs_exist_ok=True, ignore=shutil.ignore_patterns(*to_ignore))
         shutil.rmtree(args.scratch)
         print("Done")
+
+    if args.compress:
+        print("Compressing...")
+        for ztfname in ztfnames:
+            for filtercode in filtercodes:
+                band_path = args.wd.joinpath("{}/{}".format(ztfname, filtercode))
+                if band_path.exists():
+                    print("{}-{}... ".format(ztfname, filtercode), end="", flush=True)
+                    lightcurve = Lightcurve(ztfname, filtercode, args.wd)
+                    lightcurve.compress()
+                    print("Done")

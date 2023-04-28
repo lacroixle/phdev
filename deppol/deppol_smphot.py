@@ -166,20 +166,18 @@ def smphot_stars(lightcurve, logger, args):
         calib_df['magi'] = calib_df['magr']
         calib_df['emagi'] = calib_df['emagr']
         calib_df.insert(2, column='n', value=1)
-        calib_df['ristar'] = list(range(len(cat_stars_df)))
     elif args.photom_cat == 'ps1':
+        cat_stars_df.dropna(subset=['gmag', 'rmag', 'imag', 'e_gmag', 'e_rmag', 'e_imag'])
         calib_df = cat_stars_df[['ra', 'dec', 'gmag', 'rmag', 'imag', 'e_gmag', 'e_rmag', 'e_imag']].rename(
             columns={'gmag': 'magg', 'rmag': 'magr', 'imag': 'magi', 'e_gmag': 'emagg', 'e_rmag': 'emagr', 'e_imag': 'emagi'})
         calib_df.insert(2, column='n', value=1)
-        calib_df['ristar'] = list(range(len(cat_stars_df)))
-
-        # Replace nan incertitudes to 0... probably not the best thing to do
-        calib_df[['emagg', 'emagr', 'emagi']] = calib_df[['emagg', 'emagr', 'emagi']].fillna(0.)
 
     elif args.photom_cat == 'ubercal':
         raise NotImplementedError
     else:
         raise NotImplementedError
+
+    calib_df['ristar'] = list(range(len(calib_df)))
 
     gaia_stars_skycoords = SkyCoord(ra=cat_stars_df['ra'], dec=cat_stars_df['dec'], unit='deg')
 
@@ -193,8 +191,6 @@ def smphot_stars(lightcurve, logger, args):
     calib_df = calib_df.iloc[:100] # For testing, we choose 100 stars
     logger.info("Total star count in a 0.35 deg radius around SN: {}".format(len(calib_df)))
     calib_table = ListTable(None, calib_df)
-
-    print(calib_df)
 
     lightcurve.smphot_stars_path.mkdir(exist_ok=True)
 

@@ -617,7 +617,7 @@ def match_catalogs(exposure, logger, args):
         logger.error("Could not find Gaia catalog!")
         return False
 
-    if not exposure.step_successful('makepsf'):
+    if not exposure.func_status('makepsf'):
         logger.error("makepsf was not successful, no psfstars catalog!")
         return False
 
@@ -837,3 +837,7 @@ def compress_lightcurve(lightcurve, logger, args):
 
     # Extract and compress all catalogs, headers then the whole working directory into a tar archive
     lightcurve.compress()
+
+
+def dummy(lightcurve, logger, args):
+    return True

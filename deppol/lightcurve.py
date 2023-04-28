@@ -21,7 +21,7 @@ from ztfimg.utils.tools import ccdid_qid_to_rcid
 from utils import ListTable, quadrant_name_explode, quadrant_width_px, quadrant_height_px, j2000mjd
 
 
-class Exposure:
+class _Exposure:
     def __init__(self, lightcurve, name, path=None):
         self.__lightcurve = lightcurve
         self.__name = name
@@ -74,6 +74,35 @@ class Exposure:
     @property
     def path(self):
         return self.__path
+
+    @property
+    def mjd(self):
+        raise NotImplementedError()
+
+    @property
+    def wcs(self):
+        raise NotImplementedError()
+
+    @property
+    def retrieve_exposure(self):
+        raise NotImplementedError()
+
+    @property
+    def update_exposure_header(self):
+        pass
+
+    def get_catalog(self, cat_name, key=None):
+        pass
+
+
+class CompressedExposure(_Exposure):
+    def __init(self, lightcurve, name, path=None):
+        pass
+
+
+class Exposure(_Exposure):
+    def __init__(self, lightcurve, name, path=None):
+        super().__init__(lightcurve, name, path=path)
 
     @property
     def mjd(self):
@@ -201,7 +230,7 @@ class Exposure:
         return self.wcs.pixel_to_world_values(np.array([[quadrant_width_px/2., quadrant_height_px/2.]]))[0]
 
 
-class BaseLightcurve:
+class _Lightcurve:
     def __init__(self, name, filterid, wd, exposure_regexp="ztf_*"):
         self.__name = name
         self.__filterid = filterid
@@ -271,82 +300,53 @@ class BaseLightcurve:
     def ext_star_catalogs_name(self):
         return ['gaia', 'ps1', 'ubercal']
 
+    def get_exposures(self, files_to_check=None, ignore_noprocess=False):
+        raise NotImplementedError()
 
-class Lightcurve(BaseLightcurve):
+    def add_noprocess(self, new_noprocess_quadrants):
+        raise NotImplementedError()
+
+    def reset_noprocess(self):
+        raise NotImplementedError()
+
+    def get_ext_catalog(self, cat_name, matched=True):
+        raise NotImplementedError()
+
+    def get_catalogs(self, cat_name, files_to_check=None):
+        raise NotImplementedError()
+
+    def exposure_headers(self):
+        raise NotImplementedError()
+
+    def get_reference_exposure(self):
+        raise NotImplementedError()
+
+    def extract_exposure_catalog(self):
+        raise NotImplementedError()
+
+    def extract_star_catalog(self, catalog_names, project=False):
+        raise NotImplementedError()
+
+    def func_status(self, func_name):
+        raise NotImplementedError()
+
+    def func_timing(self, func_name):
+        raise NotImplementedError()
+
+
+class Lightcurve(_Lightcurve):
     def __init__(self, name, filterid, wd, is_compressed=False, exposure_regexp="ztf_*"):
-        super.__init__(name, filterid, wd)
-        self.__name = name
-        self.__filterid = filterid
-        self.__path = wd.joinpath("{}/{}".format(name, filterid))
-        self.__noprocess_path = self.__path.joinpath("noprocess")
-        self.__driver_path = self.__path.joinpath("smphot_driver")
-        self.__ext_catalogs_path = self.__path.joinpath("catalogs")
-        self.__astrometry_path = self.__path.joinpath("astrometry")
-        self.__photometry_path = self.__path.joinpath("photometry")
-        self.__mappings_path = self.__path.joinpath("mappings")
-        self.__smphot_path = self.__path.joinpath("smphot")
-        self.__smphot_stars_path = self.__path.joinpath("smphot_stars")
+        super().__init__(name, filterid, wd)
 
         if is_compressed:
             self.uncompress()
 
         self.__exposures = dict([(exposure_path.name, Exposure(self, exposure_path.name)) for exposure_path in list(self.__path.glob(exposure_regexp))])
 
-    @property
-    def path(self):
-        return self.__path
-
-    @property
-    def name(self):
-        return self.__name
-
-    @property
-    def filterid(self):
-        return self.__filterid
-
-    @property
-    def ext_catalogs_path(self):
-        return self.__ext_catalogs_path
-
-    @property
-    def astrometry_path(self):
-        return self.__astrometry_path
-
-    @property
-    def photometry_path(self):
-        return self.__photometry_path
-
-    @property
-    def mappings_path(self):
-        return self.__mappings_path
-
-    @property
-    def driver_path(self):
-        return self.__driver_path
-
-    @property
-    def smphot_path(self):
-        return self.__smphot_path
-
-    @property
-    def smphot_stars_path(self):
-        return self.__smphot_stars_path
-
-    @property
-    def noprocess_path(self):
-        return self.__noprocess_path
 
     @property
     def exposures(self):
         return self.__exposures
-
-    @property
-    def star_catalogs_name(self):
-        return ['aperstars', 'psfstars']
-
-    @property
-    def ext_star_catalogs_name(self):
-        return ['gaia', 'ps1', 'ubercal']
 
     def get_exposures(self, files_to_check=None, ignore_noprocess=False):
         if files_to_check is None and ignore_noprocess:
@@ -585,7 +585,7 @@ class Lightcurve(BaseLightcurve):
         tar.close()
 
         # Remove files
-        [f.unlink() for f in files]
+        #[f.unlink() for f in files]
 
     def uncompress_states(self, keep_compressed_files=False):
         if not self.path.joinpath("states.tar").exists():
@@ -626,7 +626,15 @@ class Lightcurve(BaseLightcurve):
 
                     hdfstore.put('{}/{}/df'.format(exposure.name, catalog), cat.df)
 
+                # Store indices
+                if exposure.func_status("match_catalogs"):
+                    with pd.HDFStore(exposure.path.joinpath("cat_indices.hd5")) as hdfstore_indices:
+                        for cat_name in ['aperstars_indices', 'cat_indices', 'ext_cat_indices', 'psfstars_indices']:
+                            hdfstore.put('{}/cat_indices/{}'.format(exposure.name, cat_name), hdfstore_indices.get(cat_name))
+
             # Store noprocess exposures
+            noprocess_df = pd.Series(self.get_noprocess())
+            hdfstore.put('noprocess', noprocess_df)
 
         # Store headers
         headers = dict([(exposure.name, exposure.exposure_header) for exposure in exposures])
@@ -636,12 +644,22 @@ class Lightcurve(BaseLightcurve):
         # First start with timings and func states
         self.compress_states()
 
-        # Compress all the other files
+        self.path.joinpath("lightcurve_sn.parquet").unlink(missing_ok=True)
+        self.path.joinpath("smphot_stars_cat.parquet").unlink(missing_ok=True)
+
         files = list(self.path.glob("*"))
+
+        # Store SMP lightcurves if available
+        if self.smphot_path.joinpath("lightcurve_sn.dat").exists():
+            ListTable.from_filename(self.smphot_path.joinpath("lightcurve_sn.dat")).df.to_parquet(self.path.joinpath("lightcurve_sn.parquet"))
+
+        if self.smphot_stars_path.joinpath("smphot_stars_cat.list").exists():
+            ListTable.from_filename(self.smphot_stars_path.joinpath("smphot_stars_cat.list")).df.to_parquet(self.path.joinpath("smphot_stars_cat.parquet"))
+
+        # Compress all the other files
         files.remove(self.path.joinpath("catalogs.hdf"))
         files.remove(self.path.joinpath("headers.pickle"))
         files.remove(self.path.joinpath("states.tar"))
-
 
         tar = tarfile.open(tar_path, 'w')
         for f in files:
@@ -671,6 +689,7 @@ class Lightcurve(BaseLightcurve):
             self.path.joinpath("lightcurve.tar").unlink(missing_ok=True)
 
 
-class CompressedLightcurve:
+class CompressedLightcurve(_Lightcurve):
     def __init__(self, name, filterid, wd):
+        super().__init(name, filterid, wd)
         pass

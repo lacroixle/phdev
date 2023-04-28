@@ -80,11 +80,11 @@ def mkcat2(exposure, logger, args):
         # plt.show()
 
         old_cat = exposure.get_catalog("standalone_stars.list")
-        exposure.path.joinpath("standalone_stars.list").rename("standalone_stars.old.list")
+        # exposure.path.joinpath("standalone_stars.list").rename("standalone_stars.old.list")
         standalone_stars_cat.df = standalone_stars_df
         standalone_stars_cat.write()
 
-        draw_star_shape = True
+        draw_star_shape = False
         if draw_star_shape:
             print(exposure.name)
             import matplotlib.pyplot as plt
