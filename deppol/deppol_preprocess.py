@@ -47,6 +47,7 @@ def mkcat2(exposure, logger, args):
         # Removing measures that are too close to each other
         # Min distance should be a function of seeing idealy
         aperse_cat.df = aperse_cat.df.loc[aperse_cat.df['flag']==0]
+        aperse_cat.df = aperse_cat.df.loc[aperse_cat.df['gflag']==0]
         min_dist = 20.
         n = len(aperse_cat.df)
         X = np.tile(aperse_cat.df['x'].to_numpy(), (n, 1))
@@ -84,7 +85,7 @@ def mkcat2(exposure, logger, args):
         standalone_stars_cat.df = standalone_stars_df
         standalone_stars_cat.write()
 
-        draw_star_shape = False
+        draw_star_shape = True
         if draw_star_shape:
             print(exposure.name)
             import matplotlib.pyplot as plt
@@ -95,6 +96,7 @@ def mkcat2(exposure, logger, args):
             standalone_stars_cat = exposure.get_catalog("standalone_stars.list")
             x, y, _, sigma_x, sigma_y, corr = aperse_cat.header['starshape']
 
+
             plt.plot(gaia_stars_df.iloc[gaia_indices]['Gmag'].to_numpy(), (standalone_stars_cat.df['apfl6']/standalone_stars_cat.df['eapfl6']).to_numpy(), '.')
             plt.show()
 
@@ -102,11 +104,12 @@ def mkcat2(exposure, logger, args):
             plt.show()
 
             fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(8., 8.))
-            plt.suptitle("$N_s={}$, seeing={}".format(len(standalone_stars_cat.df), standalone_stars_cat.header['seeing']))
+            plt.suptitle("$N_s={}$, seeing={}\n{}".format(len(standalone_stars_cat.df), standalone_stars_cat.header['seeing'], exposure.name))
             ax.add_patch(Ellipse((x, y), width=5.*sigma_x, height=5.*sigma_y, fill=False, color='red'))
-            plt.plot(np.sqrt(aperse_cat.df['gmxx'].to_numpy()), np.sqrt(aperse_cat.df['gmyy'].to_numpy()), '.')
-            plt.plot(np.sqrt(standalone_stars_cat.df['gmxx'].to_numpy()), np.sqrt(standalone_stars_cat.df['gmyy'].to_numpy()), '.', color='red')
-            plt.plot(np.sqrt(old_cat.df['gmxx'].to_numpy()), np.sqrt(old_cat.df['gmyy'].to_numpy()), 'x', color='green')
+            plt.plot(np.sqrt(aperse_cat.df['gmxx'].to_numpy()), np.sqrt(aperse_cat.df['gmyy'].to_numpy()), '.', label="SE cat")
+            plt.plot(np.sqrt(standalone_stars_cat.df['gmxx'].to_numpy()), np.sqrt(standalone_stars_cat.df['gmyy'].to_numpy()), '.', color='red', label="Stand. cat")
+            plt.plot(np.sqrt(old_cat.df['gmxx'].to_numpy()), np.sqrt(old_cat.df['gmyy'].to_numpy()), 'x', color='green', label="Old stand. cat")
+            plt.legend()
             plt.plot([x], [y], 'x')
             plt.xlim(0., 2.)
             plt.ylim(0., 2.)
