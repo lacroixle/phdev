@@ -102,8 +102,8 @@ if __name__ == '__main__':
             if not sn_folder.exists():
                 return
 
-            smphot_lc_sn_file = sn_folder.joinpath("smphot_output/lightcurve_sn.dat")
-            smphot_lc_fit_file = sn_folder.joinpath("smphot_output/lc2fit.dat")
+            smphot_lc_sn_file = sn_folder.joinpath("smphot/lightcurve_sn.dat")
+            smphot_lc_fit_file = sn_folder.joinpath("smphot/lc2fit.dat")
 
             if not smphot_lc_sn_file.exists() or not smphot_lc_fit_file.exists():
                 return
@@ -174,7 +174,7 @@ if __name__ == '__main__':
 
 
             # Close view of the SN
-            with fits.open(sn_folder.joinpath("smphot_output/{}.fits".format(lc_info['t0_exp_file']))) as hdul:
+            with fits.open(sn_folder.joinpath("smphot/{}.fits".format(lc_info['t0_exp_file']))) as hdul:
                 lc_info['t0_sn_stamp'] = hdul[0].data
 
             z = ScienceQuadrant.from_filename(lc_info['t0_exp_file']+"_sciimg.fits", use_dask=False)
@@ -238,7 +238,7 @@ if __name__ == '__main__':
                 if args.mag:
                     sn_flux['flux'] = -2.5*np.log10(sn_flux['flux']+sn_flux['flux'].min())
 
-                plt.errorbar(sn_flux['mjd'], sn_flux['flux'], yerr=sn_flux['varflux'], color='black', ms=5., lw=0., marker=idx_to_marker[j], ls='', label=str(fieldid), elinewidth=1.)
+                plt.errorbar(sn_flux['mjd'].to_numpy(), sn_flux['flux'].to_numpy(), yerr=sn_flux['varflux'].to_numpy(), color='black', ms=5., lw=0., marker=idx_to_marker[j], ls='', label=str(fieldid), elinewidth=1.)
 
             #t = np.linspace(lc_info['sn_flux']['mjd'].min(), lc_info['sn_flux']['mjd'].max(), 500)
             #plt.plot(t, lc_info['spline'](t), color='grey')
@@ -295,7 +295,7 @@ if __name__ == '__main__':
                 sn_flux = lc_info['lc_fp'][lc_info['lc_fp']['field_id'] == fieldid]
                 to_plot = ~np.any([~(np.abs(stats.zscore(sn_flux['flux_err'])) < 2.), ~(np.abs(stats.zscore(sn_flux['flux'])) < 5)], axis=0)
                 #print("To plot: {} ({} removed)".format(sum(to_plot), len(sn_flux)-sum(to_plot)))
-                plt.errorbar(sn_flux.index[to_plot], sn_flux['flux'][to_plot], yerr=sn_flux['flux_err'][to_plot], color='black', ms=5., lw=0., marker=idx_to_marker[j], ls='', label=str(fieldid), elinewidth=1.)
+                plt.errorbar(sn_flux.index[to_plot].to_numpy(), sn_flux['flux'][to_plot].to_numpy(), yerr=sn_flux['flux_err'][to_plot].to_numpy(), color='black', ms=5., lw=0., marker=idx_to_marker[j], ls='', label=str(fieldid), elinewidth=1.)
 
             plt.legend(title="Field ID")
             plt.grid()
@@ -319,7 +319,7 @@ if __name__ == '__main__':
 
             for j, fieldid in enumerate(lc_info['fieldids']):
                 sn_flux = lc_info['sn_flux'][lc_info['sn_flux']['fieldid'] == fieldid]
-                plt.errorbar(sn_flux['mjd'], sn_flux['flux'], yerr=sn_flux['varflux'], color='black', ms=5., lw=0., marker=idx_to_marker[j], ls='', label=str(fieldid), elinewidth=1.)
+                plt.errorbar(sn_flux['mjd'].to_numpy(), sn_flux['flux'].to_numpy(), yerr=sn_flux['varflux'].to_numpy(), color='black', ms=5., lw=0., marker=idx_to_marker[j], ls='', label=str(fieldid), elinewidth=1.)
 
             if not columns:
                 plt.legend(title="Field ID")
