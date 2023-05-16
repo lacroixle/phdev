@@ -611,18 +611,22 @@ def astrometry_fit_plot(lightcurve, logger, args):
 
     ################################################################################
     # Residuals / magnitude
-    plt.subplots(ncols=1, nrows=2, figsize=(15., 5.))
+    plt.subplots(ncols=1, nrows=2, figsize=(10., 5.), sharex=True, )
+    plt.subplots_adjust(wspace=0, hspace=0)
     plt.subplot(2, 1, 1)
-    plt.plot(dp.mag[measure_mask], ref2px_residuals[0]/np.sqrt(dp.sx[measure_mask]**2+dp.sy[measure_mask]**2), ',', color='black')
-    # plt.ylim([-0.2, 0.2])
+    plt.plot(dp.mag[measure_mask], ref2px_residuals[0], ',', color='black')
+    plt.ylabel("$x-x_\\mathrm{fit}$ [pixel]")
+    plt.ylim([-0.2, 0.2])
     plt.grid()
     plt.subplot(2, 1, 2)
-    plt.plot(dp.mag[measure_mask], ref2px_residuals[1]/np.sqrt(dp.sx[measure_mask]**2+dp.sy[measure_mask]**2), ',', color='black')
-    # plt.ylim([-0.2, 0.2])
+    plt.plot(dp.mag[measure_mask], ref2px_residuals[1], ',', color='black')
+    plt.xlabel("$m$ [mag]")
+    plt.ylabel("$y-y_\\mathrm{fit}$ [pixel]")
+    plt.ylim([-0.2, 0.2])
     plt.grid()
     plt.savefig(ref2px_save_folder_path.joinpath("residuals_mag.png"), dpi=300.)
     plt.close()
-
+    ################################################################################
     ################################################################################
     # Residuals binplot / magnitude
     plt.subplots(nrows=2, ncols=2, figsize=(18., 10.))

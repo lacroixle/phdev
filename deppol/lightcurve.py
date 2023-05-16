@@ -592,7 +592,7 @@ class Lightcurve(_Lightcurve):
             return
 
         tar = tarfile.open(self.path.joinpath("states.tar"), 'r')
-        tar.extractall()
+        tar.extractall(path=self.path)
         tar.close()
 
         if not keep_compressed_files:

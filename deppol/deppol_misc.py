@@ -10,29 +10,96 @@ def psf_study(exposure, logger, args):
     import matplotlib.pyplot as plt
     import pickle
     from matplotlib.ticker import MultipleLocator, FormatStrFormatter, AutoMinorLocator
-    matplotlib.use('Agg')
+    from numpy.polynomial.polynomial import Polynomial
+    # matplotlib.use('Agg')
 
-    quadrant_path = exposure.path
-    ztfname = exposure.lightcurve.name
-    filtercode = exposure.filterid
-
-    if not quadrant_path.joinpath("psfstars.list").exists():
+    print(exposure.name)
+    if not exposure.path.joinpath("psfstars.list").exists():
         return True
 
     # psf_resid = ListTable.from_filename(quadrant_path.joinpath("psf_resid_tuple.dat"))
-    psf_tuple = ListTable.from_filename(quadrant_path.joinpath("psftuple.list"))
-    psf_stars = ListTable.from_filename(quadrant_path.joinpath("psfstars.list"))
-    stand = ListTable.from_filename(quadrant_path.joinpath("standalone_stars.list"))
+    psf_stars_df = exposure.get_matched_catalog('psfstars')
+    aper_stars_df = exposure.get_matched_catalog('aperstars')
+    gaia_stars_df = exposure.get_matched_ext_catalog('gaia')
 
-    before = len(stand.df)
-    stand.df = stand.df.loc[stand.df['flag']==0]
-    stand.df = stand.df.loc[stand.df['gflag']==0]
-    print(before-len(stand.df))
+    def _aperflux_to_mag(aper, cat_df):
+        cat_df['mag_{}'.format(aper)] = -2.5*np.log10(cat_df[aper])
+        cat_df['emag_{}'.format(aper)] = 1.08*cat_df['e{}'.format(aper)]/cat_df[aper]
 
-    stand.df['mag'] = -2.5*np.log10(stand.df['flux'])
-    psf_stars.df['mag'] = -2.5*np.log10(psf_stars.df['flux'])
+    aper_stars_df['mag'] = -2.5*np.log10(aper_stars_df['flux'])
+    aper_stars_df['emag'] = 1.08*aper_stars_df['eflux']/aper_stars_df['flux']
+    psf_stars_df['mag'] = -2.5*np.log10(psf_stars_df['flux'])
+    psf_stars_df['emag'] = 1.08*np.log10(psf_stars_df['eflux'])
+    _aperflux_to_mag('apfl0', aper_stars_df)
+    _aperflux_to_mag('apfl4', aper_stars_df)
+    _aperflux_to_mag('apfl6', aper_stars_df)
+    _aperflux_to_mag('apfl8', aper_stars_df)
+
+    d_mag = (psf_stars_df['mag'] - aper_stars_df['mag_apfl6']).to_numpy()
+    d_mag = d_mag - np.nanmean(d_mag)
+    ed_mag = np.sqrt(psf_stars_df['emag']**2+aper_stars_df['emag_apfl6']**2).to_numpy()
+
+    d_mag_mask = ~np.isnan(d_mag)
+    d_mag = d_mag[d_mag_mask]
+    ed_mag = ed_mag[d_mag_mask]
+
+    min_mag, max_mag = 13., 21.
+    low_bin, high_bin = 14, 17
+
+    gmag_binned, d_mag_binned, ed_mag_binned = binplot(gaia_stars_df.iloc[d_mag_mask]['Gmag'].to_numpy(), d_mag, robust=True, data=False, scale=True, weights=1./ed_mag**2, bins=np.linspace(min_mag, max_mag, 15), color='black', zorder=15)
+
+    bin_mask = (ed_mag_binned > 0.)
+    gmag_binned = gmag_binned[bin_mask]
+    d_mag_binned = np.array(d_mag_binned)[bin_mask]
+    ed_mag_binned = ed_mag_binned[bin_mask]
+
+    poly0, ([poly0_chi2], _, _, _) = Polynomial.fit(gmag_binned, d_mag_binned, 0, w=1./ed_mag_binned, full=True)
+    poly1, ([poly1_chi2], _, _, _) = Polynomial.fit(gmag_binned, d_mag_binned, 1, w=1./ed_mag_binned, full=True)
+    poly2, ([poly2_chi2], _, _, _) = Polynomial.fit(gmag_binned, d_mag_binned, 2, w=1./ed_mag_binned, full=True)
+
+    poly0_chi2 = poly0_chi2/(len(gmag_binned)-1)
+    poly1_chi2 = poly1_chi2/(len(gmag_binned)-2)
+    poly2_chi2 = poly2_chi2/(len(gmag_binned)-3)
+
+    # plt.subplots(ncols=1, nrows=2, figsize=(10., 6.), sharex=True)
+    # plt.suptitle("Skewness of stars as a function of magnitude")
+    # plt.subplot(2, 1, 1)
+    # plt.plot(gaia_stars_df['Gmag'].to_numpy(), aper_stars_df['gmx3'].to_numpy(), '.')
+    # plt.grid()
+    # plt.axhline(0.)
+    # plt.ylabel("$M_x^3$")
+    # plt.subplot(2, 1, 2)
+    # plt.plot(gaia_stars_df['Gmag'].to_numpy(), aper_stars_df['gmy3'].to_numpy(), '.')
+    # plt.grid()
+    # plt.axhline()
+    # plt.ylabel("$M_y^3$")
+    # plt.xlabel("$m_\\mathrm{Gaia}$ [mag]")
+    # plt.show()
+
+    mag_space = np.linspace(min_mag, max_mag, 100)
+
+    plt.figure()
+    plt.subplots(ncols=1, nrows=1, figsize=(10., 6.))
+    plt.suptitle("{}\n{}\nSky level={}ADU".format(exposure.name, poly0_chi2-poly2_chi2, exposure.exposure_header['sexsky']))
+    plt.plot(gaia_stars_df['Gmag'].to_numpy(), d_mag, '.')
+    plt.plot(mag_space, poly0(mag_space))
+    plt.plot(mag_space, poly2(mag_space))
+    plt.ylabel("$m_\\mathrm{Aper}-m_\\mathrm{PSF}$ [mag]")
+    plt.xlabel("$m_\\mathrm{Gaia}$ [mag]")
+    plt.xlim(13., 21.)
+    plt.ylim(-2., 2.)
+    plt.grid()
+    plt.show()
+
+    with open(exposure.path.joinpath("psfskewness.pickle"), 'wb') as f:
+        pickle.dump(f, {'exposure': exposure.name,
+                        'poly0_chi2': poly0_chi2,
+                        'poly1_chi2': poly1_chi2,
+                        'poly2_chi2': poly2_chi2,
+                        'skylev': exposure.exposure_header['sexsky']})
+
+    return True
     # psf_residuals_px = (psf_resid.df['fimg'] - psf_resid.df['fpsf']).to_numpy()
-    mag = np.linspace(np.min(stand.df['mag']), np.max(stand.df['mag']), 100)
 
     subx = 4
     suby = 1
@@ -42,18 +109,18 @@ def psf_study(exposure, logger, args):
         ranges = np.linspace(0., quadrant_size_px[axis], sub+1)
         skew_polynomials = []
         for i in range(sub):
-            range_mask = (stand.df['y'] >= ranges[i]) & (stand.df['y'] < ranges[i+1])
-            skew_polynomials.append(np.polynomial.Polynomial.fit(stand.df.loc[range_mask]['mag'], stand.df.loc[range_mask]['gm{}3'.format(axis)], 1))
+            range_mask = (stand_stars_df['y'] >= ranges[i]) & (stand_stars_df['y'] < ranges[i+1])
+            skew_polynomials.append(np.polynomial.Polynomial.fit(stand_stars_df.loc[range_mask]['mag'], stand_stars_df.loc[range_mask]['gm{}3'.format(axis)], 1))
 
         return skew_polynomials
 
-    skew_polynomial_x = np.polynomial.Polynomial.fit(stand.df['mag'], stand.df['gmx3'], 1)
-    skew_polynomial_y = np.polynomial.Polynomial.fit(stand.df['mag'], stand.df['gmy3'], 1)
+    skew_polynomial_x = np.polynomial.Polynomial.fit(stand_stars_df['mag'], stand_stars_df['gmx3'], 1)
+    skew_polynomial_y = np.polynomial.Polynomial.fit(stand_stars_df['mag'], stand_stars_df['gmy3'], 1)
 
     skew_polynomial_subx = _fit_skewness_subquadrants('x', subx)
     skew_polynomial_suby = _fit_skewness_subquadrants('y', suby)
 
-    with open(quadrant_path.joinpath("stamp_skewness.pickle"), 'wb') as f:
+    with open(exposure.path.joinpath("stamp_skewness.pickle"), 'wb') as f:
         pickle.dump({'poly_x': skew_polynomial_x, 'poly_y': skew_polynomial_y,
                      'poly_x_sub': skew_polynomial_subx, 'poly_y_sub': skew_polynomial_suby}, f)
 
@@ -64,7 +131,7 @@ def psf_study(exposure, logger, args):
     ax.yaxis.set_minor_locator(AutoMinorLocator())
     plt.grid(linestyle='--', color='xkcd:sky blue')
     plt.suptitle("Skewness plane for standalone stars stamps in \n {}".format(quadrant_path.name))
-    plt.scatter(stand.df['gmx3'], stand.df['gmy3'], s=2., color='black')
+    plt.scatter(stand_stars_df['gmx3'], stand_stars_df['gmy3'], s=2., color='black')
     plt.xlabel("$M^g_{xxx}$")
     plt.ylabel("$M^g_{yyy}$")
     plt.axvline(0.)
@@ -83,7 +150,7 @@ def psf_study(exposure, logger, args):
     ax.xaxis.set_minor_locator(AutoMinorLocator())
     ax.yaxis.set_minor_locator(AutoMinorLocator())
     plt.grid(linestyle='--', color='xkcd:sky blue')
-    plt.scatter(stand.df['mag'], stand.df['gmx3'], s=2.)
+    plt.scatter(stand_stars_df['mag'], stand_stars_df['gmx3'], s=2.)
     # plt.plot(mag, skew_polynomial_x(mag), color='black')
     plt.axhline(0.)
     # plt.ylim(-0.5, 0.3)
@@ -95,7 +162,7 @@ def psf_study(exposure, logger, args):
     ax.xaxis.set_minor_locator(AutoMinorLocator())
     ax.yaxis.set_minor_locator(AutoMinorLocator())
     plt.grid(linestyle='--', color='xkcd:sky blue')
-    plt.scatter(stand.df['mag'], stand.df['gmy3'], s=2.)
+    plt.scatter(stand_stars_df['mag'], stand_stars_df['gmy3'], s=2.)
     # plt.plot(mag, skew_polynomial_y(mag), color='black')
     plt.axhline(0.)
     plt.xlabel("$m$")
@@ -103,43 +170,43 @@ def psf_study(exposure, logger, args):
     # plt.xlim(-15., -6)
     plt.ylabel("$M^g_{yyy}$")
 
-    plt.savefig(quadrant_path.joinpath("{}_skewness_magnitude.png".format(quadrant_path.name)), dpi=300.)
+    plt.savefig(exposure.path.joinpath("{}_skewness_magnitude.png".format(quadrant_path.name)), dpi=300.)
     plt.close()
     return
 
-    star_indices = match_pixel_space(psf_stars.df[['x', 'y']].to_records(), psf_resid.df[['xc', 'yc']].rename(mapper={'xc': 'x', 'yc': 'y'}, axis='columns').to_records())
-    psf_size = int(np.sqrt(sum(star_indices==0)))
-    psf_residuals = np.zeros([len(psf_stars.df), psf_size*psf_size])
-    for star_index in range(len(np.bincount(star_indices))):
-        star_mask = (star_indices==star_index)
-        ij = (psf_resid.df.iloc[star_mask]['j']*psf_size + psf_resid.df.iloc[star_mask]['i'] + int(np.floor(psf_size**2/2))).to_numpy()
-        np.put_along_axis(psf_residuals[star_index], ij, psf_residuals_px[star_mask], 0)
+    # star_indices = match_pixel_space(psf_stars_df[['x', 'y']].to_records(), psf_resid_df[['xc', 'yc']].rename(mapper={'xc': 'x', 'yc': 'y'}, axis='columns').to_records())
+    # psf_size = int(np.sqrt(sum(star_indices==0)))
+    # psf_residuals = np.zeros([len(psf_stars.df), psf_size*psf_size])
+    # for star_index in range(len(np.bincount(star_indices))):
+    #     star_mask = (star_indices==star_index)
+    #     ij = (psf_resid.df.iloc[star_mask]['j']*psf_size + psf_resid.df.iloc[star_mask]['i'] + int(np.floor(psf_size**2/2))).to_numpy()
+    #     np.put_along_axis(psf_residuals[star_index], ij, psf_residuals_px[star_mask], 0)
 
-    psf_residuals = psf_residuals.reshape(len(psf_stars.df), psf_size, psf_size)
+    # psf_residuals = psf_residuals.reshape(len(psf_stars.df), psf_size, psf_size)
 
-    bins_count = 5
-    mag_range = (psf_stars.df['mag'].min(), psf_stars.df['mag'].max())
-    bins = np.linspace(*mag_range, bins_count+1)
-    psf_residual_means = []
-    psf_residual_count = []
-    for i in range(bins_count):
-        lower_bound = bins[i]
-        upper_bound = bins[i+1]
+    # bins_count = 5
+    # mag_range = (psf_stars.df['mag'].min(), psf_stars.df['mag'].max())
+    # bins = np.linspace(*mag_range, bins_count+1)
+    # psf_residual_means = []
+    # psf_residual_count = []
+    # for i in range(bins_count):
+    #     lower_bound = bins[i]
+    #     upper_bound = bins[i+1]
 
-        binned_stars_mask = np.all([psf_stars.df['mag'] < upper_bound, psf_stars.df['mag'] >= lower_bound], axis=0)
-        psf_residual_means.append(np.mean(psf_residuals[binned_stars_mask], axis=0))
-        psf_residual_count.append(sum(binned_stars_mask))
+    #     binned_stars_mask = np.all([psf_stars.df['mag'] < upper_bound, psf_stars.df['mag'] >= lower_bound], axis=0)
+    #     psf_residual_means.append(np.mean(psf_residuals[binned_stars_mask], axis=0))
+    #     psf_residual_count.append(sum(binned_stars_mask))
 
-    plt.subplots(ncols=bins_count, nrows=1, figsize=(5.*bins_count, 5.))
-    plt.suptitle("Binned PSF residuals for {}".format(quadrant_path.name))
-    for i, psf_residual_mean in enumerate(psf_residual_means):
-        plt.subplot(1, bins_count,  1+i)
-        plt.imshow(psf_residual_mean)
-        plt.axis('off')
-        plt.title("${0:.2f} \leq m < {1:.2f}$\n$N={2}$".format(bins[i], bins[i+1], psf_residual_count[i]))
+    # plt.subplots(ncols=bins_count, nrows=1, figsize=(5.*bins_count, 5.))
+    # plt.suptitle("Binned PSF residuals for {}".format(quadrant_path.name))
+    # for i, psf_residual_mean in enumerate(psf_residual_means):
+    #     plt.subplot(1, bins_count,  1+i)
+    #     plt.imshow(psf_residual_mean)
+    #     plt.axis('off')
+    #     plt.title("${0:.2f} \leq m < {1:.2f}$\n$N={2}$".format(bins[i], bins[i+1], psf_residual_count[i]))
 
-    plt.savefig(quadrant_path.joinpath("{}_psf_residuals.png".format(quadrant_path.name)))
-    plt.close()
+    # plt.savefig(quadrant_path.joinpath("{}_psf_residuals.png".format(quadrant_path.name)))
+    # plt.close()
     # plt.subplots(ncols=2, nrows=1, sharex=True, sharey=True)
     # # plt.subplot(1, 2, 1)
     # # plt.scatter(stand.df['gmx3'], stand.df['gmy3'], c=stand.df['x'], s=2.)
@@ -790,6 +857,8 @@ def catalogs_to_ds9regions(exposure, logger, args):
             f.write("image\n")
 
             for idx, x in catalog_df.iterrows():
+                if 'num' in catalog_df.columns:
+                    f.write("text {} {} {{{}}}\n".format(x['x']+1, x['y']+15, "{} {:.2f}-{:.2f}".format(int(x['num']), np.sqrt(x['gmxx']), np.sqrt(x['gmyy']))))
                 f.write("ellipse {} {} {} {} {} # width=2\n".format(x['x']+1, x['y']+1, x['a'], x['b'], x['angle']))
                 f.write("circle {} {} {}\n".format(x['x']+1, x['y']+1, 5.))
 
@@ -802,7 +871,7 @@ def catalogs_to_ds9regions(exposure, logger, args):
                 f.write("circle {} {} {}\n".format(x['x']+1, x['y']+1, radius))
 
     #catalog_names = ["aperse", "standalone_stars", "se", "psfstars"]
-    catalog_names = {"aperse": 'ellipse', "standalone_stars": 'ellipse', "psfstars": 'circle'}
+    catalog_names = {"aperse": 'ellipse', "standalone_stars": 'ellipse', "psfstars": 'circle', "se": 'circle'}
 
     for catalog_name in catalog_names.keys():
         try:
@@ -818,25 +887,6 @@ def catalogs_to_ds9regions(exposure, logger, args):
             # cat_to_ds9regions(catalog_df, exposure.path.joinpath("{}.reg".format(catalog_name))) #
 
     return True
-
-
-def compress_lightcurve(lightcurve, logger, args):
-    # Store success rates and timings
-    # exposures = lightcurve.get_exposures(ignore_noprocess=True)
-    # func_status = {}
-    # func_timings = {}
-    # func_timings['exposure_count'] = len(exposures)
-    # func_timings['noprocess_count'] = len(lightcurve.get_noprocess())
-    # func_timings['total'] = []
-
-    # funcs = args.func.split(',')
-
-    # for func in funcs:
-    #     func_status[func] = lightcurve.func_status(func)
-    #     func_timings[func] = lightcurve.func_timing(func)
-
-    # Extract and compress all catalogs, headers then the whole working directory into a tar archive
-    lightcurve.compress()
 
 
 def dummy(lightcurve, logger, args):

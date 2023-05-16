@@ -45,7 +45,6 @@ poloka_func.append({'reduce': deppol_misc.filter_astro_chi2})
 poloka_func.append({'map': deppol_misc.discard_calibrated, 'rm': deppol_misc.discard_calibrated_rm})
 # poloka_func.append({'reduce': deppol_misc.seeing_study})
 poloka_func.append({'map': deppol_misc.catalogs_to_ds9regions})
-poloka_func.append({'reduce': deppol_misc.compress_lightcurve})
 poloka_func.append({'reduce': deppol_misc.dummy})
 
 
@@ -128,11 +127,6 @@ def map_op(exposure_name, wd, name, filtercode, func, args):
                 exposure_path = exposure_workspace
                 exposure = Exposure(Lightcurve(name, filtercode, wd), exposure_name, path=exposure_path)
 
-            # logger_mode = 'a'
-            # if args.log_overwrite and (func == args.func.split(",")[0]):
-            #     logger_mode = 'w'
-
-            #logger.addHandler(logging.FileHandler(str(exposure_path.joinpath("output.log")), mode=logger_mode))
             logger.addHandler(logging.FileHandler(str(exposure_path.joinpath("output.log")), mode='a'))
             logger.info("")
             logger.info("="*80)
@@ -457,9 +451,21 @@ if __name__ == '__main__':
 
             band_path = args.wd.joinpath("{}/{}".format(ztfname, filtercode))
 
+
             if not band_path.exists():
                 print("No quadrant found.")
                 continue
+
+            # Save arguments into a json file
+            # Since runs can be launched sequencialy without intermediate cleaning, an unique filename is created per run
+            run_count = len(list(band_path.glob("deppol_args*.json")))
+            with open(band_path.joinpath("deppol_args_{}.json".format(run_count)), 'w') as f:
+                d = dict(vars(args))
+                for key in d.keys():
+                    if isinstance(d[key], pathlib.Path):
+                        d[key] = str(d[key])
+
+                json.dump(d, f)
 
             quadrants = quadrants_from_band_path(band_path, logger, paths=False, ignore_noprocess=True)
             print("{} quadrants found.".format(len(quadrants)))

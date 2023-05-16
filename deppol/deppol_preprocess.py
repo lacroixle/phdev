@@ -85,7 +85,7 @@ def mkcat2(exposure, logger, args):
         standalone_stars_cat.df = standalone_stars_df
         standalone_stars_cat.write()
 
-        draw_star_shape = True
+        draw_star_shape = False
         if draw_star_shape:
             print(exposure.name)
             import matplotlib.pyplot as plt

@@ -383,7 +383,7 @@ def read_list_ext(f):
     line = f.readline().strip()
     curline = 1
     while line[0] == "@":
-        line = line[:-1]
+        # line = line[:-1]
         splitted = line.split()
         key = splitted[0][1:]
         splitted = splitted[1:]
