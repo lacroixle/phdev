@@ -100,19 +100,20 @@ def smphot(lightcurve, logger, args):
     returncode = run_and_log(["mklc", "-t", lightcurve.mappings_path, "-O", lightcurve.smphot_path, "-v", lightcurve.driver_path], logger=logger)
 
     logger.info("Deleting unuseful *.fits files...")
-    sn_parameters = pd.read_hdf(args.lc_folder.joinpath("{}.hd5".format(lightcurve.name)), key='sn_info')
-    fit_df = ListTable.from_filename(lightcurve.smphot_path.joinpath("lc2fit.dat")).df
-    t0 = sn_parameters['t0mjd'].item()
-    t0_idx = np.argmin(np.abs(fit_df['Date']-t0))
-    t0_exposure = fit_df.iloc[t0_idx]['name']
     to_delete_list = list(lightcurve.smphot_path.glob("*.fits"))
-    print("Keeping t0 image {}".format(t0_exposure))
-    to_delete_list.remove(lightcurve.smphot_path.joinpath(t0_exposure+".fits"))
-    print("Keeping galaxy model {}".format("test"))
-    to_delete_list.remove(lightcurve.smphot_path.joinpath("galaxy_sn.fits"))
+    if returncode == 0:
+        sn_parameters = pd.read_hdf(args.lc_folder.joinpath("{}.hd5".format(lightcurve.name)), key='sn_info')
+        fit_df = ListTable.from_filename(lightcurve.smphot_path.joinpath("lc2fit.dat")).df
+        t0 = sn_parameters['t0mjd'].item()
+        t0_idx = np.argmin(np.abs(fit_df['Date']-t0))
+        t0_exposure = fit_df.iloc[t0_idx]['name']
+        print("Keeping t0 image {}".format(t0_exposure))
+        to_delete_list.remove(lightcurve.smphot_path.joinpath(t0_exposure+".fits"))
+        print("Keeping galaxy model {}".format("test"))
+        to_delete_list.remove(lightcurve.smphot_path.joinpath("galaxy_sn.fits"))
 
-    # for to_delete in to_delete_list: #
-    #     to_delete.unlink()
+    for to_delete in to_delete_list:
+        to_delete.unlink()
 
     return (returncode == 0)
 
@@ -278,7 +279,7 @@ def smphot_stars_plot(lightcurve, logger, args):
     from scipy import stats
     from croaks import DataProxy
     from saunerie.linearmodels import LinearModel, RobustLinearSolver
-    matplotlib.use('Agg')
+    # matplotlib.use('Agg')
 
     smphot_stars_output = lightcurve.smphot_stars_path
     calib_table = ListTable.from_filename(smphot_stars_output.joinpath("smphot_stars_cat.list"))
@@ -466,15 +467,29 @@ def smphot_stars_plot(lightcurve, logger, args):
 
     mjd_min, mjd_max = stars_df['mjd'].min(), stars_df['mjd'].max()
 
+    sigmas = [stars_df.loc[stars_df['star']==star_index]['res'].std() for star_index in list(set(stars_df['star']))]
+    print(sum(np.array(sigmas)<=0.01))
+    print(sum(np.array(sigmas)<=0.02))
+    print(sum(np.array(sigmas)<=0.05))
+    plt.xlim(0., 0.2)
+    plt.grid()
+    plt.axvline(0.01, color='black')
+    plt.axvline(0.02, color='black')
+    plt.axvline(0.05, color='black')
+    plt.hist(sigmas, bins=50, histtype='step', range=[0., 0.2])
+    plt.show()
+
     for star_index in list(set(stars_df['star'])):
         star_mask = (stars_df['star'] == star_index)
         outlier_star_mask = (outlier_stars_df['star'] == star_index)
         if sum(star_mask) == 0 or np.any(stars_df.loc[star_mask]['flux'] <= 0.):
             continue
 
+        s = stars_df.loc[star_mask]['res'].std()
+
         m = solver.model.params.free[dp.star_map[star_index]]
         fig = plt.subplots(ncols=2, nrows=1, figsize=(12., 4.), gridspec_kw={'width_ratios': [5, 1], 'wspace': 0, 'hspace': 0}, sharey=True)
-        plt.suptitle("Star {} - Gaia mag={}".format(star_index, stars_df.loc[star_mask]['mag'].tolist()[0]))
+        plt.suptitle("Star {} - Gaia mag={}\n$\\sigma={:.3f}$".format(star_index, stars_df.loc[star_mask]['mag'].tolist()[0], s))
         ax = plt.subplot(1, 2, 1)
         plt.xlim(mjd_min, mjd_max)
         ax.tick_params(which='both', direction='in')
@@ -488,12 +503,13 @@ def smphot_stars_plot(lightcurve, logger, args):
         plt.grid(linestyle='--', color='black')
         plt.xlabel("MJD")
         plt.ylabel("$m$")
+        plt.fill_between([stars_df.loc[star_mask]['mjd'].min(), stars_df.loc[star_mask]['mjd'].max()], [m+2.*s, m+2.*s], [m-2.*s, m-2.*s], color='xkcd:light blue')
+        plt.fill_between([stars_df.loc[star_mask]['mjd'].min(), stars_df.loc[star_mask]['mjd'].max()], [m+s, m+s], [m-s, m-s], color='xkcd:sky blue')
         ax = plt.subplot(1, 2, 2)
         ax.tick_params(which='both', direction='in')
         ax.xaxis.set_minor_locator(AutoMinorLocator())
         ax.yaxis.set_minor_locator(AutoMinorLocator())
         ax.set_xticklabels([])
-        s = stars_df.loc[star_mask]['res'].std()
         x = np.linspace(stars_df.loc[star_mask]['m'].min(), stars_df.loc[star_mask]['m'].max(), 100)
         plt.plot(norm.pdf(x, loc=m, scale=s), x)
         plt.hist(stars_df.loc[star_mask]['m'], orientation='horizontal', density=True, bins='auto', histtype='step')
@@ -501,4 +517,4 @@ def smphot_stars_plot(lightcurve, logger, args):
         plt.savefig(star_lc_folder.joinpath("star_{}.png".format(star_index)), dpi=250.)
         plt.close()
 
-        return True
+    return True

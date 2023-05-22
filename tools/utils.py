@@ -179,16 +179,30 @@ def apply_space_motion(ra, dec, pm_ra, pm_dec, refmjd, newmjd):
     return np.stack([coords.frame.data.lon.value, coords.frame.data.lat.value], axis=1)
 
 
-def quadrant_name_explode(quadrant_name):
-    year = int(quadrant_name[4:8])
-    month = int(quadrant_name[8:10])
-    day = int(quadrant_name[10:12])
-    field = int(quadrant_name[19:25])
-    filterid = quadrant_name[26:28]
-    ccdid = int(quadrant_name[30:32])
-    qid = int(quadrant_name[36])
+def quadrant_name_explode(quadrant_name, kind='sci'):
+    if kind == 'sci':
+        year = int(quadrant_name[4:8])
+        month = int(quadrant_name[8:10])
+        day = int(quadrant_name[10:12])
+        field = int(quadrant_name[19:25])
+        filterid = quadrant_name[26:28]
+        ccdid = int(quadrant_name[30:32])
+        qid = int(quadrant_name[36])
 
-    return year, month, day, field, filterid, ccdid, qid
+        return year, month, day, field, filterid, ccdid, qid
+
+    elif kind == 'raw':
+        year = int(quadrant_name[4:8])
+        month = int(quadrant_name[8:10])
+        day = int(quadrant_name[10:12])
+        field = int(quadrant_name[19:25])
+        filterid = quadrant_name[26:28]
+        ccdid = int(quadrant_name[30:32])
+
+        return year, month, day, field, filterid, ccdid
+
+    else:
+        raise NotImplementedError("Kind {} not implemented!".format(kind))
 
 
 def get_wcs_from_quadrant(quadrant_path):

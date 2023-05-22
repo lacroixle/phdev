@@ -607,7 +607,7 @@ class Lightcurve(_Lightcurve):
 
         exposures = self.get_exposures(ignore_noprocess=True)
 
-        tar_path = self.path.joinpath("lightcurve.tar")
+        tar_path = self.path.joinpath("exposures.tar")
         tar_path.unlink(missing_ok=True)
 
         # Store catalogs into one big HDF file
@@ -644,17 +644,32 @@ class Lightcurve(_Lightcurve):
         # First start with timings and func states
         self.compress_states()
 
-        self.path.joinpath("lightcurve_sn.parquet").unlink(missing_ok=True)
-        self.path.joinpath("smphot_stars_cat.parquet").unlink(missing_ok=True)
+        # self.path.joinpath("lightcurve_sn.parquet").unlink(missing_ok=True)
+        # self.path.joinpath("smphot_stars_cat.parquet").unlink(missing_ok=True)
+
+        def _tar_folder(path):
+            if path.exists():
+                tar_path = self.path.joinpath("{}.tar".format(path.name))
+                tar_path.unlink(missing_ok=True)
+                files = list(path.glob("*"))
+                tar = tarfile.open(tar_path, 'w')
+                for f in files:
+                    tar.add(f, f.relative_to(self.path))
+
+                rmtree(path)
+
+                return True
+
+            return False
 
         files = list(self.path.glob("*"))
 
         # Store SMP lightcurves if available
-        if self.smphot_path.joinpath("lightcurve_sn.dat").exists():
-            ListTable.from_filename(self.smphot_path.joinpath("lightcurve_sn.dat")).df.to_parquet(self.path.joinpath("lightcurve_sn.parquet"))
+        if _tar_folder(self.smphot_path):
+            files.remove(self.smphot_path)
 
-        if self.smphot_stars_path.joinpath("smphot_stars_cat.list").exists():
-            ListTable.from_filename(self.smphot_stars_path.joinpath("smphot_stars_cat.list")).df.to_parquet(self.path.joinpath("smphot_stars_cat.parquet"))
+        if _tar_folder(self.smphot_stars_path):
+            files.remove(self.smphot_stars_path)
 
         # Compress all the other files
         files.remove(self.path.joinpath("catalogs.hdf"))
@@ -676,17 +691,29 @@ class Lightcurve(_Lightcurve):
     def uncompress(self, keep_compressed_files=False):
         self.uncompress_states(keep_compressed_files=keep_compressed_files)
 
-        if not self.path.joinpath("lightcurve.tar").exists():
+        if not self.path.joinpath("exposures.tar").exists():
             return
 
-        tar = tarfile.open(self.path.joinpath("lightcurve.tar"), 'r')
-        tar.extractall(path=self.path)
-        tar.close()
+        def _uncompress_here(path):
+            if path.exists():
+                tar = tarfile.open(self.path.joinpath(path), 'r')
+                try:
+                    tar.extractall(path=self.path)
+                # except tarfile.ReadError as e:
+                #     print(e)
+                finally:
+                    tar.close()
+
+        _uncompress_here(self.path.joinpath("exposures.tar"))
+        _uncompress_here(self.path.joinpath("smphot.tar"))
+        _uncompress_here(self.path.joinpath("smphot_stars.tar"))
 
         if not keep_compressed_files:
             self.path.joinpath("catalogs.hdf").unlink(missing_ok=True)
             self.path.joinpath("headers.pickle").unlink(missing_ok=True)
-            self.path.joinpath("lightcurve.tar").unlink(missing_ok=True)
+            self.path.joinpath("exposures.tar").unlink(missing_ok=True)
+            self.path.joinpath("smphot.tar").unlink(missing_ok=True)
+            self.path.joinpath("smphot_stars.tar").unlink(missing_ok=True)
 
 
 class CompressedLightcurve(_Lightcurve):

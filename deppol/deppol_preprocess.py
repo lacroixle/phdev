@@ -97,11 +97,11 @@ def mkcat2(exposure, logger, args):
             x, y, _, sigma_x, sigma_y, corr = aperse_cat.header['starshape']
 
 
-            plt.plot(gaia_stars_df.iloc[gaia_indices]['Gmag'].to_numpy(), (standalone_stars_cat.df['apfl6']/standalone_stars_cat.df['eapfl6']).to_numpy(), '.')
-            plt.show()
+            # plt.plot(gaia_stars_df.iloc[gaia_indices]['Gmag'].to_numpy(), (standalone_stars_cat.df['apfl6']/standalone_stars_cat.df['eapfl6']).to_numpy(), '.')
+            # plt.show()
 
-            plt.plot(standalone_stars_cat.df['flux'].to_numpy(), standalone_stars_cat.df['fluxmax'].to_numpy(), '.')
-            plt.show()
+            # plt.plot(standalone_stars_cat.df['flux'].to_numpy(), standalone_stars_cat.df['fluxmax'].to_numpy(), '.')
+            # plt.show()
 
             fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(8., 8.))
             plt.suptitle("$N_s={}$, seeing={}\n{}".format(len(standalone_stars_cat.df), standalone_stars_cat.header['seeing'], exposure.name))
@@ -109,12 +109,14 @@ def mkcat2(exposure, logger, args):
             plt.plot(np.sqrt(aperse_cat.df['gmxx'].to_numpy()), np.sqrt(aperse_cat.df['gmyy'].to_numpy()), '.', label="SE cat")
             plt.plot(np.sqrt(standalone_stars_cat.df['gmxx'].to_numpy()), np.sqrt(standalone_stars_cat.df['gmyy'].to_numpy()), '.', color='red', label="Stand. cat")
             plt.plot(np.sqrt(old_cat.df['gmxx'].to_numpy()), np.sqrt(old_cat.df['gmyy'].to_numpy()), 'x', color='green', label="Old stand. cat")
+            plt.xlabel("$\\sqrt{M_g^{xx}}$")
+            plt.ylabel("$\\sqrt{M_g^{yy}}$")
             plt.legend()
             plt.plot([x], [y], 'x')
-            plt.xlim(0., 2.)
-            plt.ylim(0., 2.)
+            plt.xlim(0., 4.)
+            plt.ylim(0., 4.)
             plt.grid()
-            plt.show()
+            plt.savefig(exposure.path.joinpath("smp.png"))
             plt.close()
 
 

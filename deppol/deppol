@@ -437,7 +437,7 @@ if __name__ == '__main__':
                 else:
                     cd = args.wd
 
-                if not cd.joinpath("{}/{}/lightcurve.tar".format(ztfname, filtercode)).exists():
+                if not cd.joinpath("{}/{}/exposures.tar".format(ztfname, filtercode)).exists():
                     continue
 
                 print("Uncompressing {}-{} into {}... ".format(ztfname, filtercode, cd), end="", flush=True)
