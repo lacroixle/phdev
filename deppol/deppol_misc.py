@@ -897,5 +897,5 @@ def concat_catalogs(lightcurve, logger, args):
     catalog = lightcurve.extract_star_catalog(['aperstars'])[['exposure', 'x', 'y', 'gmxx', 'gmyy', 'gmxy', 'apfl5', 'rad5']].rename(columns={'apfl5': 'aperflux', 'rad5': 'aperrad'})
     catalog['ccdid'] = catalog.apply(lambda x: int(x['exposure'][30:32]), axis=1)
     catalog['qid'] = catalog.apply(lambda x: int(x['exposure'][36]), axis=1)
-    catalog.to_parquet("bigcat.parquet")
+    catalog.to_parquet(lightcurve.path.joinpath("bigcat_{}_{}.parquet".format(lightcurve.name, lightcurve.filterid)))
     return True
