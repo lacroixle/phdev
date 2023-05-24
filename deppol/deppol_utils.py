@@ -74,7 +74,7 @@ def quadrants_from_band_path(band_path, logger, check_files=None, paths=True, ig
     else:
         noprocess = []
 
-    quadrant_paths = [quadrant_path for quadrant_path in list(band_path.glob("ztf_*")) if quadrant_path.name not in noprocess]
+    quadrant_paths = [quadrant_path for quadrant_path in list(band_path.glob("ztf*")) if quadrant_path.name not in noprocess]
 
     if check_files:
         if not isinstance(check_files, Iterable) or isinstance(check_files, str) or isinstance(check_files, pathlib.Path):

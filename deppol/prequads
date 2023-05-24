@@ -27,6 +27,7 @@ if __name__ == '__main__':
     argparser.add_argument('--output', type=pathlib.Path, required=True)
     argparser.add_argument('-j', '--n_jobs', type=int, default=1)
     argparser.add_argument('--use-raw', action='store_true')
+    argparser.add_argument('--ztfin2p3-path', type=pathlib.Path)
 
     args = argparser.parse_args()
     args.output = args.output.expanduser().resolve()
@@ -74,17 +75,25 @@ if __name__ == '__main__':
                     quadrant_logger.setLevel(logging.INFO)
 
                     if not args.use_raw:
-                        sciimg_path = pathlib.Path(ztfquery.io.get_file(image_filename, downloadit=False, suffix='sciimg.fits'))
-                        mskimg_path = pathlib.Path(ztfquery.io.get_file(image_filename, downloadit=False, suffix='mskimg.fits'))
-                        mskimg_path_gz = pathlib.Path(ztfquery.io.get_file(image_filename, downloadit=False, suffix='mskimg.fits.gz'))
+                        if args.ztfin2p3_path:
+                            sciimg_path = args.ztfin2p3_path.joinpath("sci/{}/{}/{}/{}".format(image_filename[9:13], image_filename[13:17], image_filename[17:23], image_filename))
+                            mskimg_path = None
+                        else:
+                            sciimg_path = pathlib.Path(ztfquery.io.get_file(image_filename, downloadit=False, suffix='sciimg.fits'))
+                            mskimg_path = pathlib.Path(ztfquery.io.get_file(image_filename, downloadit=False, suffix='mskimg.fits'))
+                        #mskimg_path_gz = pathlib.Path(ztfquery.io.get_file(image_filename, downloadit=False, suffix='mskimg.fits.gz'))
 
                         # Much faster than relying on ScienceQuadrant.from_filename() throwing error
-                        if not sciimg_path.exists() or not (mskimg_path.exists() or mskimg_path_gz.exists()):
+                        # if not sciimg_path.exists() or not (mskimg_path.exists() or mskimg_path_gz.exists()):
+                        #     raise FileNotFoundError(sciimg_path)
+                        if not sciimg_path.exists():
                             raise FileNotFoundError(sciimg_path)
 
-                        z = ScienceQuadrant.from_filename(sciimg_path)
+                        if args.ztfin2p3_path:
+                            folder_name = "_".join(image_filename.split("_")[:-1])
+                        else:
+                            folder_name = image_filename[:37]
 
-                        folder_name = image_filename[:37]
                         folder_path = args.output.joinpath("{}/{}".format(filtercode, folder_name))
 
                         folder_path.mkdir(exist_ok=True)
@@ -93,12 +102,14 @@ if __name__ == '__main__':
 
                         _create_symlink(folder_path.joinpath("elixir.fits"), sciimg_path)
 
-                        deads = np.array(z.get_mask(tracks=False, ghosts=False, spillage=False, spikes=False, dead=True,
-                                                    nan=False, saturated=False, brightstarhalo=False, lowresponsivity=False,
-                                                    highresponsivity=False, noisy=False, verbose=False), dtype=np.uint8)
+                        if mskimg_path and mskimg_path.exists():
+                            z = ScienceQuadrant.from_filename(sciimg_path)
+                            deads = np.array(z.get_mask(tracks=False, ghosts=False, spillage=False, spikes=False, dead=True,
+                                                        nan=False, saturated=False, brightstarhalo=False, lowresponsivity=False,
+                                                        highresponsivity=False, noisy=False, verbose=False), dtype=np.uint8)
 
-                        mskhdu = fits.PrimaryHDU([deads])
-                        mskhdu.writeto(folder_path.joinpath("dead.fits.gz"), overwrite=True)
+                            mskhdu = fits.PrimaryHDU([deads])
+                            mskhdu.writeto(folder_path.joinpath("dead.fits.gz"), overwrite=True)
                     else:
                         raw_path = pathlib.Path(ztfquery.io.get_file(image_filename))
 
@@ -122,7 +133,10 @@ if __name__ == '__main__':
                     if args.use_raw:
                         quadrant_logger.info("Success: {}".format(image_filename))
                     else:
-                        quadrant_logger.info("Success: {}, dead pixel count={}".format(image_filename, np.sum(deads)))
+                        if mskimg_path and mskimg_path.exist():
+                            quadrant_logger.info("Success: {}, dead pixel count={}".format(image_filename, np.sum(deads)))
+                        else:
+                            quadrant_logger.info("Success: {}, no dead image found.".format(image_filename))
                 finally:
                     for handler in quadrant_logger.handlers:
                         handler.close()
