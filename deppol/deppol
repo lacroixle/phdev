@@ -304,6 +304,7 @@ if __name__ == '__main__':
     argparser.add_argument('--photom-cat', choices=['gaia', 'ps1', 'ubercal'], type=str, help="Star catalog to use for relative photometry.")
     argparser.add_argument('--use-gaia-stars', action='store_true', help="If set, uses Gaia to find stars (ie to build the standalone_stars.list catalog)")
     argparser.add_argument('--ztfin2p3-path', type=pathlib.Path)
+    argparser.add_argument('--ext-catalog-cache', type=pathlib.Path)
 
     logger = logging.getLogger("main")
     #logger.addHandler(logging.StreamHandler())
@@ -316,6 +317,9 @@ if __name__ == '__main__':
 
     if args.scratch:
         args.scratch = args.scratch.expanduser().resolve()
+
+    if args.ext_catalog_cache:
+        args.ext_catalog_cache = args.ext_catalog_cache.expanduser().resolve()
 
     filtercodes = ztf_filtercodes[:3]
     if args.filtercode != 'all':

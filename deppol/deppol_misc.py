@@ -626,11 +626,34 @@ def retrieve_catalogs(lightcurve, logger, args):
     def _download_catalog(name, centroids):
         # catalogs = [download_vizier_catalog(name, centroid, radius=0.6) for centroid in centroids]
         catalogs = []
-        for centroid in centroids:
-            try:
-                catalogs.append(download_vizier_catalog(name, centroid, radius=0.6))
-            except OsError as e:
-                logger.error(e)
+        for centroid, field_rcid_pair in zip(centroids, field_rcid_pairs):
+            logger.info("{}-{}".format(*field_rcid_pair))
+            # First check if catalog already exists in cache
+            cached_catalog_filename = args.ext_catalog_cache.joinpath("{name}/{name}-{field}-{rcid}.parquet".format(name=name, field=field_rcid_pair[0], rcid=field_rcid_pair[1]))
+            if args.ext_catalog_cache and cached_catalog_filename.exists():
+                catalog_df = pd.read_parquet(cached_catalog_filename)
+            else:
+                # If not, download it. If a cache path is setup, save it there for future use
+                download_ok = False
+                for i in range(5):
+                    try:
+                        catalog_df = download_vizier_catalog(name, centroid, radius=0.6)
+                    except OSError as e:
+                        logger.error(e)
+
+                    if catalog_df is not None and len(catalog_df) > 0:
+                        download_ok = True
+                        break
+
+                if not download_ok:
+                    logger.error("Could not download catalog after 5 retries!")
+                    continue
+
+                if args.ext_catalog_cache:
+                    args.ext_catalog_cache.joinpath(name).mkdir(exist_ok=True)
+                    catalog_df.to_parquet(cached_catalog_filename)
+
+            catalogs.append(catalog_df)
 
         #catalog_df = pd.concat(catalogs).set_index(name_to_objid[name]).drop_duplicates()
         catalog_df = pd.concat(catalogs).drop_duplicates(ignore_index=True, subset=name_to_objid[name])
@@ -639,7 +662,7 @@ def retrieve_catalogs(lightcurve, logger, args):
     def _get_catalog(name, centroids):
         catalog_path = lightcurve.ext_catalogs_path.joinpath("{}_full.parquet".format(name))
         if not catalog_path.exists():
-            logger.info("Downloading catalog {}... ".format(name))
+            logger.info("Getting catalog {}... ".format(name))
             catalog_df = _download_catalog(name, centroids)
             catalog_path.parents[0].mkdir(exist_ok=True)
 
