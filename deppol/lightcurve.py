@@ -699,8 +699,8 @@ class Lightcurve(_Lightcurve):
                 tar = tarfile.open(self.path.joinpath(path), 'r')
                 try:
                     tar.extractall(path=self.path)
-                # except tarfile.ReadError as e:
-                #     print(e)
+                except tarfile.ReadError as e:
+                    print(e)
                 finally:
                     tar.close()
 

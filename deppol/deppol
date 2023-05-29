@@ -430,21 +430,36 @@ if __name__ == '__main__':
                     else:
                         shutil.copytree(args.wd.joinpath("{}/{}".format(ztfname, filtercode)), scratch_band_path, symlinks=True)
 
-    if args.compress:
-        for ztfname in ztfnames:
-            for filtercode in filtercodes:
-                if args.scratch:
-                    cd = args.scratch
-                else:
-                    cd = args.wd
+    # if args.compress:
+    #     for ztfname in ztfnames:
+    #         for filtercode in filtercodes:
+    #             if args.scratch:
+    #                 cd = args.scratch
+    #             else:
+    #                 cd = args.wd
 
-                if not cd.joinpath("{}/{}/exposures.tar".format(ztfname, filtercode)).exists():
-                    continue
+    #             if not cd.joinpath("{}/{}/exposures.tar".format(ztfname, filtercode)).exists():
+    #                 continue
 
-                print("Uncompressing {}-{} into {}... ".format(ztfname, filtercode, cd), end="", flush=True)
-                lightcurve = Lightcurve(ztfname, filtercode, cd)
-                lightcurve.uncompress()
-                print("Done")
+    #             print("Uncompressing {}-{} into {}... ".format(ztfname, filtercode, cd), end="", flush=True)
+    #             lightcurve = Lightcurve(ztfname, filtercode, cd)
+    #             lightcurve.uncompress()
+    #             print("Done")
+
+    for ztfname in ztfnames:
+        for filtercode in filtercodes:
+            if args.scratch:
+                cd = args.scratch
+            else:
+                cd = args.wd
+
+            if not cd.joinpath("{}/{}/exposures.tar".format(ztfname, filtercode)).exists():
+                continue
+
+            print("Uncompressing {}-{} into {}... ".format(ztfname, filtercode, cd), end="", flush=True)
+            lightcurve = Lightcurve(ztfname, filtercode, cd)
+            lightcurve.uncompress()
+            print("Done")
 
     for ztfname in ztfnames:
         for filtercode in filtercodes:

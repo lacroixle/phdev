@@ -90,7 +90,7 @@ def wcs_residuals(lightcurve, logger, args):
     # Residuals/magnitude binplot
     plt.subplots(nrows=2, ncols=2, figsize=(20., 10.))
     plt.subplot(2, 2, 1)
-    xbinned_mag, yplot_res, res_dispersion = binplot(matched_stars_df['mag'].to_numpy(), (matched_stars_df['x']-matched_stars_df['gaia_x']).to_numpy(), nbins=50, data=True, rms=True, scale=False)
+    xbinned_mag, yplot_res, res_dispersion = binplot(matched_stars_df['mag'].to_numpy(), (matched_stars_df['x']-matched_stars_df['gaia_x']).to_numpy(), nbins=20, data=True, rms=True, scale=False)
     plt.xlabel("$m$ [mag]")
     plt.ylabel("$x-x_\\mathrm{Gaia}$ [pixel]")
     plt.grid()
@@ -101,7 +101,7 @@ def wcs_residuals(lightcurve, logger, args):
     plt.ylabel("$\\sigma_{x-x_\\mathrm{Gaia}}$ [pixel]")
 
     plt.subplot(2, 2, 3)
-    xbinned_mag, yplot_res, res_dispersion = binplot(matched_stars_df['mag'].to_numpy(), (matched_stars_df['y']-matched_stars_df['gaia_y']).to_numpy(), nbins=50, data=True, rms=True, scale=False)
+    xbinned_mag, yplot_res, res_dispersion = binplot(matched_stars_df['mag'].to_numpy(), (matched_stars_df['y']-matched_stars_df['gaia_y']).to_numpy(), nbins=20, data=True, rms=True, scale=False)
     plt.xlabel("$m$ [mag]")
     plt.ylabel("$y-y_\\mathrm{Gaia}$ [pixel]")
     plt.grid()

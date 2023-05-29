@@ -180,7 +180,6 @@ def smphot_stars(lightcurve, logger, args):
     else:
         raise NotImplementedError
 
-    calib_df['ristar'] = list(range(len(calib_df)))
 
 
     # Filter stars by SN proximity (in some radius defined by --smphot-stars-radius) and magnitude
@@ -192,6 +191,7 @@ def smphot_stars(lightcurve, logger, args):
     bright_calib_df = calib_df.loc[calib_df['magg']<=17.]
     logger.info(" {} bright stars".format(len(bright_calib_df)))
     calib_df = calib_df.loc[calib_df['magg']>17.]
+
 
     disc_radius = 0.5*u.deg
     sn_parameters = pd.read_hdf(args.lc_folder.joinpath("{}.hd5".format(lightcurve.name)), key='sn_info')
@@ -208,6 +208,8 @@ def smphot_stars(lightcurve, logger, args):
     calib_table = ListTable(None, calib_df)
 
     lightcurve.smphot_stars_path.mkdir(exist_ok=True)
+
+    calib_df['ristar'] = list(range(len(calib_df)))
 
     stars_calib_cat_path = lightcurve.smphot_stars_path.joinpath("calib_stars_cat.list")
     smphot_stars_cat_path = lightcurve.smphot_stars_path.joinpath("smphot_stars_cat.list")
@@ -283,23 +285,25 @@ def smphot_stars_plot(lightcurve, logger, args):
 
     smphot_stars_output = lightcurve.smphot_stars_path
     calib_table = ListTable.from_filename(smphot_stars_output.joinpath("smphot_stars_cat.list"))
+    cat_calib_table = ListTable.from_filename(smphot_stars_output.joinpath("calib_stars_cat.list"))
 
-    stars_df = calib_table.df[calib_table.df['flux'] >= 0.]
+    stars_lc_df = calib_table.df[calib_table.df['flux'] >= 0.]
     # Remove negative fluxes
-    stars_df = stars_df[stars_df['flux']>=0.]
-    print("Removed {} negative fluxes".format(len(calib_table.df)-len(stars_df)))
+    stars_lc_df = stars_lc_df[stars_lc_df['flux']>=0.]
+    print("Removed {} negative fluxes".format(len(calib_table.df)-len(stars_lc_df)))
 
 
     # Create dataproxy
     #piedestal = 0.0005
     piedestal = 0.00015
-    stars_df['m'] = -2.5*np.log10(stars_df['flux'])
-    stars_df['em'] = np.abs(-2.5/np.log(10)*stars_df['error']/stars_df['flux'])
-    # stars_df['em'] = np.sqrt(np.abs(-2.5/np.log(10)*stars_df['error']/stars_df['flux'])**2+piedestal)
+    stars_lc_df['m'] = -2.5*np.log10(stars_lc_df['flux'])
+    stars_lc_df['em'] = np.abs(-2.5/np.log(10)*stars_lc_df['error']/stars_lc_df['flux'])
+    # stars_lc_df['em'] = np.sqrt(np.abs(-2.5/np.log(10)*stars_lc_df['error']/stars_lc_df['flux'])**2+piedestal)
     #
-    # stars_df = stars_df.loc[stars_df['m']<=-8.]
+    # stars_lc_df = stars_lc_df.loc[stars_lc_df['m']<=-8.]
 
-    dp = DataProxy(stars_df[['m', 'em', 'star']].to_records(), m='m', em='em', star='star')
+    dp = DataProxy(stars_lc_df[['m', 'em', 'star']].to_records(), m='m', em='em', star='star')
+    dp.make_index('m')
     dp.make_index('star')
     # w = 1./np.sqrt(dp.em**2+piedestal)
     #w = 1./dp.em**2
@@ -312,21 +316,48 @@ def smphot_stars_plot(lightcurve, logger, args):
     star_lc_folder = smphot_stars_output.joinpath("lc_plots")
     star_lc_folder.mkdir(exist_ok=True)
 
-    # mean_m = np.array([np.sum(stars_df.loc[stars_df['star']==star_index]['m']/stars_df.loc[stars_df['star']==star_index]['em']**2)/np.sum(1/stars_df.loc[stars_df['star']==star_index]['em']**2) for star_index in range(max(list(set(stars_df['star'])))+1)])
+    # mean_m = np.array([np.sum(stars_lc_df.loc[stars_lc_df['star']==star_index]['m']/stars_lc_df.loc[stars_lc_df['star']==star_index]['em']**2)/np.sum(1/stars_lc_df.loc[stars_lc_df['star']==star_index]['em']**2) for star_index in range(max(list(set(stars_lc_df['star'])))+1)])
     # mean_m = np.nan_to_num(mean_m)
-    # stars_df['mean_m'] = mean_m[stars_df['star'].tolist()]
-    # stars_df['res'] = (stars_df['m'] - stars_df['mean_m']).dropna(axis='rows')
-    stars_df['mean_m'] = solver.model.params.free[dp.star_index]
-    stars_df['res'] = solver.get_res(dp.m)
+    # stars_lc_df['mean_m'] = mean_m[stars_lc_df['star'].tolist()]
+    # stars_lc_df['res'] = (stars_lc_df['m'] - stars_lc_df['mean_m']).dropna(axis='rows')
+    stars_lc_df['mean_m'] = solver.model.params.free[dp.star_index]
+    stars_lc_df['res'] = solver.get_res(dp.m)
 
-    outlier_stars_df = stars_df[solver.bads]
-    stars_df = stars_df[~solver.bads]
+    star_chi2 = np.bincount(dp.star_index, weights=np.abs(stars_lc_df['res']))/np.bincount(dp.star_index)
+
+    # sigma_m = solver.get_diag_cov()
+    cov = solver.get_cov()
+    sigma_m = np.sqrt(solver.get_cov().diagonal())
+
+    outlier_stars_lc_df = stars_lc_df[solver.bads]
+    stars_lc_df = stars_lc_df[~solver.bads]
     w = w[~solver.bads]
 
-    # res_min, res_max = stars_df['res'].min(), stars_df['res'].max()
+    cat_stars_df = lightcurve.get_ext_catalog(args.photom_cat)
+    stars_df = pd.DataFrame(data={'m': solver.model.params.free, 'em': np.sqrt(solver.get_cov().diagonal()), 'starid': dp.star_map.keys(), 'chi2': star_chi2, 'mag': cat_calib_table.df['magg'].iloc[list(dp.star_map.values())]})
+
+    plt.plot(stars_df['m'].to_numpy(), stars_df['em'].to_numpy(), '.')
+    plt.grid()
+    plt.xlabel("$m$ [mag]")
+    plt.ylabel("$\\sigma_m$ [mag]")
+    plt.show()
+
+    plt.hist(stars_df['m'], bins=15)
+    plt.xlabel("$m$ [mag]")
+    plt.ylabel("Count")
+    plt.show()
+
+    plt.plot(stars_df['m'].to_numpy(), stars_df['chi2'].to_numpy(), '.')
+    plt.grid()
+    plt.xlabel("$m$ [mag]")
+    plt.ylabel("$\\chi^2$")
+    plt.show()
+
+    return True
+    # res_min, res_max = stars_lc_df['res'].min(), stars_lc_df['res'].max()
     res_min, res_max = -0.5, 0.5
     x = np.linspace(res_min, res_max, 1000)
-    m, s = norm.fit(stars_df['res'])
+    m, s = norm.fit(stars_lc_df['res'])
 
     plt.figure(figsize=(5., 5.))
     ax = plt.gca()
@@ -335,7 +366,7 @@ def smphot_stars_plot(lightcurve, logger, args):
     ax.yaxis.set_minor_locator(AutoMinorLocator())
     plt.xlim(res_min, res_max)
     plt.plot(x, norm.pdf(x, loc=m, scale=s), color='black')
-    plt.hist(stars_df['res'].to_numpy(), bins=100, range=[res_min, res_max], density=True, histtype='step', color='black')
+    plt.hist(stars_lc_df['res'].to_numpy(), bins=100, range=[res_min, res_max], density=True, histtype='step', color='black')
     plt.xlabel("$m-\\left<m\\right>$ [mag]")
     plt.ylabel("density")
     plt.grid()
@@ -349,7 +380,7 @@ def smphot_stars_plot(lightcurve, logger, args):
     ax.tick_params(which='both', direction='in')
     ax.xaxis.set_minor_locator(AutoMinorLocator())
     ax.yaxis.set_minor_locator(AutoMinorLocator())
-    plt.plot(stars_df['em'].to_numpy(), stars_df['sky'].to_numpy(), ',', color='black')
+    plt.plot(stars_lc_df['em'].to_numpy(), stars_lc_df['sky'].to_numpy(), ',', color='black')
     plt.xlim(0., 0.3)
     plt.ylim(-100., 100.)
     plt.xlabel("$\\sigma_m$ [mag]")
@@ -364,7 +395,7 @@ def smphot_stars_plot(lightcurve, logger, args):
     ax.tick_params(which='both', direction='in')
     ax.xaxis.set_minor_locator(AutoMinorLocator())
     ax.yaxis.set_minor_locator(AutoMinorLocator())
-    plt.plot(stars_df['m'].to_numpy(), stars_df['sky'].to_numpy(), ',', color='black')
+    plt.plot(stars_lc_df['m'].to_numpy(), stars_lc_df['sky'].to_numpy(), ',', color='black')
     plt.xlabel("$m$ [mag]")
     plt.ylabel("sky [mag]")
     plt.grid()
@@ -377,7 +408,7 @@ def smphot_stars_plot(lightcurve, logger, args):
     ax.tick_params(which='both', direction='in')
     ax.xaxis.set_minor_locator(AutoMinorLocator())
     ax.yaxis.set_minor_locator(AutoMinorLocator())
-    plt.plot(stars_df['m'].to_numpy(), stars_df['mag'].to_numpy(), ',', color='black')
+    plt.plot(stars_lc_df['m'].to_numpy(), stars_lc_df['mag'].to_numpy(), ',', color='black')
     plt.title("sky")
     plt.xlabel("$m$ [mag]")
     plt.ylabel("$m$ [PS1 mag]")
@@ -391,7 +422,7 @@ def smphot_stars_plot(lightcurve, logger, args):
     ax.tick_params(which='both', direction='in')
     ax.xaxis.set_minor_locator(AutoMinorLocator())
     ax.yaxis.set_minor_locator(AutoMinorLocator())
-    plt.plot(stars_df['m'].to_numpy(), stars_df['em'].to_numpy(), ',', color='black')
+    plt.plot(stars_lc_df['m'].to_numpy(), stars_lc_df['em'].to_numpy(), ',', color='black')
     plt.ylim(0., 0.3)
     plt.xlabel("$m$ [mag]")
     plt.ylabel("$\\sigma_m$")
@@ -405,7 +436,7 @@ def smphot_stars_plot(lightcurve, logger, args):
     ax.tick_params(which='both', direction='in')
     ax.xaxis.set_minor_locator(AutoMinorLocator())
     ax.yaxis.set_minor_locator(AutoMinorLocator())
-    plt.plot(stars_df['mag'].to_numpy(), stars_df['res'].to_numpy(), ',', color='black')
+    plt.plot(stars_lc_df['mag'].to_numpy(), stars_lc_df['res'].to_numpy(), ',', color='black')
     plt.ylim(-1., 1.)
     plt.xlabel("$m$ [PS1 mag]")
     plt.ylabel("$m-\\left<m\\right>$ [mag]")
@@ -419,7 +450,7 @@ def smphot_stars_plot(lightcurve, logger, args):
     ax.tick_params(which='both', direction='in')
     ax.xaxis.set_minor_locator(AutoMinorLocator())
     ax.yaxis.set_minor_locator(AutoMinorLocator())
-    plt.plot(stars_df['em'].to_numpy(), stars_df['res'].to_numpy(), ',', color='black')
+    plt.plot(stars_lc_df['em'].to_numpy(), stars_lc_df['res'].to_numpy(), ',', color='black')
     plt.grid()
     plt.xlim(0., 0.3)
     plt.xlabel("$\sigma_m$ [mag]")
@@ -434,7 +465,7 @@ def smphot_stars_plot(lightcurve, logger, args):
     ax.tick_params(which='both', direction='in')
     ax.xaxis.set_minor_locator(AutoMinorLocator())
     ax.yaxis.set_minor_locator(AutoMinorLocator())
-    plt.plot(stars_df['airmass'].to_numpy(), stars_df['res'].to_numpy(), ',')
+    plt.plot(stars_lc_df['airmass'].to_numpy(), stars_lc_df['res'].to_numpy(), ',')
     plt.ylim(-0.5, 0.5)
     plt.xlabel("$X$")
     plt.ylabel("$m-\\left<m\\right>$ [mag]")
@@ -449,8 +480,8 @@ def smphot_stars_plot(lightcurve, logger, args):
     ax.tick_params(which='both', direction='in')
     ax.xaxis.set_minor_locator(AutoMinorLocator())
     ax.yaxis.set_minor_locator(AutoMinorLocator())
-    #xbinned_mag, yplot_student_res, res_dispersion = binplot(stars_df['mag'].to_numpy(), (stars_df['res']/stars_df['em']).to_numpy(), nbins=10, data=True, rms=False, scale=False)
-    xbinned_mag, yplot_student_res, res_dispersion = binplot(stars_df['mag'].to_numpy(), w*stars_df['res'].to_numpy(), nbins=10, data=True, rms=False, scale=False)
+    #xbinned_mag, yplot_student_res, res_dispersion = binplot(stars_lc_df['mag'].to_numpy(), (stars_lc_df['res']/stars_lc_df['em']).to_numpy(), nbins=10, data=True, rms=False, scale=False)
+    xbinned_mag, yplot_student_res, res_dispersion = binplot(stars_lc_df['mag'].to_numpy(), w*stars_lc_df['res'].to_numpy(), nbins=10, data=True, rms=False, scale=False)
     plt.ylabel("$\\frac{m-\\left<m\\right>}{\\sigma_m}$")
     plt.grid()
 
@@ -465,54 +496,76 @@ def smphot_stars_plot(lightcurve, logger, args):
     plt.savefig(smphot_stars_output.joinpath("student.png"), dpi=500.)
     plt.close()
 
-    mjd_min, mjd_max = stars_df['mjd'].min(), stars_df['mjd'].max()
-
-    sigmas = [stars_df.loc[stars_df['star']==star_index]['res'].std() for star_index in list(set(stars_df['star']))]
-    print(sum(np.array(sigmas)<=0.01))
-    print(sum(np.array(sigmas)<=0.02))
-    print(sum(np.array(sigmas)<=0.05))
-    plt.xlim(0., 0.2)
+    plt.subplots(nrows=2, ncols=1, figsize=(10., 5.), gridspec_kw={'hspace': 0.}, sharex=True)
+    plt.suptitle("Binned residuals")
+    ax = plt.subplot(2, 1, 1)
+    ax.tick_params(which='both', direction='in')
+    ax.xaxis.set_minor_locator(AutoMinorLocator())
+    ax.yaxis.set_minor_locator(AutoMinorLocator())
     plt.grid()
-    plt.axvline(0.01, color='black')
-    plt.axvline(0.02, color='black')
-    plt.axvline(0.05, color='black')
-    plt.hist(sigmas, bins=50, histtype='step', range=[0., 0.2])
-    plt.show()
+    plt.ylim(-1., 1.)
+    xbinned_mag, yplot_student_res, res_dispersion = binplot(stars_lc_df['mag'].to_numpy(), stars_lc_df['res'].to_numpy(), nbins=10, data=True, rms=False, scale=False)
+    plt.ylabel("$m-\\left<m\\right>} [mag]$")
 
-    for star_index in list(set(stars_df['star'])):
-        star_mask = (stars_df['star'] == star_index)
-        outlier_star_mask = (outlier_stars_df['star'] == star_index)
-        if sum(star_mask) == 0 or np.any(stars_df.loc[star_mask]['flux'] <= 0.):
+    ax = plt.subplot(2, 1, 2)
+    ax.tick_params(which='both', direction='in')
+    ax.xaxis.set_minor_locator(AutoMinorLocator())
+    ax.yaxis.set_minor_locator(AutoMinorLocator())
+    plt.plot(xbinned_mag, res_dispersion, color='black')
+    plt.grid()
+    plt.xlabel("$m$ [AB mag]")
+    plt.ylabel("$m-\\left<m\\right>$ [mag]")
+
+    plt.savefig(smphot_stars_output.joinpath("binned_res.png"), dpi=500.)
+    plt.close()
+    mjd_min, mjd_max = stars_lc_df['mjd'].min(), stars_lc_df['mjd'].max()
+
+    sigmas = [stars_lc_df.loc[stars_lc_df['star']==star_index]['res'].std() for star_index in list(set(stars_lc_df['star']))]
+    # print(sum(np.array(sigmas)<=0.01))
+    # print(sum(np.array(sigmas)<=0.02))
+    # print(sum(np.array(sigmas)<=0.05))
+    # plt.xlim(0., 0.2)
+    # plt.grid()
+    # plt.axvline(0.01, color='black')
+    # plt.axvline(0.02, color='black')
+    # plt.axvline(0.05, color='black')
+    # plt.hist(sigmas, bins=50, histtype='step', range=[0., 0.2])
+    # plt.show()
+
+    for star_index in list(set(stars_lc_df['star'])):
+        star_mask = (stars_lc_df['star'] == star_index)
+        outlier_star_mask = (outlier_stars_lc_df['star'] == star_index)
+        if sum(star_mask) == 0 or np.any(stars_lc_df.loc[star_mask]['flux'] <= 0.):
             continue
 
-        s = stars_df.loc[star_mask]['res'].std()
+        s = stars_lc_df.loc[star_mask]['res'].std()
 
         m = solver.model.params.free[dp.star_map[star_index]]
         fig = plt.subplots(ncols=2, nrows=1, figsize=(12., 4.), gridspec_kw={'width_ratios': [5, 1], 'wspace': 0, 'hspace': 0}, sharey=True)
-        plt.suptitle("Star {} - Gaia mag={}\n$\\sigma={:.3f}$".format(star_index, stars_df.loc[star_mask]['mag'].tolist()[0], s))
+        plt.suptitle("Star {} - Gaia mag={}\n$\\sigma={:.3f}$".format(star_index, stars_lc_df.loc[star_mask]['mag'].tolist()[0], s))
         ax = plt.subplot(1, 2, 1)
         plt.xlim(mjd_min, mjd_max)
         ax.tick_params(which='both', direction='in')
         ax.xaxis.set_minor_locator(AutoMinorLocator())
         ax.yaxis.set_minor_locator(AutoMinorLocator())
-        # plt.errorbar(stars_df.loc[star_mask]['mjd'], stars_df.loc[star_mask]['flux'], yerr=stars_df.loc[star_mask]['error'], marker='.', color='black', ls='')
-        plt.errorbar(stars_df.loc[star_mask]['mjd'].to_numpy(), stars_df.loc[star_mask]['m'].to_numpy(), yerr=stars_df.loc[star_mask]['em'].to_numpy(), marker='.', color='black', ls='')
+        # plt.errorbar(stars_lc_df.loc[star_mask]['mjd'], stars_lc_df.loc[star_mask]['flux'], yerr=stars_lc_df.loc[star_mask]['error'], marker='.', color='black', ls='')
+        plt.errorbar(stars_lc_df.loc[star_mask]['mjd'].to_numpy(), stars_lc_df.loc[star_mask]['m'].to_numpy(), yerr=stars_lc_df.loc[star_mask]['em'].to_numpy(), marker='.', color='black', ls='')
         if len(outlier_star_mask) > 0.:
-            plt.errorbar(outlier_stars_df.loc[outlier_star_mask]['mjd'].to_numpy(), outlier_stars_df.loc[outlier_star_mask]['m'].to_numpy(), yerr=outlier_stars_df.loc[outlier_star_mask]['em'].to_numpy(), marker='x', color='black', ls='')
+            plt.errorbar(outlier_stars_lc_df.loc[outlier_star_mask]['mjd'].to_numpy(), outlier_stars_lc_df.loc[outlier_star_mask]['m'].to_numpy(), yerr=outlier_stars_lc_df.loc[outlier_star_mask]['em'].to_numpy(), marker='x', color='black', ls='')
         plt.axhline(m, color='black')
         plt.grid(linestyle='--', color='black')
         plt.xlabel("MJD")
         plt.ylabel("$m$")
-        plt.fill_between([stars_df.loc[star_mask]['mjd'].min(), stars_df.loc[star_mask]['mjd'].max()], [m+2.*s, m+2.*s], [m-2.*s, m-2.*s], color='xkcd:light blue')
-        plt.fill_between([stars_df.loc[star_mask]['mjd'].min(), stars_df.loc[star_mask]['mjd'].max()], [m+s, m+s], [m-s, m-s], color='xkcd:sky blue')
+        plt.fill_between([stars_lc_df.loc[star_mask]['mjd'].min(), stars_lc_df.loc[star_mask]['mjd'].max()], [m+2.*s, m+2.*s], [m-2.*s, m-2.*s], color='xkcd:light blue')
+        plt.fill_between([stars_lc_df.loc[star_mask]['mjd'].min(), stars_lc_df.loc[star_mask]['mjd'].max()], [m+s, m+s], [m-s, m-s], color='xkcd:sky blue')
         ax = plt.subplot(1, 2, 2)
         ax.tick_params(which='both', direction='in')
         ax.xaxis.set_minor_locator(AutoMinorLocator())
         ax.yaxis.set_minor_locator(AutoMinorLocator())
         ax.set_xticklabels([])
-        x = np.linspace(stars_df.loc[star_mask]['m'].min(), stars_df.loc[star_mask]['m'].max(), 100)
+        x = np.linspace(stars_lc_df.loc[star_mask]['m'].min(), stars_lc_df.loc[star_mask]['m'].max(), 100)
         plt.plot(norm.pdf(x, loc=m, scale=s), x)
-        plt.hist(stars_df.loc[star_mask]['m'], orientation='horizontal', density=True, bins='auto', histtype='step')
+        plt.hist(stars_lc_df.loc[star_mask]['m'], orientation='horizontal', density=True, bins='auto', histtype='step')
 
         plt.savefig(star_lc_folder.joinpath("star_{}.png".format(star_index)), dpi=250.)
         plt.close()

@@ -163,7 +163,6 @@ def generate_summary(args, funcs):
         def _sn_summary(ztfname_filter):
             ztfname, filtercode = ztfname_filter.split("-")
             if ztfname_filter in current_running_sne.keys() and args.ignore_running:
-                print("HEY")
                 return
 
             func_status = {}
