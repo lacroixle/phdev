@@ -18,7 +18,7 @@ import pandas as pd
 import numpy as np
 from ztfimg.utils.tools import ccdid_qid_to_rcid
 
-from utils import ListTable, quadrant_name_explode, quadrant_width_px, quadrant_height_px, j2000mjd
+from utils import ListTable, quadrant_name_explode, quadrant_width_px, quadrant_height_px, j2000mjd, ztfquadrant_center
 
 
 class _Exposure:
@@ -112,8 +112,12 @@ class Exposure(_Exposure):
     def wcs(self):
         return WCS(self.exposure_header)
 
-    def retrieve_exposure(self):
-        image_path = pathlib.Path(get_file(self.name + "_sciimg.fits", downloadit=False))
+    def retrieve_exposure(self, ztfin2p3_path=None):
+        if ztfin2p3_path:
+            image_path = ztfin2p3_path.joinpath("sci/{}/{}/{}/{}".format(self.name[9:13], self.name[13:17], self.name[17:23], self.name + "_sciimg.fits"))
+        else:
+            image_path = pathlib.Path(get_file(self.name + "_sciimg.fits", downloadit=False))
+
         if not image_path.exists():
             raise FileNotFoundError("Science image at {} not found on disk!".format(image_path))
 
@@ -135,6 +139,9 @@ class Exposure(_Exposure):
                 return hdul[0].header
         else:
             raise FileNotFoundError("Could not find calibrated.fits or calibrated.header for exposure {}!".format(self.name))
+
+    def center(self):
+        return ztfquadrant_center(self.wcs)
 
     def get_catalog(self, cat_name, key=None):
         if not isinstance(cat_name, pathlib.Path):
@@ -231,7 +238,7 @@ class Exposure(_Exposure):
 
 
 class _Lightcurve:
-    def __init__(self, name, filterid, wd, exposure_regexp="ztf_*"):
+    def __init__(self, name, filterid, wd, exposure_regexp="ztf*"):
         self.__name = name
         self.__filterid = filterid
         self.__path = wd.joinpath("{}/{}".format(name, filterid))
@@ -335,7 +342,7 @@ class _Lightcurve:
 
 
 class Lightcurve(_Lightcurve):
-    def __init__(self, name, filterid, wd, is_compressed=False, exposure_regexp="ztf_*"):
+    def __init__(self, name, filterid, wd, is_compressed=False, exposure_regexp="ztf*"):
         super().__init__(name, filterid, wd)
 
         if is_compressed:

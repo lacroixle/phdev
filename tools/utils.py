@@ -154,6 +154,9 @@ def get_cat_size(catalog_filename):
     return len(cat)
 
 
+def ztfquadrant_center(wcs):
+    return wcs.pixel_to_world([quadrant_width_px/2.], [quadrant_height_px/2.])
+
 def match_to_gaia(cat_df, cat_gaia_df):
     i = match_pixel_space(cat_gaia_df, cat_df)
     return cat_gaia_df.iloc[i[i>=0]].gaiaid
@@ -180,18 +183,21 @@ def apply_space_motion(ra, dec, pm_ra, pm_dec, refmjd, newmjd):
 
 
 def quadrant_name_explode(quadrant_name, kind='sci'):
+    quadrant_name = "_".join(quadrant_name.split("_")[1:])
+
     if kind == 'sci':
-        year = int(quadrant_name[4:8])
-        month = int(quadrant_name[8:10])
-        day = int(quadrant_name[10:12])
-        field = int(quadrant_name[19:25])
-        filterid = quadrant_name[26:28]
-        ccdid = int(quadrant_name[30:32])
-        qid = int(quadrant_name[36])
+        year = int(quadrant_name[0:4])
+        month = int(quadrant_name[4:6])
+        day = int(quadrant_name[6:8])
+        field = int(quadrant_name[15:21])
+        filterid = quadrant_name[22:24]
+        ccdid = int(quadrant_name[26:28])
+        qid = int(quadrant_name[32])
 
         return year, month, day, field, filterid, ccdid, qid
 
     elif kind == 'raw':
+        assert(False, "quadrant_name_explode(): needs to be updates/tested for raw image name")
         year = int(quadrant_name[4:8])
         month = int(quadrant_name[8:10])
         day = int(quadrant_name[10:12])

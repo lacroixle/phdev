@@ -303,6 +303,7 @@ if __name__ == '__main__':
     argparser.add_argument('--compress', action='store_true', help="If set, work with compressed working directory")
     argparser.add_argument('--photom-cat', choices=['gaia', 'ps1', 'ubercal'], type=str, help="Star catalog to use for relative photometry.")
     argparser.add_argument('--use-gaia-stars', action='store_true', help="If set, uses Gaia to find stars (ie to build the standalone_stars.list catalog)")
+    argparser.add_argument('--ztfin2p3-path', type=pathlib.Path)
 
     logger = logging.getLogger("main")
     #logger.addHandler(logging.StreamHandler())

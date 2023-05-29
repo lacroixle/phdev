@@ -11,7 +11,7 @@ def make_catalog(exposure, logger, args):
 
     logger.info("Retrieving science exposure...")
     try:
-        image_path = exposure.retrieve_exposure()
+        image_path = exposure.retrieve_exposure(args.ztfin2p3_path)
     except FileNotFoundError as e:
         logger.error(e)
         return False

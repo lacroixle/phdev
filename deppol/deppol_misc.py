@@ -13,7 +13,6 @@ def psf_study(exposure, logger, args):
     from numpy.polynomial.polynomial import Polynomial
     # matplotlib.use('Agg')
 
-    print(exposure.name)
     if not exposure.path.joinpath("psfstars.list").exists():
         return True
 
@@ -614,18 +613,25 @@ def retrieve_catalogs(lightcurve, logger, args):
     import numpy as np
     from croaks.match import NearestNeighAssoc
 
-
     # Retrieve Gaia and PS1 catalogs
     exposures = lightcurve.get_exposures()
     field_rcid_pairs = list(set([(exposure.field, exposure.rcid) for exposure in exposures]))
-    centroids = [get_rcid_centroid(rcid, field) for field, rcid in field_rcid_pairs]
+    # centroids = [get_rcid_centroid(rcid, field) for field, rcid in field_rcid_pairs]
+    centroids = [exposure.center() for exposure in exposures]
 
     logger.info("Retrieving catalogs for (fieldid, rcid) pairs: {}".format(field_rcid_pairs))
 
     name_to_objid = {'gaia': 'Source', 'ps1': 'objID'}
 
     def _download_catalog(name, centroids):
-        catalogs = [download_vizier_catalog(name, centroid, radius=0.6) for centroid in centroids]
+        # catalogs = [download_vizier_catalog(name, centroid, radius=0.6) for centroid in centroids]
+        catalogs = []
+        for centroid in centroids:
+            try:
+                catalogs.append(download_vizier_catalog(name, centroid, radius=0.6))
+            except OsError as e:
+                logger.error(e)
+
         #catalog_df = pd.concat(catalogs).set_index(name_to_objid[name]).drop_duplicates()
         catalog_df = pd.concat(catalogs).drop_duplicates(ignore_index=True, subset=name_to_objid[name])
         return catalog_df
@@ -707,14 +713,13 @@ def match_catalogs(exposure, logger, args):
     aper_stars_df = aper_stars_df.iloc[aper_indices].reset_index(drop=True)
 
     logger.info("Matched {} PSF/aper stars".format(len(psf_stars_df)))
+
     # Match Gaia catalog with exposure catalogs
     # First remove Gaia stars not contained in the exposure
     gaia_stars_skycoords = SkyCoord(ra=gaia_stars_df['ra'].to_numpy(), dec=gaia_stars_df['dec'].to_numpy(), unit='deg')
-
-    # sep = exposure_centroid_skycoord.separation(gaia_stars_skycoords)
-    # idxc = (sep < 0.6*u.deg)
-    # gaia_stars_skycoords = gaia_stars_skycoords[idxc]
-    # gaia_stars_df = gaia_stars_df[idxc]
+    gaia_stars_inside = wcs.footprint_contains(gaia_stars_skycoords)
+    gaia_stars_skycoords = gaia_stars_skycoords[gaia_stars_inside]
+    gaia_stars_df = gaia_stars_df.iloc[gaia_stars_inside]
 
     # Project Gaia stars into pixel space
     gaia_stars_x, gaia_stars_y = gaia_stars_skycoords.to_pixel(wcs)
