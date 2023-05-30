@@ -607,7 +607,7 @@ def psf_study_reduce(band_path, ztfname, filtercode, logger, args):
 
 
 def retrieve_catalogs(lightcurve, logger, args):
-    from ztfquery.fields import get_rcid_centroid
+    from ztfquery.fields import get_rcid_centroid, FIELDSNAMES
     from ztfimg.catalog import download_vizier_catalog
     import pandas as pd
     import numpy as np
@@ -616,8 +616,11 @@ def retrieve_catalogs(lightcurve, logger, args):
     # Retrieve Gaia and PS1 catalogs
     exposures = lightcurve.get_exposures()
     field_rcid_pairs = list(set([(exposure.field, exposure.rcid) for exposure in exposures]))
-    # centroids = [get_rcid_centroid(rcid, field) for field, rcid in field_rcid_pairs]
-    centroids = [exposure.center() for exposure in exposures]
+
+    if all([field_rcid_pair[0] for field_rcid_pair in field_rcid_pairs]):
+        centroids = [get_rcid_centroid(rcid, field) for field, rcid in field_rcid_pairs]
+    else:
+        raise NotImplementedError("For now, catalog retrieve code only works for science images.")
 
     logger.info("Retrieving catalogs for (fieldid, rcid) pairs: {}".format(field_rcid_pairs))
 
@@ -683,6 +686,7 @@ def retrieve_catalogs(lightcurve, logger, args):
     ps1_df = _get_catalog('ps1', centroids)
 
     logger.info("Matching external catalogs")
+    # For both catalogs, radec are in J2000 epoch, so no need to account for space motion
     assoc = NearestNeighAssoc(first=[gaia_df['ra'].to_numpy(), gaia_df['dec'].to_numpy()], radius = 2./60./60.)
     i = assoc.match(ps1_df['ra'].to_numpy(), ps1_df['dec'].to_numpy())
 
@@ -926,4 +930,29 @@ def concat_catalogs(lightcurve, logger, args):
     catalog['ccdid'] = catalog.apply(lambda x: int(x['exposure'][30:32]), axis=1)
     catalog['qid'] = catalog.apply(lambda x: int(x['exposure'][36]), axis=1)
     catalog.to_parquet(lightcurve.path.joinpath("bigcat_{}_{}.parquet".format(lightcurve.name, lightcurve.filterid)))
+    return True
+
+
+def plot_focalplane_stars(lightcurve, logger, args):
+    import matplotlib.pyplot as plt
+    import pandas as pd
+    from pyloka import pix2tp
+    import random
+
+    stars_list = []
+    exposures = lightcurve.get_exposures()
+    for exposure in exposures:
+        stars_df = exposure.get_matched_catalog('aperstars')
+        foc_x, foc_y = pix2tp(stars_df['x'].to_numpy(), stars_df['y'].to_numpy(), str(args.wd.joinpath("{}/{}/{}/calibrated.fits".format(lightcurve.name, lightcurve.filterid, exposure.name))).encode('utf8'))
+        stars_df['foc_x'] = foc_x
+        stars_df['foc_y'] = foc_y
+        stars_list.append(stars_df)
+
+    stars_df = pd.concat(stars_list)
+
+    plt.subplots(figsize=(10., 10.))
+    plt.plot(stars_df['foc_x'].to_numpy(), stars_df['foc_y'].to_numpy(), ',')
+    plt.savefig("output.png")
+    plt.close()
+
     return True

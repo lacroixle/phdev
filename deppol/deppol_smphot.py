@@ -38,8 +38,8 @@ def reference_quadrant(lightcurve, logger, args):
         logger.info("  --min-psfstars defined.")
         min_psfstars = args.min_psfstars
     else:
-        logger.info("  --min-psfstars not defined, use 3(N+1)(N+2) with N the relative astrometry polynomial degree.")
-        min_psfstars = 2*(args.astro_degree+1)*(args.astro_degree+2)
+        logger.info("  --min-psfstars not defined, use 4(N+1)(N+2) with N the relative astrometry polynomial degree.")
+        min_psfstars = 4*(args.astro_degree+1)*(args.astro_degree+2)
     logger.info("Minimum stars for reference={}".format(min_psfstars))
 
     idxmin = seeings_df.loc[seeings_df['fieldid']==maxcount_fieldid].loc[seeings_df['star_count']>=min_psfstars]['seeing'].idxmin()

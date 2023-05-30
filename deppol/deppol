@@ -47,6 +47,7 @@ poloka_func.append({'map': deppol_misc.discard_calibrated, 'rm': deppol_misc.dis
 poloka_func.append({'map': deppol_misc.catalogs_to_ds9regions})
 poloka_func.append({'reduce': deppol_misc.dummy})
 poloka_func.append({'reduce': deppol_misc.concat_catalogs})
+poloka_func.append({'reduce': deppol_misc.plot_focalplane_stars})
 
 
 import deppol_psfstudy
