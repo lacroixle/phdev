@@ -162,7 +162,7 @@ class Exposure(_Exposure):
         if cat_name not in self.lightcurve.ext_star_catalogs_name:
             raise ValueError("External catalogs are {}, not {}")
 
-        ext_cat_df = self.lightcurve.get_ext_catalog(cat_name)
+        ext_cat_df = self.lightcurve.get_ext_catalog(cat_name, matched=True)
 
         if pm_correction:
             obsmjd = self.mjd
@@ -170,6 +170,7 @@ class Exposure(_Exposure):
                 ext_cat_df['ra'] = ext_cat_df['ra']+(obsmjd-j2000mjd)*ext_cat_df['pmRA']
                 ext_cat_df['dec'] = ext_cat_df['dec']+(obsmjd-j2000mjd)*ext_cat_df['pmDE']
             elif cat_name == 'ps1':
+                # Who uses PS1 astrometry for something other than matching it with Gaia?
                 pass
             else:
                 raise NotImplementedError()
@@ -200,29 +201,12 @@ class Exposure(_Exposure):
         if cat_name not in self.lightcurve.ext_star_catalogs_name:
             raise ValueError("External catalogs are {}, not {}".format(self.lightcurve.ext_star_catalogs_name, cat_name))
 
-        ext_cat_df = self.lightcurve.get_ext_catalog(cat_name)
+        ext_cat_df = self.get_ext_catalog(cat_name, pm_correction=pm_correction, project=project)
         with pd.HDFStore(self.path.joinpath("cat_indices.hd5"), 'r') as hdfstore:
-            cat_indices = hdfstore.get('ext_cat_indices')['indices']
+            ext_cat_inside = hdfstore.get('ext_cat_inside')
+            ext_cat_indices = hdfstore.get('ext_cat_indices')['indices']
 
-        ext_cat_df = ext_cat_df.iloc[cat_indices].reset_index(drop=True)
-
-        if pm_correction:
-            obsmjd = self.mjd
-            if cat_name == 'gaia':
-                ext_cat_df['ra'] = ext_cat_df['ra']+(obsmjd-j2000mjd)*ext_cat_df['pmRA']
-                ext_cat_df['dec'] = ext_cat_df['dec']+(obsmjd-j2000mjd)*ext_cat_df['pmDE']
-            elif cat_name == 'ps1':
-                pass
-            else:
-                raise NotImplementedError()
-
-        if project:
-            skycoords = SkyCoord(ra=ext_cat_df['ra'].to_numpy(), dec=ext_cat_df['dec'].to_numpy(), unit='deg')
-            stars_x, stars_y = skycoords.to_pixel(self.wcs)
-            ext_cat_df['x'] = stars_x
-            ext_cat_df['y'] = stars_y
-
-        return ext_cat_df
+        return ext_cat_df.iloc[ext_cat_inside.tolist()].iloc[ext_cat_indices].reset_index(drop=True)
 
     def func_status(self, func_name):
         return self.path.joinpath("{}.success".format(func_name)).exists()
@@ -499,7 +483,6 @@ class Lightcurve(_Lightcurve):
                 raise ValueError("Star catalog name \'{}\' does not exists!".format(catalog_name))
 
         catalog_list = []
-        files_to_check = ["indices.hd5"]
         exposures = self.get_exposures(files_to_check=["cat_indices.hd5"])
         name_set = False
 

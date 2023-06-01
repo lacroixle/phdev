@@ -631,13 +631,17 @@ def retrieve_catalogs(lightcurve, logger, args):
         catalogs = []
         for centroid, field_rcid_pair in zip(centroids, field_rcid_pairs):
             logger.info("{}-{}".format(*field_rcid_pair))
+
             # First check if catalog already exists in cache
-            cached_catalog_filename = args.ext_catalog_cache.joinpath("{name}/{name}-{field}-{rcid}.parquet".format(name=name, field=field_rcid_pair[0], rcid=field_rcid_pair[1]))
-            if args.ext_catalog_cache and cached_catalog_filename.exists():
-                catalog_df = pd.read_parquet(cached_catalog_filename)
-            else:
+            download_ok = False
+            if args.ext_catalog_cache:
+                cached_catalog_filename = args.ext_catalog_cache.joinpath("{name}/{name}-{field}-{rcid}.parquet".format(name=name, field=field_rcid_pair[0], rcid=field_rcid_pair[1]))
+                if cached_catalog_filename.exists():
+                    catalog_df = pd.read_parquet(cached_catalog_filename)
+                    download_ok = True
+
+            if not download_ok:
                 # If not, download it. If a cache path is setup, save it there for future use
-                download_ok = False
                 for i in range(5):
                     try:
                         catalog_df = download_vizier_catalog(name, centroid, radius=0.6)
@@ -659,13 +663,14 @@ def retrieve_catalogs(lightcurve, logger, args):
             catalogs.append(catalog_df)
 
         #catalog_df = pd.concat(catalogs).set_index(name_to_objid[name]).drop_duplicates()
-        catalog_df = pd.concat(catalogs).drop_duplicates(ignore_index=True, subset=name_to_objid[name])
+        catalog_df = pd.concat(catalogs)
+        catalog_df = catalog_df.drop_duplicates(ignore_index=True, subset=name_to_objid[name])
         return catalog_df
 
     def _get_catalog(name, centroids):
         catalog_path = lightcurve.ext_catalogs_path.joinpath("{}_full.parquet".format(name))
-        if not catalog_path.exists():
-            logger.info("Getting catalog {}... ".format(name))
+        logger.info("Getting catalog {}... ".format(name))
+        if not catalog_path.exists() or args.recompute_ext_catalogs:
             catalog_df = _download_catalog(name, centroids)
             catalog_path.parents[0].mkdir(exist_ok=True)
 
@@ -673,13 +678,18 @@ def retrieve_catalogs(lightcurve, logger, args):
             if name == 'ps1':
                 catalog_df = catalog_df.loc[catalog_df['Nd']>=30].reset_index(drop=True)
 
+            if name == 'gaia':
+                # Change proper motion units
+                catalog_df['pmRA'] = catalog_df['pmRA']/np.cos(np.deg2rad(catalog_df['dec']))/1000./3600./365.25 # TODO: check if dec should be J2000 or something else
+                catalog_df['pmDE'] = catalog_df['pmDE']/1000./3600./365.25
+
             catalog_df.to_parquet(catalog_path)
             logger.info("Saving catalog into {}".format(catalog_path))
         else:
+            logger.info("Found: {}".format(catalog_path))
             catalog_df = pd.read_parquet(catalog_path)
 
         return catalog_df
-
 
     logger.info("Retrieving external catalogs")
     gaia_df = _get_catalog('gaia', centroids)
@@ -694,9 +704,6 @@ def retrieve_catalogs(lightcurve, logger, args):
     ps1_df = ps1_df.iloc[i>=0].reset_index(drop=True)
 
     logger.info("Saving matched catalogs")
-    # Changing some units
-    gaia_df['pmRA'] = gaia_df['pmRA']/np.cos(np.deg2rad(gaia_df['dec']))/1000./3600./365.25
-    gaia_df['pmDE'] = gaia_df['pmDE']/1000./3600./365.25
     gaia_df.to_parquet(lightcurve.ext_catalogs_path.joinpath("gaia.parquet"))
     ps1_df.to_parquet(lightcurve.ext_catalogs_path.joinpath("ps1.parquet"))
 
@@ -769,11 +776,9 @@ def match_catalogs(exposure, logger, args):
         hdfstore.put('aperstars_indices', pd.Series(aper_indices))
         hdfstore.put('ext_cat_indices', pd.DataFrame({'x': gaia_stars_x[gaia_indices], 'y': gaia_stars_y[gaia_indices], 'indices': gaia_indices}))
         hdfstore.put('cat_indices', pd.Series(cat_indices))
-
+        hdfstore.put('ext_cat_inside', pd.Series(gaia_stars_inside))
 
     matched_gaia_stars_df = gaia_stars_df.iloc[gaia_indices].reset_index(drop=True)
-
-    logger.info("Matched {} GAIA stars".format(len(matched_gaia_stars_df)))
 
     return True
 

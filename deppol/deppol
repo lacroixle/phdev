@@ -306,6 +306,7 @@ if __name__ == '__main__':
     argparser.add_argument('--use-gaia-stars', action='store_true', help="If set, uses Gaia to find stars (ie to build the standalone_stars.list catalog)")
     argparser.add_argument('--ztfin2p3-path', type=pathlib.Path)
     argparser.add_argument('--ext-catalog-cache', type=pathlib.Path)
+    argparser.add_argument('--recompute-ext-catalogs', action='store_true', help="(Debug) If set, external catalogs (such as Gaia, PS1) are recomputed.")
 
     logger = logging.getLogger("main")
     #logger.addHandler(logging.StreamHandler())
