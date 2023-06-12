@@ -44,6 +44,9 @@ filtercode2ztffid = {'zg': 1,
                      'zr': 2,
                      'zi': 3}
 
+extcat2colorstr = {'gaia': "B_p-R_p",
+                   'ps1': "m_g-m_i"}
+
 idx2markerstyle = ['*', 'x', '.', 'v', '^']
 
 

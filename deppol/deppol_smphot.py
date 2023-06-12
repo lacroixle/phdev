@@ -286,6 +286,8 @@ def smphot_stars_plot(lightcurve, logger, args):
     smphot_stars_output = lightcurve.smphot_stars_path
     calib_table = ListTable.from_filename(smphot_stars_output.joinpath("smphot_stars_cat.list"))
     cat_calib_table = ListTable.from_filename(smphot_stars_output.joinpath("calib_stars_cat.list"))
+    calib_table.df.to_csv("calib.csv")
+    cat_calib_table.df.to_csv("cat_calib.csv")
 
     stars_lc_df = calib_table.df[calib_table.df['flux'] >= 0.]
     # Remove negative fluxes
@@ -323,7 +325,7 @@ def smphot_stars_plot(lightcurve, logger, args):
     stars_lc_df['mean_m'] = solver.model.params.free[dp.star_index]
     stars_lc_df['res'] = solver.get_res(dp.m)
 
-    star_chi2 = np.bincount(dp.star_index, weights=np.abs(stars_lc_df['res']))/np.bincount(dp.star_index)
+    star_chi2 = np.bincount(dp.star_index, weights=1./np.abs(stars_lc_df['res']))/np.bincount(dp.star_index)
 
     # sigma_m = solver.get_diag_cov()
     cov = solver.get_cov()
@@ -334,9 +336,19 @@ def smphot_stars_plot(lightcurve, logger, args):
     w = w[~solver.bads]
 
     cat_stars_df = lightcurve.get_ext_catalog(args.photom_cat)
-    stars_df = pd.DataFrame(data={'m': solver.model.params.free, 'em': np.sqrt(solver.get_cov().diagonal()), 'starid': dp.star_map.keys(), 'chi2': star_chi2, 'mag': cat_calib_table.df['magg'].iloc[list(dp.star_map.values())]})
+    stars_df = pd.DataFrame(data={'m': solver.model.params.free, 'em': np.sqrt(solver.get_cov().diagonal()), 'starid': dp.star_map.keys(), 'chi2': star_chi2, 'mag': cat_calib_table.df['magg'].iloc[list(dp.star_map.keys())]})
 
-    plt.plot(stars_df['m'].to_numpy(), stars_df['em'].to_numpy(), '.')
+
+    plt.subplots(figsize=(5., 5.))
+    plt.suptitle("Fitted star magnitude vs external catalog ({})".format(args.photom_cat))
+    plt.plot(stars_df['m'].to_numpy(), stars_df['mag'].to_numpy(), '.')
+    plt.xlabel("$m$ [mag]")
+    plt.ylabel("$m_\\mathrm{{{}}}$ [mag]".format(args.photom_cat))
+    plt.grid()
+    plt.savefig(smphot_stars_output.joinpath("mag_ext_cat.png"), dpi=300.)
+    plt.show()
+
+    plt.plot(stars_df['mag'].to_numpy(), stars_df['em'].to_numpy(), '.')
     plt.grid()
     plt.xlabel("$m$ [mag]")
     plt.ylabel("$\\sigma_m$ [mag]")
@@ -353,7 +365,6 @@ def smphot_stars_plot(lightcurve, logger, args):
     plt.ylabel("$\\chi^2$")
     plt.show()
 
-    return True
     # res_min, res_max = stars_lc_df['res'].min(), stars_lc_df['res'].max()
     res_min, res_max = -0.5, 0.5
     x = np.linspace(res_min, res_max, 1000)
@@ -372,7 +383,6 @@ def smphot_stars_plot(lightcurve, logger, args):
     plt.grid()
     plt.savefig(smphot_stars_output.joinpath("residual_dist.png"), dpi=300.)
     plt.close()
-
 
     plt.figure(figsize=(8., 4.))
     plt.suptitle("Measure incertitude vs sky level")
