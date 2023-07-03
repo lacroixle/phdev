@@ -133,7 +133,7 @@ if __name__ == '__main__':
                     if args.use_raw:
                         quadrant_logger.info("Success: {}".format(image_filename))
                     else:
-                        if mskimg_path and mskimg_path.exist():
+                        if mskimg_path and mskimg_path.exists():
                             quadrant_logger.info("Success: {}, dead pixel count={}".format(image_filename, np.sum(deads)))
                         else:
                             quadrant_logger.info("Success: {}, no dead image found.".format(image_filename))

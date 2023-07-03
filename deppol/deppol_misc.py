@@ -615,21 +615,38 @@ def retrieve_catalogs(lightcurve, logger, args):
 
     # Retrieve Gaia and PS1 catalogs
     exposures = lightcurve.get_exposures()
-    field_rcid_pairs = list(set([(exposure.field, exposure.rcid) for exposure in exposures]))
 
-    if all([field_rcid_pair[0] for field_rcid_pair in field_rcid_pairs]):
-        centroids = [get_rcid_centroid(rcid, field) for field, rcid in field_rcid_pairs]
+    # If all exposures are in the primary or secondary field grids, their positions are already known and headers are not needed
+    # If a footprint file is provided, use those
+    if args.footprints:
+        footprints_df = pd.read_csv(args.footprints)
+        footprints_df = footprints_df.loc[footprints_df['year']==int(lightcurve.name)].loc[footprints_df['filtercode']==lightcurve.filterid]
+        field_rcid_pairs = [("{}-{}-{}".format(args.footprints.stem, footprint.year, footprint.filtercode), i) for i, footprint in footprints_df.iterrows()]
+        centroids = [(footprint['ra'], footprint['dec']) for i, footprint in footprints_df.iterrows()]
+        radius = [footprint['radius'] for i, footprint in footprints_df.iterrows()]
     else:
-        raise NotImplementedError("For now, catalog retrieve code only works for science images.")
+        field_rcid_pairs = list(set([(exposure.field, exposure.rcid) for exposure in exposures]))
+        if all([(field_rcid_pair[0] in FIELDSNAMES) for field_rcid_pair in field_rcid_pairs]):
+            centroids = [get_rcid_centroid(rcid, field) for field, rcid in field_rcid_pairs]
+            radius = [0.6]*len(field_rcid_pairs)
+        else:
+            logger.info("Not all fields are in the primary or secondary grid and no footprint file is provided.")
+            logger.info("Retrieving catalogs for each individual quadrant... this may take some time as exposures need to be retrieved.")
+            [exposure.retrieve_exposure(force_rewrite=False) for exposure in exposures]
+            logger.info("All exposures retrieved.")
+            field_rcid_pairs = [(exposure.field, exposure.rcid) for exposure in exposures]
+            centroids = [exposure.center() for exposure in exposures]
+            radius = [0.6]*len(exposures)
+
 
     logger.info("Retrieving catalogs for (fieldid, rcid) pairs: {}".format(field_rcid_pairs))
 
     name_to_objid = {'gaia': 'Source', 'ps1': 'objID'}
 
-    def _download_catalog(name, centroids):
-        # catalogs = [download_vizier_catalog(name, centroid, radius=0.6) for centroid in centroids]
+    def _download_catalog(name, centroids, radius):
         catalogs = []
-        for centroid, field_rcid_pair in zip(centroids, field_rcid_pairs):
+        catalog_df = None
+        for centroid, r, field_rcid_pair in zip(centroids, radius, field_rcid_pairs):
             logger.info("{}-{}".format(*field_rcid_pair))
 
             # First check if catalog already exists in cache
@@ -637,42 +654,47 @@ def retrieve_catalogs(lightcurve, logger, args):
             if args.ext_catalog_cache:
                 cached_catalog_filename = args.ext_catalog_cache.joinpath("{name}/{name}-{field}-{rcid}.parquet".format(name=name, field=field_rcid_pair[0], rcid=field_rcid_pair[1]))
                 if cached_catalog_filename.exists():
-                    catalog_df = pd.read_parquet(cached_catalog_filename)
+                    df = pd.read_parquet(cached_catalog_filename)
                     download_ok = True
 
             if not download_ok:
                 # If not, download it. If a cache path is setup, save it there for future use
                 for i in range(5):
+                    df = None
                     try:
-                        catalog_df = download_vizier_catalog(name, centroid, radius=0.6)
+                        df = download_vizier_catalog(name, centroid, radius=r)
                     except OSError as e:
                         logger.error(e)
 
-                    if catalog_df is not None and len(catalog_df) > 0:
+                    if df is not None and len(df) > 0:
                         download_ok = True
                         break
 
                 if not download_ok:
-                    logger.error("Could not download catalog after 5 retries!")
+                    logger.error("Could not download catalog {}-{}-{} after 5 retries!".format(name, field_rcid_pair[0], field_rcid_pair[1]))
                     continue
 
                 if args.ext_catalog_cache:
                     args.ext_catalog_cache.joinpath(name).mkdir(exist_ok=True)
-                    catalog_df.to_parquet(cached_catalog_filename)
+                    df.to_parquet(cached_catalog_filename)
 
-            catalogs.append(catalog_df)
+            if catalog_df is None:
+                catalog_df = df
+            else:
+                catalog_df = pd.concat([catalog_df, df]).drop_duplicates(ignore_index=True, subset=name_to_objid[name])
 
-        #catalog_df = pd.concat(catalogs).set_index(name_to_objid[name]).drop_duplicates()
-        catalog_df = pd.concat(catalogs)
-        catalog_df = catalog_df.drop_duplicates(ignore_index=True, subset=name_to_objid[name])
+            logger.info("Catalog size={}".format(len(catalog_df)))
+
         return catalog_df
 
-    def _get_catalog(name, centroids):
+    def _get_catalog(name, centroids, radius):
         catalog_path = lightcurve.ext_catalogs_path.joinpath("{}_full.parquet".format(name))
         logger.info("Getting catalog {}... ".format(name))
         if not catalog_path.exists() or args.recompute_ext_catalogs:
-            catalog_df = _download_catalog(name, centroids)
+            catalog_df = _download_catalog(name, centroids, radius)
             catalog_path.parents[0].mkdir(exist_ok=True)
+
+            catalog_df.dropna(subset=['ra', 'dec'], inplace=True)
 
             # Remove low detection counts PS1 objects
             if name == 'ps1':
@@ -692,9 +714,14 @@ def retrieve_catalogs(lightcurve, logger, args):
         return catalog_df
 
     logger.info("Retrieving external catalogs")
-    gaia_df = _get_catalog('gaia', centroids)
-    ps1_df = _get_catalog('ps1', centroids)
+    gaia_df = _get_catalog('gaia', centroids, radius)
 
+    gaia_df.to_parquet(lightcurve.ext_catalogs_path.joinpath("gaia.parquet"))
+
+    if args.starflats:
+        return True
+
+    ps1_df = _get_catalog('ps1', centroids, radius)
     logger.info("Matching external catalogs")
     # For both catalogs, radec are in J2000 epoch, so no need to account for space motion
     assoc = NearestNeighAssoc(first=[gaia_df['ra'].to_numpy(), gaia_df['dec'].to_numpy()], radius = 2./60./60.)
@@ -704,7 +731,6 @@ def retrieve_catalogs(lightcurve, logger, args):
     ps1_df = ps1_df.iloc[i>=0].reset_index(drop=True)
 
     logger.info("Saving matched catalogs")
-    gaia_df.to_parquet(lightcurve.ext_catalogs_path.joinpath("gaia.parquet"))
     ps1_df.to_parquet(lightcurve.ext_catalogs_path.joinpath("ps1.parquet"))
 
     return True
@@ -718,13 +744,15 @@ def match_catalogs(exposure, logger, args):
     from astropy.coordinates import SkyCoord
     import astropy.units as u
 
+    import matplotlib.pyplot as plt
+
     try:
         gaia_stars_df = exposure.lightcurve.get_ext_catalog('gaia')
     except FileNotFoundError as e:
         logger.error("Could not find Gaia catalog!")
         return False
 
-    if not exposure.func_status('makepsf'):
+    if not exposure.path.joinpath("psfstars.list").exists():
         logger.error("makepsf was not successful, no psfstars catalog!")
         return False
 
@@ -734,7 +762,7 @@ def match_catalogs(exposure, logger, args):
     wcs = exposure.wcs
     mjd = exposure.mjd
 
-    exposure_centroid = exposure.get_centroid()
+    exposure_centroid = exposure.center()
     exposure_centroid_skycoord = SkyCoord(ra=exposure_centroid[0], dec=exposure_centroid[1], unit='deg')
 
     # Match aperture photometry and psf photometry catalogs in pixel space
@@ -783,19 +811,20 @@ def match_catalogs(exposure, logger, args):
     return True
 
 
-def clean(exposure, logger, args):
-    # We want to delete all files in order to get back to the prepare_deppol stage
-    files_to_keep = ["elixir.fits", "dead.fits.gz", ".dbstuff"]
-    files_to_delete = list(filter(lambda f: f.name not in files_to_keep, list(exposure.path.glob("*"))))
-
-    for file_to_delete in files_to_delete:
-            file_to_delete.unlink()
-
-    return True
-
-
-def clean_reduce(lightcurve, logger, args):
+def clean(lightcurve, logger, args):
     from shutil import rmtree
+
+    def _clean(exposure, logger, args):
+        # We want to delete all files in order to get back to the prepare_deppol stage
+        files_to_keep = ["elixir.fits", "dead.fits.gz", ".dbstuff"]
+        files_to_delete = list(filter(lambda f: f.name not in files_to_keep, list(exposure.path.glob("*"))))
+
+        for file_to_delete in files_to_delete:
+                file_to_delete.unlink()
+
+        return True
+    exposures = lightcurve.get_exposures(ignore_noprocess=True)
+    [_clean(exposure, logger, args) for exposure in exposures]
 
     # We want to delete all files in order to get back to the prepare_deppol stage
     files_to_keep = ["prepare.log"]
@@ -879,6 +908,20 @@ def filter_seeing(lightcurve, logger, args):
 
 
 def discard_calibrated(exposure, logger, args):
+    calibrated_path = exposure.path.joinpath("calibrated.fits")
+    weight_path= exposure.path.joinpath("weight.fz")
+    satur_path = exposure.path.joinpath("satur.fits.gz")
+
+    def _delete(path):
+        if path.exists():
+            logger.info("{} exists and will be deleted.".format(path.name))
+        else:
+            logger.info("{} does not exists.".format(path.name))
+
+    _delete(calibrated_path)
+    _delete(weight_path)
+    _delete(satur_path)
+
     return True
 
 
@@ -929,6 +972,42 @@ def catalogs_to_ds9regions(exposure, logger, args):
 def dummy(lightcurve, logger, args):
     return True
 
+
+def plot_footprint(lightcurve, logger, args):
+    import matplotlib.pyplot as plt
+    from utils import sc_array
+
+    exposures = lightcurve.get_exposures()[:2000]
+
+    plt.subplots(figsize=(10., 10.))
+    plt.suptitle("Sky footprint for {}-{}".format(lightcurve.name, lightcurve.filterid))
+    for exposure in exposures:
+        wcs = exposure.wcs
+        width, height = wcs.pixel_shape
+        top_left = [0., height]
+        top_right = [width, height]
+        bottom_left = [0., 0.]
+        bottom_right = [width, 0]
+
+        tl_radec = sc_array(wcs.pixel_to_world(*top_left))
+        tr_radec = sc_array(wcs.pixel_to_world(*top_right))
+        bl_radec = sc_array(wcs.pixel_to_world(*bottom_left))
+        br_radec = sc_array(wcs.pixel_to_world(*bottom_right))
+        plt.plot([tl_radec[0], tr_radec[0], br_radec[0], bl_radec[0], tl_radec[0]], [tl_radec[1], tr_radec[1], br_radec[1], bl_radec[1], tl_radec[1]], color='grey')
+
+    if lightcurve.ext_catalogs_path.joinpath("gaia_full.parquet").exists():
+        gaia_stars_df = lightcurve.get_ext_catalog('gaia', matched=False)
+        plt.plot(gaia_stars_df['ra'].to_numpy(), gaia_stars_df['dec'], ',')
+
+    if lightcurve.ext_catalogs_path.joinpath("ps1_full.parquet").exists():
+        ps1_stars_df = lightcurve.get_ext_catalog('ps1', matched=False)
+        plt.plot(ps1_stars_df['ra'].to_numpy(), ps1_stars_df['dec'].to_numpy(), ',')
+
+    plt.xlabel("$\\alpha$ [deg]")
+    plt.ylabel("$\\delta$ [deg]")
+    plt.tight_layout()
+    plt.savefig(lightcurve.path.joinpath("footprint.png"), dpi=300.)
+    plt.close()
 
 def concat_catalogs(lightcurve, logger, args):
     catalog = lightcurve.extract_star_catalog(['aperstars'])[['exposure', 'x', 'y', 'gmxx', 'gmyy', 'gmxy', 'apfl5', 'rad5']].rename(columns={'apfl5': 'aperflux', 'rad5': 'aperrad'})

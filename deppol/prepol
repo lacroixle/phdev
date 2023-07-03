@@ -24,6 +24,7 @@ if __name__ == '__main__':
     argparser.add_argument('--output', type=pathlib.Path, required=True)
     argparser.add_argument('-j', '--n_jobs', type=int, default=1)
     argparser.add_argument('--lc-folder', type=pathlib.Path)
+    argparser.add_argument('--no-deads', action='store_true')
 
     args = argparser.parse_args()
     args.output = args.output.expanduser().resolve()
@@ -90,8 +91,6 @@ if __name__ == '__main__':
                     if not sciimg_path.exists() or not (mskimg_path.exists() or maskimg_path_gz.exists()):
                         raise FileNotFoundError(sciimg_path)
 
-                    # Dead mask
-                    z = ScienceQuadrant.from_filename(sciimg_path, use_dask=False)
 
                     # First create filter path
                     args.output.joinpath("{}/{}".format(ztfname, filtercode)).mkdir(exist_ok=True)
@@ -109,19 +108,26 @@ if __name__ == '__main__':
 
                     _create_symlink(folder_path.joinpath("elixir.fits"), sciimg_path)
 
-                    deads = np.array(z.get_mask(tracks=False, ghosts=False, spillage=False, spikes=False, dead=True,
-                                                nan=False, saturated=False, brightstarhalo=False, lowresponsivity=False,
-                                                highresponsivity=False, noisy=False, verbose=False), dtype=np.uint8)
+                    # Dead mask
+                    if not args.no_deads:
+                        z = ScienceQuadrant.from_filename(sciimg_path, use_dask=False)
 
-                    mskhdu = fits.PrimaryHDU([deads])
-                    mskhdu.writeto(folder_path.joinpath("dead.fits.gz"), overwrite=True)
+                        deads = np.array(z.get_mask(tracks=False, ghosts=False, spillage=False, spikes=False, dead=True,
+                                                    nan=False, saturated=False, brightstarhalo=False, lowresponsivity=False,
+                                                    highresponsivity=False, noisy=False, verbose=False), dtype=np.uint8)
+
+                        mskhdu = fits.PrimaryHDU([deads])
+                        mskhdu.writeto(folder_path.joinpath("dead.fits.gz"), overwrite=True)
 
                 except FileNotFoundError as e:
                     quadrant_logger.error("Fail: {}".format(sciimg_path))
                 except Exception as e:
                     quadrant_logger.exception("Exception error for: {}".format(sciimg_path))
                 else:
-                    quadrant_logger.info("Success: {}, dead pixel count={}".format(sciimg_filename, np.sum(deads)))
+                    if args.no_deads:
+                        quadrant_logger.info("Success: {}, dead pixel count=-1".format(sciimg_filename))
+                    else:
+                        quadrant_logger.info("Success: {}, dead pixel count={}".format(sciimg_filename, np.sum(deads)))
                 finally:
                     for handler in quadrant_logger.handlers:
                         handler.close()

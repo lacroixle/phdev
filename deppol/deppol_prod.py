@@ -47,16 +47,18 @@ def generate_jobs(wd, run_folder, func, run_name):
             job_count += len(filtercodes)
 
     print("Job count: {}".format(job_count))
+#OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 deppol --ztfname={} --filtercode={} -j {j} --wd={} --func={} --lc-folder=/sps/ztf/data/storage/scenemodeling/lc --exposure-workspace=/dev/shm/llacroix --rm-intermediates --scratch=${{TMPDIR}}/llacroix --astro-degree=5 --max-seeing=4.5 --discard-calibrated --from-scratch --dump-timings --parallel-reduce --use-gaia-stars --ext-catalog-cache=/sps/ztf/data/storage/scenemodeling/cat_cache --footprints=~/data/ztf/starflat_footprints.csv
 
     for ztfname in sne_jobs.keys():
         for filtercode in sne_jobs[ztfname]:
             job = """#!/bin/sh
 echo "running" > {status_path}
-source ~/pyenv/bin/activate
-export PYTHONPATH=${{PYTHONPATH}}:~/phdev/tools
-export PATH=${{PATH}}:~/phdev/deppol
+conda activate pol
+deppol_dask_env.sh
 ulimit -n 4096
-OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 deppol --ztfname={} --filtercode={} -j {j} --wd={} --func={} --lc-folder=/sps/ztf/data/storage/scenemodeling/lc --exposure-workspace=/dev/shm/llacroix --rm-intermediates --scratch=${{TMPDIR}}/llacroix --astro-degree=5 --max-seeing=4.5 --discard-calibrated --from-scratch --dump-timings --parallel-reduce --use-gaia-stars
+export OMP_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+deppol --ztfname={} --filtercode={} -j {j} --wd={} --func={} --lc-folder=/sps/ztf/data/storage/scenemodeling/lc --rm-intermediates --max-seeing=4.5 --dump-timings --parallel-reduce --use-gaia-stars --ext-catalog-cache=/sps/ztf/data/storage/scenemodeling/cat_cache --starflats
 echo "done" > {status_path}
 """.format(ztfname, filtercode, wd, ",".join(func), status_path=run_folder.joinpath("{}/status/{}-{}".format(run_name, ztfname, filtercode)), j=args.ntasks)
             with open(batch_folder.joinpath("{}-{}.sh".format(ztfname, filtercode)), 'w') as f:
@@ -121,8 +123,8 @@ def schedule_jobs(run_folder, run_name):
                "-o", log_folder.joinpath("log_{}".format(batch_name)),
                "-A", "ztf",
                "-L", "sps",
-               "--mem={}G".format(3*args.ntasks),
-               "-t", "3-0",
+               "--mem={}G".format(5*args.ntasks),
+               "-t", "5-0",
                batch]
 
         returncode = run_and_log(cmd, logger)

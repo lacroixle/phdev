@@ -112,7 +112,7 @@ class Exposure(_Exposure):
     def wcs(self):
         return WCS(self.exposure_header)
 
-    def retrieve_exposure(self, ztfin2p3_path=None):
+    def retrieve_exposure(self, ztfin2p3_path=None, force_rewrite=True):
         if ztfin2p3_path:
             image_path = ztfin2p3_path.joinpath("sci/{}/{}/{}/{}".format(self.name[9:13], self.name[13:17], self.name[17:23], self.name + "_sciimg.fits"))
         else:
@@ -121,7 +121,9 @@ class Exposure(_Exposure):
         if not image_path.exists():
             raise FileNotFoundError("Science image at {} not found on disk!".format(image_path))
 
-        copyfile(image_path, self.path.joinpath("calibrated.fits"))
+        if force_rewrite or not self.path.joinpath("calibrated.fits").exists():
+            copyfile(image_path, self.path.joinpath("calibrated.fits"))
+
         return image_path
 
     def update_exposure_header(self):
@@ -139,9 +141,6 @@ class Exposure(_Exposure):
                 return hdul[0].header
         else:
             raise FileNotFoundError("Could not find calibrated.fits or calibrated.header for exposure {}!".format(self.name))
-
-    def center(self):
-        return ztfquadrant_center(self.wcs)
 
     def get_catalog(self, cat_name, key=None):
         if not isinstance(cat_name, pathlib.Path):
@@ -217,7 +216,7 @@ class Exposure(_Exposure):
             with open(timings_path, 'r') as f:
                 return json.load(f)
 
-    def get_centroid(self):
+    def center(self):
         return self.wcs.pixel_to_world_values(np.array([[quadrant_width_px/2., quadrant_height_px/2.]]))[0]
 
 

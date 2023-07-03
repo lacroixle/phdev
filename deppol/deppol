@@ -34,10 +34,10 @@ poloka_func = []
 import deppol_misc
 
 poloka_func.append({'map': deppol_misc.psf_study, 'reduce': deppol_misc.psf_study_reduce})
-poloka_func.append({'map': deppol_misc.clean, 'reduce': deppol_misc.clean_reduce})
+#poloka_func.append({'map': deppol_misc.clean, 'reduce': deppol_misc.clean_reduce})
+poloka_func.append({'reduce': deppol_misc.clean})
 poloka_func.append({'reduce': deppol_misc.retrieve_catalogs})
 poloka_func.append({'map': deppol_misc.match_catalogs})
-poloka_func.append({'map': deppol_misc.clean, 'reduce': deppol_misc.clean_reduce})
 # poloka_func.append({'map': deppol_misc.stats, 'reduce': deppol_misc.stats_reduce})
 poloka_func.append({'reduce': deppol_misc.filter_seeing})
 poloka_func.append({'reduce': deppol_misc.filter_psfstars_count})
@@ -48,6 +48,7 @@ poloka_func.append({'map': deppol_misc.catalogs_to_ds9regions})
 poloka_func.append({'reduce': deppol_misc.dummy})
 poloka_func.append({'reduce': deppol_misc.concat_catalogs})
 poloka_func.append({'reduce': deppol_misc.plot_focalplane_stars})
+poloka_func.append({'reduce': deppol_misc.plot_footprint})
 
 
 import deppol_psfstudy
@@ -307,6 +308,8 @@ if __name__ == '__main__':
     argparser.add_argument('--ztfin2p3-path', type=pathlib.Path)
     argparser.add_argument('--ext-catalog-cache', type=pathlib.Path)
     argparser.add_argument('--recompute-ext-catalogs', action='store_true', help="(Debug) If set, external catalogs (such as Gaia, PS1) are recomputed.")
+    argparser.add_argument('--footprints', type=pathlib.Path)
+    argparser.add_argument('--starflats', action='store_true', help="Indicates we are processing starflats. This changes some behaviours in the pipeline (for example no PS1 catalog gets retrieved).")
 
     logger = logging.getLogger("main")
     #logger.addHandler(logging.StreamHandler())
@@ -322,6 +325,9 @@ if __name__ == '__main__':
 
     if args.ext_catalog_cache:
         args.ext_catalog_cache = args.ext_catalog_cache.expanduser().resolve()
+
+    if args.footprints:
+        args.footprints = args.footprints.expanduser().resolve()
 
     filtercodes = ztf_filtercodes[:3]
     if args.filtercode != 'all':
@@ -379,11 +385,12 @@ if __name__ == '__main__':
     if args.cluster_worker > 0:
         cluster = SLURMCluster(cores=args.n_jobs,
                                processes=args.n_jobs,
-                               memory="{}GB".format(3*args.n_jobs),
-                               project="ztf",
-                               walltime="12:00:00",
+                               memory="{}GB".format(6*args.n_jobs),
+                               account="ztf",
+                               walltime="6-0",
                                queue="htc",
-                               job_extra=["-L sps"])
+                               job_extra_directives=["-L sps"],
+                               local_directory=os.getenv('TMPDIR'))
 
         cluster.scale(jobs=args.cluster_worker)
         client = Client(cluster)
@@ -392,10 +399,7 @@ if __name__ == '__main__':
         print("Running {} workers with {} processes each ({} total).".format(args.cluster_worker, args.n_jobs, args.cluster_worker*args.n_jobs))
         client.wait_for_workers(1)
     elif not args.synchronous_compute:
-        #localCluster = LocalCluster(n_workers=args.n_jobs, dashboard_address='localhost:8787', memory_limit="{}GB".format(3*args.n_jobs), processes=True, threads_per_worker=1)
-        #localCluster = LocalCluster(n_workers=args.n_jobs, dashboard_address='localhost:8787', memory_limit="{}GB".format(2*args.n_jobs), processes=True, threads_per_worker=1)
-        localCluster = LocalCluster(n_workers=args.n_jobs, dashboard_address='localhost:8787', memory_limit=None, processes=True, threads_per_worker=1)
-        #localCluster = LocalCluster(n_workers=args.n_jobs, dashboard_address='localhost:8787', processes=True, threads_per_worker=1)
+        localCluster = LocalCluster(n_workers=args.n_jobs, dashboard_address=None, memory_limit=None, processes=True, threads_per_worker=1)
         client = Client(localCluster)
 
         print("Running a local cluster with {} processes.".format(args.n_jobs))
