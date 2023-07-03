@@ -49,6 +49,13 @@ extcat2colorstr = {'gaia': "B_p-R_p",
 
 idx2markerstyle = ['*', 'x', '.', 'v', '^']
 
+filtercode2color = {'zg': 'green',
+                    'zr': 'red',
+                    'zi': 'orange'}
+
+filtercode2darkercolor = {'zg': 'darkgreen',
+                          'zr': 'darkred',
+                          'zi': 'darkorange'}
 
 def plot_ztf_focal_plan(fig, focal_plane_dict, plot_fun, plot_ccdid=False):
     #ccds = fig.subfigures(ncols=4, nrows=4, hspace=0.09, wspace=0.09)
