@@ -7,6 +7,7 @@ import saunerie.fitparameters as fp
 from scipy import sparse
 import numpy as np
 from sksparse import cholmod
+from scipy.sparse import dia_matrix
 
 from utils import get_wcs_from_quadrant, quadrant_width_px, quadrant_height_px, gaiarefmjd
 
@@ -88,28 +89,32 @@ def wcs_residuals(lightcurve, logger, args):
 
     ################################################################################
     # Residuals/magnitude binplot
-    plt.subplots(nrows=2, ncols=2, figsize=(20., 10.))
+    plt.subplots(nrows=2, ncols=2, figsize=(14., 7.), gridspec_kw={'hspace': 0.})
     plt.subplot(2, 2, 1)
-    xbinned_mag, yplot_res, res_dispersion = binplot(matched_stars_df['mag'].to_numpy(), (matched_stars_df['x']-matched_stars_df['gaia_x']).to_numpy(), nbins=20, data=True, rms=True, scale=False)
-    plt.xlabel("$m$ [mag]")
-    plt.ylabel("$x-x_\\mathrm{Gaia}$ [pixel]")
+    xbinned_mag, yplot_res, res_dispersion = binplot(matched_stars_df['mag'].to_numpy(), (matched_stars_df['x']-matched_stars_df['gaia_x']).to_numpy(), nbins=10, data=True, rms=True, scale=False)
+    plt.xlabel("$G$ [AB mag]")
+    plt.ylabel("$x-x_\\mathrm{Gaia}$ [px]")
+    plt.ylim(-0.5, 0.5)
     plt.grid()
 
     plt.subplot(2, 2, 2)
     plt.plot(xbinned_mag, res_dispersion, color='black')
-    plt.xlabel("$m$ [mag]")
-    plt.ylabel("$\\sigma_{x-x_\\mathrm{Gaia}}$ [pixel]")
+    plt.xlabel("$G$ [AB mag]")
+    plt.ylabel("$\\sigma_{x-x_\\mathrm{Gaia}}$ [px]")
+    plt.grid()
 
     plt.subplot(2, 2, 3)
-    xbinned_mag, yplot_res, res_dispersion = binplot(matched_stars_df['mag'].to_numpy(), (matched_stars_df['y']-matched_stars_df['gaia_y']).to_numpy(), nbins=20, data=True, rms=True, scale=False)
-    plt.xlabel("$m$ [mag]")
-    plt.ylabel("$y-y_\\mathrm{Gaia}$ [pixel]")
+    xbinned_mag, yplot_res, res_dispersion = binplot(matched_stars_df['mag'].to_numpy(), (matched_stars_df['y']-matched_stars_df['gaia_y']).to_numpy(), nbins=10, data=True, rms=True, scale=False)
+    plt.xlabel("$G$ [AB mag]")
+    plt.ylabel("$y-y_\\mathrm{Gaia}$ [px]")
+    plt.ylim(-0.5, 0.5)
     plt.grid()
 
     plt.subplot(2, 2, 4)
     plt.plot(xbinned_mag, res_dispersion, color='black')
-    plt.xlabel("$m$ [mag]")
-    plt.ylabel("$\\sigma_{y-y_\\mathrm{Gaia}}$ [pixel]")
+    plt.xlabel("$G$ [AB mag]")
+    plt.ylabel("$\\sigma_{y-y_\\mathrm{Gaia}}$ [px]")
+    plt.grid()
 
     plt.savefig(save_folder_path.joinpath("mag_wcs_res_binplot.png"), dpi=300.)
     plt.close()
@@ -117,19 +122,19 @@ def wcs_residuals(lightcurve, logger, args):
 
     ################################################################################
     # Star lightcurve RMS mag/star lightcurve mean mag
-    rms, mean = [], []
+    # rms, mean = [], []
 
-    for gaiaid in set(matched_stars_df['gaiaid']):
-        gaiaid_mask = (matched_stars_df['gaiaid']==gaiaid)
-        rms.append(matched_stars_df.loc[gaiaid_mask, 'mag'].std())
-        mean.append(matched_stars_df.loc[gaiaid_mask, 'mag'].mean())
+    # for gaiaid in set(matched_stars_df['gaiaid']):
+    #     gaiaid_mask = (matched_stars_df['gaiaid']==gaiaid)
+    #     rms.append(matched_stars_df.loc[gaiaid_mask, 'mag'].std())
+    #     mean.append(matched_stars_df.loc[gaiaid_mask, 'mag'].mean())
 
-    plt.plot(mean, rms, '.')
-    plt.xlabel("$\\left<m\\right>$")
-    plt.ylabel("$\\sigma_m$")
-    plt.grid()
-    plt.savefig(save_folder_path.joinpath("rms_mean_lc.png"), dpi=300.)
-    plt.close()
+    # plt.plot(mean, rms, '.')
+    # plt.xlabel("$\\left<m\\right>$")
+    # plt.ylabel("$\\sigma_m$")
+    # plt.grid()
+    # plt.savefig(save_folder_path.joinpath("rms_mean_lc.png"), dpi=300.)
+    # plt.close()
     ################################################################################
 
 
@@ -149,7 +154,13 @@ class AstromModel():
         return np.hstack((dp.sx, dp.sy))
 
     def W(self, dp):
-        return sparse.dia_array((1./self.sigma(dp)**2, 0), shape=(2*len(dp.nt), 2*len(dp.nt)))
+        a = np.array([np.pad(-dp.rhoxy/dp.sx/dp.sy, (0, len(dp.nt))),
+                      np.hstack([1./dp.sx**2, 1./dp.sy**2]),
+                      np.pad(-dp.rhoxy/dp.sx/dp.sy, (len(dp.nt), 0))])
+
+        a *= np.hstack([1./(1.-dp.rhoxy**2)]*2)
+
+        return dia_matrix((a, (-len(dp.nt), 0, len(dp.nt))), shape=(2*len(dp.nt), 2*len(dp.nt))).tocsc()
 
     def __call__(self, x, pm, mjd, exposure_indices, jac=False):
         # Correct for proper motion in tangent plane
@@ -221,13 +232,15 @@ def astrometry_fit(lightcurve, logger, args):
     import pickle
     import pandas as pd
     import numpy as np
+    from scipy.sparse import dia_matrix
     from imageproc import gnomonic
     import matplotlib
     import matplotlib.pyplot as plt
     from croaks import DataProxy
     from utils import ztf_latitude, BiPol2D_fit, create_2D_mesh_grid, poly2d_to_file, ListTable
+    from saunerie.plottools import binplot
 
-    matplotlib.use('Agg')
+    # matplotlib.use('Agg')
 
     lightcurve.astrometry_path.mkdir(exist_ok=True)
     lightcurve.mappings_path.mkdir(exist_ok=True)
@@ -257,6 +270,7 @@ def astrometry_fit(lightcurve, logger, args):
                              'psfstars_y': 'y',
                              'psfstars_sx': 'sx',
                              'psfstars_sy': 'sy',
+                             'psfstars_rhoxy': 'rhoxy',
                              'gaia_pmRA': 'pmra',
                              'gaia_pmDE': 'pmdec',
                              'gaia_BPmag': 'bpmag',
@@ -266,7 +280,7 @@ def astrometry_fit(lightcurve, logger, args):
                              'gaia_e_Gmag': 'cat_emag',
                              'name': 'exposure'},
                             axis='columns', inplace=True)
-    matched_stars_df = matched_stars_df[['exposure', 'gaiaid', 'ra', 'dec', 'x', 'y', 'sx', 'sy', 'pmra', 'pmdec', 'cat_mag', 'cat_emag', 'mag', 'emag', 'bpmag', 'rpmag', 'mjd', 'seeing', 'z', 'ha', 'airmass', 'rcid']]
+    matched_stars_df = matched_stars_df[['exposure', 'gaiaid', 'ra', 'dec', 'x', 'y', 'sx', 'sy', 'rhoxy', 'pmra', 'pmdec', 'cat_mag', 'cat_emag', 'mag', 'emag', 'bpmag', 'rpmag', 'mjd', 'seeing', 'z', 'ha', 'airmass', 'rcid']]
     matched_stars_df.dropna(inplace=True)
     matched_stars_df.to_csv("out.csv")
     logger.info("N={}".format(len(matched_stars_df)))
@@ -274,6 +288,9 @@ def astrometry_fit(lightcurve, logger, args):
         logger.info("Filtering out faint stars (magnitude cut={} [mag])".format(args.astro_min_mag))
         matched_stars_df = matched_stars_df.loc[matched_stars_df['mag']<=args.astro_min_mag]
         logger.info("N={}".format(len(matched_stars_df)))
+
+    # Computes covariance matrix
+    matched_stars_df['sxy'] = matched_stars_df['sx']*matched_stars_df['sy']*matched_stars_df['rhoxy']
 
     # Compute parallactic angle
     parallactic_angle_sin = np.cos(np.deg2rad(ztf_latitude))*np.sin(np.deg2rad(matched_stars_df['ha']))/np.sin(np.deg2rad(matched_stars_df['z']))
@@ -320,9 +337,11 @@ def astrometry_fit(lightcurve, logger, args):
     matched_stars_df['color'] = matched_stars_df['bpmag'] - matched_stars_df['rpmag']
     matched_stars_df['centered_color'] = matched_stars_df['color'] - matched_stars_df['color'].mean()
 
+    # matched_stars_df = matched_stars_df.loc[matched_stars_df['exposure']==reference_exposure]
+    # matched_stars_df = matched_stars_df.iloc[:10]
     # Build dataproxy for model
     dp = DataProxy(matched_stars_df.to_records(),
-                   x='x', sx='sx', sy='sy', y='y', ra='ra', dec='dec', exposure='exposure', mag='mag', cat_mag='cat_mag', gaiaid='gaiaid', mjd='mjd',
+                   x='x', sx='sx', sy='sy', y='y', sxy='sxy',rhoxy='rhoxy', ra='ra', dec='dec', exposure='exposure', mag='mag', cat_mag='cat_mag', gaiaid='gaiaid', mjd='mjd',
                    bpmag='bpmag', rpmag='rpmag', seeing='seeing', z='z', airmass='airmass', tpx='tpx', tpy='tpy', pmtpx='pmtpx', pmtpy='pmtpy',
                    parallactic_angle_x='parallactic_angle_x', parallactic_angle_y='parallactic_angle_y', color='color',
                    centered_color='centered_color', rcid='rcid', pmra='pmra', pmdec='pmdec')
@@ -340,8 +359,19 @@ def astrometry_fit(lightcurve, logger, args):
 
     # Build model
     tp2px_model = AstromModel(args.astro_degree, len(dp.exposure_set))
+
     # Model fitting
     _fit_astrometry(tp2px_model, dp, logger)
+
+    res = tp2px_model.residuals((dp.tpx, dp.tpy), (dp.x, dp.y), (dp.pmtpx, dp.pmtpy), dp.mjd, dp.exposure_index)
+    pied = 0.
+    wres = res/np.array([np.sqrt(dp.sx**2+pied**2), np.sqrt(dp.sy**2+pied**2)])
+    chi2 = np.sum(wres**2)
+    ndof = (2*len(dp.nt)-len(lightcurve.exposures)*(args.astro_degree+1)*(args.astro_degree+2))
+    print("Chi2={}".format(chi2))
+    print("NDoF={}".format(ndof))
+    print("Chi2/NDoF={}".format(chi2/ndof))
+    tp2px_model.pied = pied
 
     # Dump proper motion catalog
     def _dump_pm_catalog():
@@ -477,8 +507,7 @@ def astrometry_fit(lightcurve, logger, args):
     with open(lightcurve.astrometry_path.joinpath("models.pickle"), 'wb') as f:
         pickle.dump({'tp2px': tp2px_model, 'ref2tp': ref2tp_model, 'ref2px': ref2px_model, 'dp': dp}, f)
 
-    logger.info("Filtering exposures with bad chi2")
-
+    logger.info("Computing transformation chi2")
 
     gaiaid_in_ref = dp.gaiaid[dp.exposure_index == reference_index]
     measure_mask = np.where(dp.exposure_index != reference_index, np.isin(dp.gaiaid, gaiaid_in_ref), False)
@@ -488,12 +517,16 @@ def astrometry_fit(lightcurve, logger, args):
                                               np.array([dp.x[measure_mask], dp.y[measure_mask]]),
                                               space_indices=dp.exposure_index[measure_mask])
 
-    ref2px_chi2_exposure = np.bincount(dp.exposure_index[measure_mask], weights=np.sqrt(ref2px_residuals[0]**2+ref2px_residuals[1]**2))/np.bincount(dp.exposure_index[measure_mask])
+    wres = np.array([ref2px_residuals[0]/dp.sx[measure_mask], ref2px_residuals[1]/dp.sy[measure_mask]])
+    ref2px_chi2_exposure = np.bincount(dp.exposure_index[measure_mask], weights=(wres[0]**2+wres[1]**2)/2.)/(np.bincount(dp.exposure_index[measure_mask]))
+    # ref2px_chi2_exposure = np.bincount(dp.exposure_index[measure_mask], weights=(wres[0]**2+wres[1]**2)/2.)/(np.bincount(dp.exposure_index[measure_mask])-(args.astro_degree+1)*(args.astro_degree+2))
+
     ref2px_chi2_exposure[reference_index] = 0.
     ref2px_chi2_exposure = np.pad(ref2px_chi2_exposure, (0, len(dp.exposure_set) - len(ref2px_chi2_exposure)), constant_values=np.nan)
 
     df_ref2px_chi2_exposure = pd.DataFrame(data=ref2px_chi2_exposure, index=dp.exposure_set, columns=['chi2'])
     df_ref2px_chi2_exposure.to_csv(lightcurve.astrometry_path.joinpath("ref2px_chi2_exposures.csv"), sep=",")
+    print(df_ref2px_chi2_exposure)
     return True
 
 
@@ -513,11 +546,16 @@ def astrometry_fit_plot(lightcurve, logger, args):
     from croaks import DataProxy
     from utils import get_ref_quadrant_from_band_folder
 
-    matplotlib.use('Agg')
+    # matplotlib.use('Agg')
 
     save_folder_path = lightcurve.astrometry_path
     with open(lightcurve.astrometry_path.joinpath("models.pickle"), 'rb') as f:
         models = pickle.load(f)
+
+    def _show(filename, save_folder_path, plot_ext='.png'):
+        plt.tight_layout()
+        plt.savefig(save_folder_path.joinpath("{}{}".format(filename, plot_ext)), dpi=250.)
+        plt.close()
 
     dp = models['dp']
     tp2px_model = models['tp2px']
@@ -528,12 +566,6 @@ def astrometry_fit_plot(lightcurve, logger, args):
     reference_index = dp.exposure_map[reference_exposure]
     reference_mask = (dp.exposure_index == reference_index)
 
-    # Gaia magnitude distribution
-    plt.subplots(nrows=1, ncols=1, figsize=(6., 6.))
-    plt.hist(list(set(dp.cat_mag)), bins='auto', histtype='step', color='black')
-    plt.grid()
-    plt.savefig(lightcurve.astrometry_path.joinpath("gaia_mag_dist.png"), dpi=200.)
-
     ################################################################################
     ################################################################################
     ################################################################################
@@ -542,7 +574,7 @@ def astrometry_fit_plot(lightcurve, logger, args):
 
     logger.info("Plotting control plots for the ref2px model")
 
-    # First get stars that exist in both reference exposure and other exposures
+    # Residuals for stars in common with the reference exposure
     gaiaid_in_ref = dp.gaiaid[dp.exposure_index == reference_index]
     measure_mask = np.where(dp.exposure_index != reference_index, np.isin(dp.gaiaid, gaiaid_in_ref), False)
     in_ref = np.hstack([np.where(gaiaid == gaiaid_in_ref) for gaiaid in dp.gaiaid[measure_mask]]).flatten()
@@ -552,6 +584,14 @@ def astrometry_fit_plot(lightcurve, logger, args):
                                               space_indices=dp.exposure_index[measure_mask])
 
     ref2px_save_folder_path= save_folder_path.joinpath("ref2px_plots")
+
+    # Gaia magnitude distribution
+    plt.subplots(nrows=1, ncols=1, figsize=(6., 6.))
+    plt.hist(list(set(dp.cat_mag)), bins='auto', histtype='step', color='black')
+    plt.xlabel("$m_G$ [mag]")
+    plt.ylabel("Count")
+    plt.grid()
+    _show("gaia_mag_dist")
 
     ################################################################################
     # Residuals scatter plot
@@ -592,8 +632,7 @@ def astrometry_fit_plot(lightcurve, logger, args):
 
     plt.subplot(2, 2, 4)
     plt.axis('off')
-    plt.savefig(ref2px_save_folder_path.joinpath("residuals_scatter.png"), dpi=300.)
-    plt.close()
+    _show("residuals_scatter")
     ################################################################################
 
     ################################################################################
@@ -605,8 +644,7 @@ def astrometry_fit_plot(lightcurve, logger, args):
     plt.subplot(1, 2, 2)
     plt.hist(ref2px_residuals[1], bins=100, histtype='step', color='black')
     plt.grid()
-    plt.savefig(ref2px_save_folder_path.joinpath("residuals_dist.png"), dpi=300.)
-    plt.close()
+    _show("residuals_dist")
     ################################################################################
 
     ################################################################################
@@ -624,9 +662,9 @@ def astrometry_fit_plot(lightcurve, logger, args):
     plt.ylabel("$y-y_\\mathrm{fit}$ [pixel]")
     plt.ylim([-0.2, 0.2])
     plt.grid()
-    plt.savefig(ref2px_save_folder_path.joinpath("residuals_mag.png"), dpi=300.)
-    plt.close()
+    _show("residuals_mag")
     ################################################################################
+
     ################################################################################
     # Residuals binplot / magnitude
     plt.subplots(nrows=2, ncols=2, figsize=(18., 10.))
@@ -652,8 +690,7 @@ def astrometry_fit_plot(lightcurve, logger, args):
     plt.plot(xbinned_mag, res_dispersion, color='black')
     plt.xlabel("$m$ [mag]")
     plt.ylabel("$\\sigma_{y-y_\\mathrm{git}}$ [pixel]")
-    plt.savefig(ref2px_save_folder_path.joinpath("residuals_binplot_mag.png"), dpi=300.)
-    plt.close()
+    _show("residuals_binplot_mag")
     ################################################################################
 
     ################################################################################
@@ -667,8 +704,7 @@ def astrometry_fit_plot(lightcurve, logger, args):
     plt.plot(dp.centered_color[measure_mask], ref2px_residuals[1], ',', color='black')
     plt.ylim([-0.2, 0.2])
     plt.grid()
-    plt.savefig(ref2px_save_folder_path.joinpath("residuals_color.png"), dpi=300.)
-    plt.close()
+    _show("residuals_color")
     ################################################################################
 
     ################################################################################
@@ -697,37 +733,35 @@ def astrometry_fit_plot(lightcurve, logger, args):
     plt.xlabel("$B_p-R_p$ [mag]")
     plt.ylabel("$\\sigma_{y-y_\\mathrm{fit}}$ [pixel]")
     plt.grid()
-    plt.savefig(ref2px_save_folder_path.joinpath("residuals_binplot_color.png"), dpi=300.)
-    plt.close()
+    _show("residuals_binplot_colot")
     ################################################################################
 
     ################################################################################
     # Partial chi2 per exposure/gaia star
-    ref2px_chi2_exposure = np.bincount(dp.exposure_index[measure_mask], weights=np.sqrt(ref2px_residuals[0]**2+ref2px_residuals[1]**2))/np.bincount(dp.exposure_index[measure_mask])
-    ref2px_chi2_gaiaid = np.bincount(dp.gaiaid_index[measure_mask], weights=np.sqrt(ref2px_residuals[0]**2+ref2px_residuals[1]**2))/np.bincount(dp.gaiaid_index[measure_mask])
-    ref2px_chi2_gaiaid = np.pad(ref2px_chi2_gaiaid, (0, len(dp.gaiaid_set) - len(ref2px_chi2_gaiaid)), constant_values=np.nan)
+    # wres = res_
+    # ref2px_chi2_exposure = np.bincount(dp.exposure_index[measure_mask], weights=wres**2)/np.bincount(dp.exposure_index[measure_mask])
+    # ref2px_chi2_gaiaid = np.bincount(dp.gaiaid_index[measure_mask], weights=wres**2)/np.bincount(dp.gaiaid_index[measure_mask])
+    # ref2px_chi2_gaiaid = np.pad(ref2px_chi2_gaiaid, (0, len(dp.gaiaid_set) - len(ref2px_chi2_gaiaid)), constant_values=np.nan)
 
-    df_ref2px_chi2_exposure = pd.DataFrame(data=ref2px_chi2_exposure, index=dp.exposure_set, columns=['chi2'])
-    df_ref2px_chi2_exposure.to_csv(ref2px_save_folder_path.joinpath("chi2_exposures.csv"), sep=",")
+    # df_ref2px_chi2_exposure = pd.DataFrame(data=ref2px_chi2_exposure, index=dp.exposure_set, columns=['chi2'])
+    # df_ref2px_chi2_exposure.to_csv(ref2px_save_folder_path.joinpath("chi2_exposures.csv"), sep=",")
 
-    coeffs_df = pd.DataFrame(data=ref2px_model.coeffs, index=dp.exposure_set)
-    coeffs_df.to_csv(ref2px_save_folder_path.joinpath("ref2px_coeffs.csv"), sep=",")
+    # coeffs_df = pd.DataFrame(data=ref2px_model.coeffs, index=dp.exposure_set)
+    # coeffs_df.to_csv(ref2px_save_folder_path.joinpath("ref2px_coeffs.csv"), sep=",")
 
-    plt.figure()
-    plt.plot(range(len(ref2px_chi2_exposure)), ref2px_chi2_exposure, '.')
-    plt.xlabel("Exposure index")
-    plt.ylabel("$\\chi^2$")
-    plt.grid()
-    plt.savefig(ref2px_save_folder_path.joinpath("chi2_exposure.png"), dpi=200.)
-    plt.close()
+    # plt.figure()
+    # plt.plot(range(len(ref2px_chi2_exposure)), ref2px_chi2_exposure, '.')
+    # plt.xlabel("Exposure index")
+    # plt.ylabel("$\\chi^2$")
+    # plt.grid()
+    # _show("chi2_exposure")
 
-    plt.figure()
-    plt.plot(range(len(ref2px_chi2_gaiaid)), ref2px_chi2_gaiaid, '.')
-    plt.xlabel("Star index")
-    plt.ylabel("$\\chi^2$")
-    plt.grid()
-    plt.savefig(ref2px_save_folder_path.joinpath("chi2_gaiaid.png"), dpi=200.)
-    plt.close()
+    # plt.figure()
+    # plt.plot(range(len(ref2px_chi2_gaiaid)), ref2px_chi2_gaiaid, '.')
+    # plt.xlabel("Star index")
+    # plt.ylabel("$\\chi^2$")
+    # plt.grid()
+    # _show("chi2_gaiaid")
     ################################################################################
 
     ################################################################################
@@ -819,6 +853,7 @@ def astrometry_fit_plot(lightcurve, logger, args):
     ################################################################################
 
     ################################################################################
+
     ################################################################################
     ################################################################################
     # Control plots for ref2tp model
@@ -845,7 +880,188 @@ def astrometry_fit_plot(lightcurve, logger, args):
     # Residual distribution for tp2px model
     #
     logger.info("Plotting control plots for the tp2px model")
+    res = tp2px_model.residuals((dp.tpx, dp.tpy), (dp.x, dp.y), (dp.pmtpx, dp.pmtpy), dp.mjd, dp.exposure_index)
+    pied = 0.
+    wres = res/np.array([np.sqrt(dp.sx**2+pied**2), np.sqrt(dp.sy**2+pied**2)])
+    chi2 = np.sum(wres**2)
+    ndof = (2*len(dp.nt)-len(lightcurve.exposures)*(args.astro_degree+1)*(args.astro_degree+2))
+    print("Chi2={}".format(chi2))
+    print("NDoF={}".format(ndof))
+    print("Chi2/NDoF={}".format(chi2/ndof))
 
+    ################################################################################
+    # Seeing / rcid
+    #
+    for rcid in dp.rcid_map.keys():
+        m = (dp.rcid_index == dp.rcid_map[rcid])
+        plt.subplots(nrows=1, ncols=1, figsize=(6., 5.))
+        plt.hist(dp.seeing[m], bins=10)
+        plt.xlabel("Seeing FWHM [pixel]")
+        plt.ylabel("Count")
+        plt.grid()
+        plt.tight_layout()
+        _show("seeing_{}".format(rcid))
+
+
+    ################################################################################
+    # Residuals / mag / rcid
+    #
+    for i in range(len(dp.rcid_map.keys())):
+        rcid = list(dp.rcid_map.keys())[i]
+        m = (dp.rcid_index == i)
+        plt.subplots(nrows=2, ncols=2, figsize=(15., 8.), sharex=True, gridspec_kw={'hspace': 0.})
+        plt.suptitle("TP->PX - Residuals - RCID={}".format(list(dp.rcid_map.keys())[i]))
+        plt.subplot(2, 2, 1)
+        xbinned_mag, yplot_res, res_dispersion = binplot(dp.cat_mag[m], res[0][m], nbins=10, data=True, rms=True, scale=False)
+        plt.xlabel("$m_G$ [mag]")
+        plt.ylabel("$x-x_\\mathrm{model}$ [pixel]")
+        plt.grid()
+
+        plt.subplot(2, 2, 2)
+        plt.plot(xbinned_mag, res_dispersion)
+        plt.xlabel("$m_G$ [mag]")
+        plt.ylabel("$\\sigma_{x-x_\\mathrm{model}}$ [pixel]")
+        plt.grid()
+
+        plt.subplot(2, 2, 3)
+        xbinned_mag, yplot_res, res_dispersion = binplot(dp.cat_mag[m], res[1][m], nbins=10, data=True, rms=True, scale=False)
+        plt.xlabel("$m_G$ [mag]")
+        plt.ylabel("$y-y_\\mathrm{model}$ [pixel]")
+        plt.grid()
+
+        plt.subplot(2, 2, 4)
+        plt.plot(xbinned_mag, res_dispersion)
+        plt.xlabel("$m_G$ [mag]")
+        plt.ylabel("$\\sigma_{x-x_\\mathrm{model}}$ [pixel]")
+        plt.grid()
+
+        plt.tight_layout()
+        _show("tppx_res_{}".format(rcid))
+
+
+    ################################################################################
+    # Pulls / mag / rcid
+    #
+    for i in range(len(dp.rcid_map.keys())):
+        rcid = list(dp.rcid_map.keys())[i]
+        m = (dp.rcid_index == i)
+        plt.subplots(nrows=2, ncols=2, figsize=(15., 8.), sharex=True, gridspec_kw={'hspace': 0.})
+        plt.suptitle("TP->PX - Pulls - RCID={}".format(list(dp.rcid_map.keys())[i]))
+        plt.subplot(2, 2, 1)
+        xbinned_mag, yplot_res, res_dispersion = binplot(dp.cat_mag[m], wres[0][m], nbins=10, data=True, rms=True, scale=False)
+        plt.xlabel("$m_G$ [mag]")
+        plt.ylabel("$x-x_\\mathrm{model}$ [pixel]")
+        plt.grid()
+
+        plt.subplot(2, 2, 2)
+        plt.plot(xbinned_mag, res_dispersion)
+        plt.xlabel("$m_G$ [mag]")
+        plt.ylabel("$\\sigma_{x-x_\mathrm{model}}$ [pixel]")
+        plt.grid()
+
+        plt.subplot(2, 2, 3)
+        xbinned_mag, yplot_res, res_dispersion = binplot(dp.cat_mag[m], wres[1][m], nbins=10, data=True, rms=True, scale=False)
+        plt.xlabel("$m_G$ [mag]")
+        plt.ylabel("$x-x_\\mathrm{model}$ [pixel]")
+        plt.grid()
+
+        plt.subplot(2, 2, 4)
+        plt.plot(xbinned_mag, res_dispersion)
+        plt.xlabel("$m_G$ [mag]")
+        plt.ylabel("$\\sigma_{y-y_\mathrm{model}}$ [pixel]")
+        plt.grid()
+
+        plt.tight_layout()
+        _show("tppx_pulls_{}".format(rcid))
+
+    ################################################################################
+    # Residuals on the plane
+    #
+    plt.subplots(nrows=1, ncols=1, figsize=(7., 7.))
+    for i in range(len(dp.rcid_map.keys())):
+        m = (dp.rcid_index == i)
+        plt.scatter(res[0][m], res[1][m], label=list(dp.rcid_map.keys())[i], s=0.1)
+    plt.axis('equal')
+    plt.ylabel("$y-y_\\mathrm{model}$ [pixel]")
+    plt.xlabel("$x-x_\\mathrm{model}$ [pixel]")
+    plt.legend(title="RCID")
+    plt.grid()
+
+    plt.tight_layout()
+    _show("tppx_res_plane")
+    plt.show()
+
+    ################################################################################
+    # Residuals / mag
+    #
+    plt.subplots(nrows=2, ncols=1, figsize=(8., 5.), gridspec_kw={'hspace': 0}, sharex=True)
+    plt.subplot(2, 1, 1)
+    for i in range(len(dp.rcid_map.keys())):
+        m = (dp.rcid_index == i)
+        plt.scatter(dp.cat_mag[m], res[0][m], label=list(dp.rcid_map.keys())[i], s=0.5)
+    plt.legend(title="RCID")
+    plt.ylabel("$x-x_\\mathrm{model}$ [pixel]")
+    plt.grid()
+
+    plt.subplot(2, 1, 2)
+    for i in range(len(dp.rcid_map.keys())):
+        m = (dp.rcid_index == i)
+        plt.scatter(dp.cat_mag[m], res[1][m], label=list(dp.rcid_map.keys())[i], s=0.5)
+    plt.ylabel("$y-y_\\mathrm{model}$ [pixel]")
+    plt.xlabel("$m_G$ [AB mag]")
+    plt.grid()
+
+    plt.tight_layout()
+    _show("tppx_res_mag")
+
+    ################################################################################
+    # Pulls / mag
+    #
+    plt.subplots(nrows=2, ncols=1, figsize=(10., 7.), gridspec_kw={'hspace': 0}, sharex=True)
+    plt.subplot(2, 1, 1)
+    for i in range(len(dp.rcid_map.keys())):
+        m = (dp.rcid_index == i)
+        plt.scatter(dp.cat_mag[m], wres[0][m], label=list(dp.rcid_map.keys())[i], s=0.5)
+    plt.legend(title="RCID")
+    plt.ylabel("$x-x_\\mathrm{model}$ [pixel]")
+    plt.grid()
+
+    plt.subplot(2, 1, 2)
+    for i in range(len(dp.rcid_map.keys())):
+        m = (dp.rcid_index == i)
+        plt.scatter(dp.cat_mag[m], wres[1][m], label=list(dp.rcid_map.keys())[i], s=0.5)
+    plt.ylabel("$y-y_\\mathrm{model}$ [pixel]")
+    plt.xlabel("$m_G$ [AB mag]")
+    plt.grid()
+
+    plt.tight_layout()
+    _show("tppx_pulls_mag")
+
+    ################################################################################
+    # Residuals / color
+    #
+    plt.subplots(nrows=2, ncols=1, figsize=(10., 7.), gridspec_kw={'hspace': 0}, sharex=True)
+    plt.subplot(2, 1, 1)
+    for i in range(len(dp.rcid_map.keys())):
+        m = (dp.rcid_index == i)
+        plt.scatter(dp.color[m], res[0][m], label=list(dp.rcid_map.keys())[i], s=0.5)
+    plt.legend(title="rcid")
+    plt.ylabel("$x-x_\\mathrm{model}$ [pixel]")
+    plt.grid()
+
+    plt.subplot(2, 1, 2)
+    for i in range(len(dp.rcid_map.keys())):
+        m = (dp.rcid_index == i)
+        plt.scatter(dp.color[m], res[1][m], label=list(dp.rcid_map.keys())[i], s=0.5)
+    plt.ylabel("$y-y_\\mathrm{model}$ [pixel]")
+    plt.xlabel("$B_p-R_p$ [mag]")
+    plt.grid()
+
+    plt.tight_layout()
+    _show("tppx_color")
+
+    # chi2_stars = np.bincount(np.hstack([dp.gaiaid_index]*2), weights=np.flatten(wres)**2)/(np.bincount(np.hstack([dp.gaiaid_index]*2))-(args.astro_degree+1)*(args.astro_degree+2))
+    chi2_exposure = np.bincount(np.hstack([dp.exposure_index]*2), weights=wres.flatten()**2)/(np.bincount(np.hstack([dp.exposure_index]*2))-(args.astro_degree+1)*(args.astro_degree+2))
     tp2px_residuals = tp2px_model.residuals(np.array([dp.tpx, dp.tpy]), np.array([dp.x, dp.y]), np.array([dp.pmtpx, dp.pmtpy]), dp.mjd, exposure_indices=dp.exposure_index)
 
     tp2px_save_folder_path = save_folder_path.joinpath("tp2px_plots")
@@ -1011,10 +1227,15 @@ def astrometry_fit_plot(lightcurve, logger, args):
 
     ################################################################################
     # Partial chi2 per exposure/gaia star
+
     tp2px_chi2_exposure = np.bincount(dp.exposure_index, weights=np.sqrt(tp2px_residuals[0]**2+tp2px_residuals[1]**2))/np.bincount(dp.exposure_index)
     tp2px_chi2_gaiaid = np.bincount(dp.gaiaid_index, weights=np.sqrt(tp2px_residuals[0]**2+tp2px_residuals[1]**2))/np.bincount(dp.gaiaid_index)
     df_tp2px_chi2_exposure = pd.DataFrame(data=tp2px_chi2_exposure, index=dp.exposure_set, columns=['chi2'])
     df_tp2px_chi2_exposure.to_csv(tp2px_save_folder_path.joinpath("chi2_exposures.csv"), sep=",")
+
+    tp2px_exposure_df = pd.DataFrame({'exposure': list(dp.exposure_map.keys()), 'chi2': tp2px_chi2_exposure})
+    tp2px_exposure_df.set_index('exposure', drop=True, inplace=True)
+    print(tp2px_exposure_df)
 
     plt.figure()
     plt.plot(range(len(tp2px_chi2_exposure)), tp2px_chi2_exposure, '.')
