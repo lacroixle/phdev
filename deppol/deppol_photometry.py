@@ -55,7 +55,7 @@ def photometry_fit(lightcurve, logger, args):
     matched_stars_df['mag'] = -2.5*np.log10(matched_stars_df['flux'])
     matched_stars_df['emag'] = 1.08*matched_stars_df['eflux']/matched_stars_df['flux']
     matched_stars_df['colormag'] = ext_cat_df['imag'] - ext_cat_df['gmag']
-    matched_stars_df.dropna(subset=['mag', 'emag'], inplace=True)
+    matched_stars_df.dropna(subset=['mag', 'emag', 'colormag', 'cat_mag', 'cat_emag'], inplace=True)
 
     matched_stars_df = matched_stars_df[['exposure', 'mag', 'emag', 'catid', 'cat_mag', 'cat_emag', 'colormag']]
 

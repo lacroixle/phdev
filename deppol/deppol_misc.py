@@ -714,14 +714,15 @@ def retrieve_catalogs(lightcurve, logger, args):
         return catalog_df
 
     logger.info("Retrieving external catalogs")
+
     gaia_df = _get_catalog('gaia', centroids, radius)
 
-    gaia_df.to_parquet(lightcurve.ext_catalogs_path.joinpath("gaia.parquet"))
-
     if args.starflats:
+        gaia_df.to_parquet(lightcurve.ext_catalogs_path.joinpath("gaia.parquet"))
         return True
 
     ps1_df = _get_catalog('ps1', centroids, radius)
+
     logger.info("Matching external catalogs")
     # For both catalogs, radec are in J2000 epoch, so no need to account for space motion
     assoc = NearestNeighAssoc(first=[gaia_df['ra'].to_numpy(), gaia_df['dec'].to_numpy()], radius = 2./60./60.)
@@ -731,6 +732,7 @@ def retrieve_catalogs(lightcurve, logger, args):
     ps1_df = ps1_df.iloc[i>=0].reset_index(drop=True)
 
     logger.info("Saving matched catalogs")
+    gaia_df.to_parquet(lightcurve.ext_catalogs_path.joinpath("gaia.parquet"))
     ps1_df.to_parquet(lightcurve.ext_catalogs_path.joinpath("ps1.parquet"))
 
     return True
@@ -874,7 +876,7 @@ def filter_astro_chi2(lightcurve, logger, args):
     import pandas as pd
     import numpy as np
 
-    chi2_df = pd.read_csv(lightcurve.astrometry_path.joinpath("ref2px_chi2_exposures.csv"), index_col=0)
+    chi2_df = pd.read_csv(lightcurve.astrometry_path.joinpath("tp2px_chi2.csv"), index_col=0)
 
     to_filter = (np.any([chi2_df['chi2'] >= args.astro_max_chi2, chi2_df['chi2'].isna()], axis=0))
 

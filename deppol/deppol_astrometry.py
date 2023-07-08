@@ -364,13 +364,21 @@ def astrometry_fit(lightcurve, logger, args):
     _fit_astrometry(tp2px_model, dp, logger)
 
     res = tp2px_model.residuals((dp.tpx, dp.tpy), (dp.x, dp.y), (dp.pmtpx, dp.pmtpy), dp.mjd, dp.exposure_index)
-    pied = 0.
-    wres = res/np.array([np.sqrt(dp.sx**2+pied**2), np.sqrt(dp.sy**2+pied**2)])
+    pied = 0.042
+    wres = (res/np.array([np.sqrt(dp.sx**2+pied**2), np.sqrt(dp.sy**2+pied**2)])).flatten()
     chi2 = np.sum(wres**2)
     ndof = (2*len(dp.nt)-len(lightcurve.exposures)*(args.astro_degree+1)*(args.astro_degree+2))
     print("Chi2={}".format(chi2))
     print("NDoF={}".format(ndof))
     print("Chi2/NDoF={}".format(chi2/ndof))
+    tp2px_chi2_exposure = np.bincount(np.hstack([dp.exposure_index]*2), weights=wres**2)/(np.bincount(np.hstack([dp.exposure_index]*2))-2*(args.astro_degree+1)*(args.astro_degree+2))
+
+    tp2px_exposure_df = pd.DataFrame(data=tp2px_chi2_exposure, index=list(dp.exposure_map.keys()), columns=['chi2'])
+    tp2px_exposure_df.to_csv(lightcurve.astrometry_path.joinpath("tp2px_chi2.csv"), sep=",")
+
+    plt.plot(range(len(tp2px_chi2_exposure)), tp2px_chi2_exposure, '.')
+    plt.show()
+
     tp2px_model.pied = pied
 
     # Dump proper motion catalog
@@ -507,26 +515,26 @@ def astrometry_fit(lightcurve, logger, args):
     with open(lightcurve.astrometry_path.joinpath("models.pickle"), 'wb') as f:
         pickle.dump({'tp2px': tp2px_model, 'ref2tp': ref2tp_model, 'ref2px': ref2px_model, 'dp': dp}, f)
 
-    logger.info("Computing transformation chi2")
+    # logger.info("Computing transformation chi2")
 
-    gaiaid_in_ref = dp.gaiaid[dp.exposure_index == reference_index]
-    measure_mask = np.where(dp.exposure_index != reference_index, np.isin(dp.gaiaid, gaiaid_in_ref), False)
-    in_ref = np.hstack([np.where(gaiaid == gaiaid_in_ref) for gaiaid in dp.gaiaid[measure_mask]]).flatten()
+    # gaiaid_in_ref = dp.gaiaid[dp.exposure_index == reference_index]
+    # measure_mask = np.where(dp.exposure_index != reference_index, np.isin(dp.gaiaid, gaiaid_in_ref), False)
+    # in_ref = np.hstack([np.where(gaiaid == gaiaid_in_ref) for gaiaid in dp.gaiaid[measure_mask]]).flatten()
 
-    ref2px_residuals = ref2px_model.residuals(np.array([dp.x[dp.exposure_index==reference_index][in_ref], dp.y[dp.exposure_index==reference_index][in_ref]]),
-                                              np.array([dp.x[measure_mask], dp.y[measure_mask]]),
-                                              space_indices=dp.exposure_index[measure_mask])
+    # ref2px_residuals = ref2px_model.residuals(np.array([dp.x[dp.exposure_index==reference_index][in_ref], dp.y[dp.exposure_index==reference_index][in_ref]]),
+    #                                           np.array([dp.x[measure_mask], dp.y[measure_mask]]),
+    #                                           space_indices=dp.exposure_index[measure_mask]).flatten()
 
-    wres = np.array([ref2px_residuals[0]/dp.sx[measure_mask], ref2px_residuals[1]/dp.sy[measure_mask]])
-    ref2px_chi2_exposure = np.bincount(dp.exposure_index[measure_mask], weights=(wres[0]**2+wres[1]**2)/2.)/(np.bincount(dp.exposure_index[measure_mask]))
-    # ref2px_chi2_exposure = np.bincount(dp.exposure_index[measure_mask], weights=(wres[0]**2+wres[1]**2)/2.)/(np.bincount(dp.exposure_index[measure_mask])-(args.astro_degree+1)*(args.astro_degree+2))
+    # # wres = np.array([ref2px_residuals[0]/dp.sx[measure_mask], ref2px_residuals[1]/dp.sy[measure_mask]])
+    # # ref2px_chi2_exposure = np.bincount(dp.exposure_index[measure_mask], weights=(wres[0]**2+wres[1]**2)/2.)/(np.bincount(dp.exposure_index[measure_mask]))
+    # # ref2px_chi2_exposure = np.bincount(dp.exposure_index[measure_mask], weights=(wres[0]**2+wres[1]**2)/2.)/(np.bincount(dp.exposure_index[measure_mask])-(args.astro_degree+1)*(args.astro_degree+2))
 
-    ref2px_chi2_exposure[reference_index] = 0.
-    ref2px_chi2_exposure = np.pad(ref2px_chi2_exposure, (0, len(dp.exposure_set) - len(ref2px_chi2_exposure)), constant_values=np.nan)
+    # ref2px_chi2_exposure[reference_index] = 0.
+    # ref2px_chi2_exposure = np.pad(ref2px_chi2_exposure, (0, len(dp.exposure_set) - len(ref2px_chi2_exposure)), constant_values=np.nan)
 
-    df_ref2px_chi2_exposure = pd.DataFrame(data=ref2px_chi2_exposure, index=dp.exposure_set, columns=['chi2'])
-    df_ref2px_chi2_exposure.to_csv(lightcurve.astrometry_path.joinpath("ref2px_chi2_exposures.csv"), sep=",")
-    print(df_ref2px_chi2_exposure)
+    # df_ref2px_chi2_exposure = pd.DataFrame(data=ref2px_chi2_exposure, index=dp.exposure_set, columns=['chi2'])
+    # df_ref2px_chi2_exposure.to_csv(lightcurve.astrometry_path.joinpath("ref2px_chi2_exposures.csv"), sep=",")
+    # print(df_ref2px_chi2_exposure)
     return True
 
 
