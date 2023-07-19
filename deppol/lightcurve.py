@@ -423,54 +423,57 @@ class Lightcurve(_Lightcurve):
         with open(self.__path.joinpath("reference_exposure"), 'r') as f:
             return f.readline().strip()
 
-    def extract_exposure_catalog(self):
+    def extract_exposure_catalog(self, files_to_check=None, ignore_noprocess=False):
         exposures = []
-        for exposure in self.get_exposures():
+        for exposure in self.get_exposures(files_to_check=files_to_check, ignore_noprocess=ignore_noprocess):
             header = exposure.exposure_header
             exposure_dict = {}
             exposure_dict['name'] = exposure.name
-            exposure_dict['airmass'] = header['airmass']
-            exposure_dict['mjd'] = header['obsmjd']
-            exposure_dict['seeing'] = header['seeing']
-            exposure_dict['ha'] = header['hourangd'] #*15
-            exposure_dict['ha_15'] = 15.*header['hourangd']
+            exposure_dict['airmass'] = float(header['airmass'])
+            exposure_dict['mjd'] = float(header['obsmjd'])
+            exposure_dict['seeing'] = float(header['seeing'])
+            exposure_dict['ha'] = float(header['hourangd']) #*15
+            exposure_dict['ha_15'] = 15.*float(header['hourangd'])
             exposure_dict['lst'] = header['oblst']
-            exposure_dict['azimuth'] = header['azimuth']
-            exposure_dict['dome_azimuth'] = header['dome_az']
-            exposure_dict['elevation'] = header['elvation']
-            exposure_dict['z'] = 90. - header['elvation']
-            exposure_dict['telra'] = header['telrad']
-            exposure_dict['teldec'] = header['teldecd']
+            exposure_dict['azimuth'] = float(header['azimuth'])
+            exposure_dict['dome_azimuth'] = float(header['dome_az'])
+            exposure_dict['elevation'] = float(header['elvation'])
+            exposure_dict['z'] = 90. - float(header['elvation'])
+            exposure_dict['telra'] = float(header['telrad'])
+            exposure_dict['teldec'] = float(header['teldecd'])
 
-            exposure_dict['field'] = header['dbfield']
-            exposure_dict['ccdid'] = header['ccd_id']
-            exposure_dict['qid'] = header['amp_id']
-            exposure_dict['rcid'] = header['dbrcid']
+            exposure_dict['field'] = int(header['dbfield'])
+            exposure_dict['ccdid'] = int(header['ccd_id'])
+            exposure_dict['qid'] = int(header['amp_id'])
+            exposure_dict['rcid'] = int(header['dbrcid'])
 
-            exposure_dict['fid'] = header['dbfid']
+            exposure_dict['fid'] = int(header['dbfid'])
+            exposure_dict['filtercode'] = exposure.filterid
 
-            exposure_dict['temperature'] = header['tempture']
-            exposure_dict['head_temperature'] = header['headtemp']
+            exposure_dict['temperature'] = float(header['tempture'])
+            exposure_dict['head_temperature'] = float(header['headtemp'])
             exposure_dict['ccdtemp'] = float(header['ccdtmp{}'.format(str(header['ccd_id']).zfill(2))])
+            exposure_dict['exptime'] = float(header['exptime'])
+            exposure_dict['expid'] = int(header['dbexpid'])
 
-            exposure_dict['wind_speed'] = header['windspd']
-            exposure_dict['wind_dir'] = header['winddir']
-            exposure_dict['dewpoint'] = header['dewpoint']
-            exposure_dict['humidity'] = header['humidity']
-            exposure_dict['wetness'] = header['wetness']
-            exposure_dict['pressure'] = header['pressure']
+            exposure_dict['wind_speed'] = float(header['windspd'])
+            exposure_dict['wind_dir'] = float(header['winddir'])
+            exposure_dict['dewpoint'] = float(header['dewpoint'])
+            exposure_dict['humidity'] = float(header['humidity'])
+            exposure_dict['wetness'] = float(header['wetness'])
+            exposure_dict['pressure'] = float(header['pressure'])
 
-            exposure_dict['crpix1'] = header['crpix1']
-            exposure_dict['crpix2'] = header['crpix2']
-            exposure_dict['crval1'] = header['crval1']
-            exposure_dict['crval2'] = header['crval2']
-            exposure_dict['cd_11'] = header['cd1_1']
-            exposure_dict['cd_12'] = header['cd1_2']
-            exposure_dict['cd_21'] = header['cd2_1']
-            exposure_dict['cd_22'] = header['cd2_2']
+            exposure_dict['crpix1'] = float(header['crpix1'])
+            exposure_dict['crpix2'] = float(header['crpix2'])
+            exposure_dict['crval1'] = float(header['crval1'])
+            exposure_dict['crval2'] = float(header['crval2'])
+            exposure_dict['cd_11'] = float(header['cd1_1'])
+            exposure_dict['cd_12'] = float(header['cd1_2'])
+            exposure_dict['cd_21'] = float(header['cd2_1'])
+            exposure_dict['cd_22'] = float(header['cd2_2'])
 
-            exposure_dict['skylev'] = header['sexsky']
-            exposure_dict['sigma_skylev'] = header['sexsigma']
+            exposure_dict['skylev'] = float(header['sexsky'])
+            exposure_dict['sigma_skylev'] = float(header['sexsigma'])
 
             exposures.append(exposure_dict)
 

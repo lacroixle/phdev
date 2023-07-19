@@ -65,7 +65,7 @@ def smphot(lightcurve, logger, args):
     from utils import ListTable
 
     logger.info("Writing driver file")
-    exposures = lightcurve.get_exposures()
+    exposures = lightcurve.get_exposures(files_to_check='psfstars.list')
     reference_exposure = lightcurve.get_reference_exposure()
 
     logger.info("Reading SN1a parameters")
@@ -127,15 +127,17 @@ def smphot_plot(lightcurve, logger, args):
 
     logger.info("Running smphot plots")
     sn_flux_df = ListTable.from_filename(lightcurve.smphot_path.joinpath("lightcurve_sn.dat")).df
+    plot_path = lightcurve.smphot_path.joinpath("{}-{}_smphot_lightcurve.png".format(lightcurve.name, lightcurve.filterid))
 
     plt.errorbar(sn_flux_df['mjd'].to_numpy(), sn_flux_df['flux'].to_numpy(), yerr=sn_flux_df['varflux'].to_numpy(), fmt='.k')
     plt.xlabel("MJD")
     plt.ylabel("Flux")
     plt.title("Calibrated lightcurve - {}-{}".format(lightcurve.name, lightcurve.filterid))
     plt.grid()
-    plt.savefig(lightcurve.smphot_path.joinpath("{}-{}_smphot_lightcurve.png".format(lightcurve.name, lightcurve.filterid)), dpi=300)
+    plt.savefig(plot_path, dpi=300)
     plt.close()
 
+    logger.info("Plot can be found at: {}".format(plot_path))
     return True
 
 
@@ -337,7 +339,6 @@ def smphot_stars_plot(lightcurve, logger, args):
 
     cat_stars_df = lightcurve.get_ext_catalog(args.photom_cat)
     stars_df = pd.DataFrame(data={'m': solver.model.params.free, 'em': np.sqrt(solver.get_cov().diagonal()), 'starid': dp.star_map.keys(), 'chi2': star_chi2, 'mag': cat_calib_table.df['magg'].iloc[list(dp.star_map.keys())]})
-
 
     plt.subplots(figsize=(5., 5.))
     plt.suptitle("Fitted star magnitude vs external catalog ({})".format(args.photom_cat))

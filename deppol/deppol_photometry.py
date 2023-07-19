@@ -59,14 +59,17 @@ def photometry_fit(lightcurve, logger, args):
 
     matched_stars_df = matched_stars_df[['exposure', 'mag', 'emag', 'catid', 'cat_mag', 'cat_emag', 'colormag']]
 
+    matched_stars_df.dropna(inplace=True) # You never know...
+
     catids = list(set(matched_stars_df['catid']))
-    min_measurements = 2
+    min_measurements = max([2, int(0.05*len(list(set(matched_stars_df['exposure']))))])
     to_remove = [catid for catid in catids if len(matched_stars_df.loc[matched_stars_df['catid']==catid])<min_measurements]
     star_count = len(list(set(matched_stars_df['catid'])))
     matched_stars_df = matched_stars_df.set_index('catid').drop(index=to_remove).reset_index()
     logger.info("Removing {} stars (out of {}) with less than {} measurements.".format(len(to_remove), star_count, min_measurements))
+    logger.info("Total measurements={}".format(len(matched_stars_df)))
 
-    exposures_df = lightcurve.extract_exposure_catalog()
+    exposures_df = lightcurve.extract_exposure_catalog(files_to_check="match_catalogs.success")
     for column in ['mjd', 'airmass', 'rcid']:
         matched_stars_df[column] = exposures_df.loc[matched_stars_df['exposure'], column].to_numpy()
 
@@ -79,8 +82,7 @@ def photometry_fit(lightcurve, logger, args):
     make_index_from_list(dp, dp_index_list)
 
     refid = dp.exposure_map[lightcurve.get_reference_exposure()]
-    piedestal = 0.003
-    # piedestal = 0.
+    piedestal = 0.
 
     logger.info("Piedestal={}".format(piedestal))
 
@@ -90,8 +92,7 @@ def photometry_fit(lightcurve, logger, args):
         return RobustLinearSolver(model, dp.mag, weights=1./np.sqrt(dp.emag**2+piedestal**2))
 
     def _solve_model(solver):
-        solver.model.params.free = solver.robust_solution()
-        # dp.compress(~solver.bads)
+        solver.model.params.free = solver.robust_solution(local_param='star')
 
     def _filter_noisy_stars(solver, dp, threshold):
         logger.info("Removing noisy stars...")
@@ -119,6 +120,8 @@ def photometry_fit(lightcurve, logger, args):
 
         dp.compress(~noisy_measurements)
         logger.info("Filtered {} stars...".format(len(noisy_stars)))
+        logger.info("New star count={}".format(len(list(set(dp.catid)))))
+        logger.info("New measurement count={}".format(len(dp.nt)))
         return _build_model(dp)
 
     solver = _build_model(dp)

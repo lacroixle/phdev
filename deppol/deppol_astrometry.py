@@ -260,7 +260,7 @@ def astrometry_fit(lightcurve, logger, args):
     matched_stars_df['emag'] = 1.08*matched_stars_df['psfstars_eflux']/matched_stars_df['psfstars_flux']
 
     # Add exposure informations
-    exposures_df = lightcurve.extract_exposure_catalog()
+    exposures_df = lightcurve.extract_exposure_catalog(files_to_check="cat_indices.hd5")
     for column in exposures_df.columns:
         matched_stars_df[column] = exposures_df.loc[matched_stars_df['exposure'], column].to_numpy()
 
@@ -282,7 +282,6 @@ def astrometry_fit(lightcurve, logger, args):
                             axis='columns', inplace=True)
     matched_stars_df = matched_stars_df[['exposure', 'gaiaid', 'ra', 'dec', 'x', 'y', 'sx', 'sy', 'rhoxy', 'pmra', 'pmdec', 'cat_mag', 'cat_emag', 'mag', 'emag', 'bpmag', 'rpmag', 'mjd', 'seeing', 'z', 'ha', 'airmass', 'rcid']]
     matched_stars_df.dropna(inplace=True)
-    matched_stars_df.to_csv("out.csv")
     logger.info("N={}".format(len(matched_stars_df)))
     if args.astro_min_mag:
         logger.info("Filtering out faint stars (magnitude cut={} [mag])".format(args.astro_min_mag))
@@ -376,9 +375,6 @@ def astrometry_fit(lightcurve, logger, args):
     tp2px_exposure_df = pd.DataFrame(data=tp2px_chi2_exposure, index=list(dp.exposure_map.keys()), columns=['chi2'])
     tp2px_exposure_df.to_csv(lightcurve.astrometry_path.joinpath("tp2px_chi2.csv"), sep=",")
 
-    plt.plot(range(len(tp2px_chi2_exposure)), tp2px_chi2_exposure, '.')
-    plt.show()
-
     tp2px_model.pied = pied
 
     # Dump proper motion catalog
@@ -434,6 +430,8 @@ def astrometry_fit(lightcurve, logger, args):
                    'flux': "flux in image ADUs",
                    'pmx': "proper motion along x (pixels/day)",
                    'pmy': "proper motion along y (pixels/day)"}
+
+        df.dropna(inplace=True)
 
         pmcatalog_listtable = ListTable({'REFDATE': refmjd}, df, df_desc, "BaseStar 3 PmStar 1")
         pmcatalog_listtable.write_to(lightcurve.astrometry_path.joinpath("pmcatalog.list"))
@@ -515,26 +513,6 @@ def astrometry_fit(lightcurve, logger, args):
     with open(lightcurve.astrometry_path.joinpath("models.pickle"), 'wb') as f:
         pickle.dump({'tp2px': tp2px_model, 'ref2tp': ref2tp_model, 'ref2px': ref2px_model, 'dp': dp}, f)
 
-    # logger.info("Computing transformation chi2")
-
-    # gaiaid_in_ref = dp.gaiaid[dp.exposure_index == reference_index]
-    # measure_mask = np.where(dp.exposure_index != reference_index, np.isin(dp.gaiaid, gaiaid_in_ref), False)
-    # in_ref = np.hstack([np.where(gaiaid == gaiaid_in_ref) for gaiaid in dp.gaiaid[measure_mask]]).flatten()
-
-    # ref2px_residuals = ref2px_model.residuals(np.array([dp.x[dp.exposure_index==reference_index][in_ref], dp.y[dp.exposure_index==reference_index][in_ref]]),
-    #                                           np.array([dp.x[measure_mask], dp.y[measure_mask]]),
-    #                                           space_indices=dp.exposure_index[measure_mask]).flatten()
-
-    # # wres = np.array([ref2px_residuals[0]/dp.sx[measure_mask], ref2px_residuals[1]/dp.sy[measure_mask]])
-    # # ref2px_chi2_exposure = np.bincount(dp.exposure_index[measure_mask], weights=(wres[0]**2+wres[1]**2)/2.)/(np.bincount(dp.exposure_index[measure_mask]))
-    # # ref2px_chi2_exposure = np.bincount(dp.exposure_index[measure_mask], weights=(wres[0]**2+wres[1]**2)/2.)/(np.bincount(dp.exposure_index[measure_mask])-(args.astro_degree+1)*(args.astro_degree+2))
-
-    # ref2px_chi2_exposure[reference_index] = 0.
-    # ref2px_chi2_exposure = np.pad(ref2px_chi2_exposure, (0, len(dp.exposure_set) - len(ref2px_chi2_exposure)), constant_values=np.nan)
-
-    # df_ref2px_chi2_exposure = pd.DataFrame(data=ref2px_chi2_exposure, index=dp.exposure_set, columns=['chi2'])
-    # df_ref2px_chi2_exposure.to_csv(lightcurve.astrometry_path.joinpath("ref2px_chi2_exposures.csv"), sep=",")
-    # print(df_ref2px_chi2_exposure)
     return True
 
 
