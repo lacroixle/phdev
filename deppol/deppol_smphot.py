@@ -152,17 +152,29 @@ def _run_star_mklc(i, smphot_stars_folder, mapping_folder, driver_path):
 
 
 def smphot_stars(lightcurve, logger, args):
+    import itertools
     import pandas as pd
     from dask import delayed, compute
     import numpy as np
-    from utils import ListTable
+    from utils import ListTable, contained_in_exposure
     from astropy.coordinates import SkyCoord
     import astropy.units as u
+
+    ref_exposure = lightcurve.exposures[lightcurve.get_reference_exposure()]
 
     # Build calibration catalog
     cat_stars_df = lightcurve.get_ext_catalog(args.photom_cat)
 
-    cat_indices = list(set(pd.concat([exposure.get_catalog("cat_indices.hd5", key='ext_cat_indices')['indices'] for exposure in lightcurve.get_exposures(files_to_check="cat_indices.hd5")]).tolist()))
+    import matplotlib.pyplot as plt
+
+    # First list all calibration stars in the catalog
+    cat_indices = []
+    for exposure in lightcurve.get_exposures(files_to_check="cat_indices.hd5"):
+        ext_cat_inside = exposure.get_catalog("cat_indices.hd5", key='ext_cat_inside')
+        ext_cat_indices = exposure.get_catalog("cat_indices.hd5", key='ext_cat_indices')['indices']
+        cat_indices.extend(np.arange(len(ext_cat_inside))[ext_cat_inside][ext_cat_indices].tolist())
+
+    cat_indices = list(set(cat_indices))
     cat_stars_df = cat_stars_df.iloc[cat_indices]
 
     logger.info("Building calibration catalog using {}".format(args.photom_cat))
@@ -171,6 +183,7 @@ def smphot_stars(lightcurve, logger, args):
         calib_df['magi'] = calib_df['magr']
         calib_df['emagi'] = calib_df['emagr']
         calib_df.insert(2, column='n', value=1)
+
     elif args.photom_cat == 'ps1':
         cat_stars_df.dropna(subset=['gmag', 'rmag', 'imag', 'e_gmag', 'e_rmag', 'e_imag'], inplace=True)
         calib_df = cat_stars_df[['ra', 'dec', 'gmag', 'rmag', 'imag', 'e_gmag', 'e_rmag', 'e_imag']].rename(
@@ -182,10 +195,8 @@ def smphot_stars(lightcurve, logger, args):
     else:
         raise NotImplementedError
 
-
-
     # Filter stars by SN proximity (in some radius defined by --smphot-stars-radius) and magnitude
-    logger.info("Total star count: {}".format(len(calib_df)))
+    logger.info("Total star count={}".format(len(calib_df)))
 
     logger.info("Removing faint stars (mag>=20)")
     calib_df = calib_df.loc[calib_df['magg']<=20.]
@@ -193,7 +204,6 @@ def smphot_stars(lightcurve, logger, args):
     bright_calib_df = calib_df.loc[calib_df['magg']<=17.]
     logger.info(" {} bright stars".format(len(bright_calib_df)))
     calib_df = calib_df.loc[calib_df['magg']>17.]
-
 
     disc_radius = 0.5*u.deg
     sn_parameters = pd.read_hdf(args.lc_folder.joinpath("{}.hd5".format(lightcurve.name)), key='sn_info')
@@ -207,11 +217,20 @@ def smphot_stars(lightcurve, logger, args):
     logger.info("Total star count in a {} radius around SN: {} (excluding bright stars)".format(disc_radius, len(inside_calib_df)))
     calib_df = pd.concat([bright_calib_df, inside_calib_df])
     logger.info("Total stars: {}".format(len(calib_df)))
-    calib_table = ListTable(None, calib_df)
+
+    logger.info("Removing stars outside of the reference quadrant")
+    gaia_stars_skycoords = SkyCoord(ra=calib_df['ra'], dec=calib_df['dec'], unit='deg')
+    inside = ref_exposure.wcs.footprint_contains(gaia_stars_skycoords)
+    gaia_stars_skycoords = gaia_stars_skycoords[inside]
+    calib_df = calib_df.loc[inside]
+    logger.info("New star count={}".format(len(calib_df)))
+
 
     lightcurve.smphot_stars_path.mkdir(exist_ok=True)
 
     calib_df['ristar'] = list(range(len(calib_df)))
+
+    calib_table = ListTable(None, calib_df)
 
     stars_calib_cat_path = lightcurve.smphot_stars_path.joinpath("calib_stars_cat.list")
     smphot_stars_cat_path = lightcurve.smphot_stars_path.joinpath("smphot_stars_cat.list")
@@ -231,14 +250,15 @@ def smphot_stars(lightcurve, logger, args):
             calib_table.write_to(calib_stars_folder.joinpath("calib_stars_cat_{}.list".format(i)))
 
         logger.info("Submitting into scheduler")
-        jobs = [delayed(_run_star_mklc)(i, lightcurve.smphot_stars_path, lightcurve.mappings_path, lightcurve.path.joinpath("smphot_driver")) for i in list(range(n))]
-        compute(jobs)
+        # jobs = [delayed(_run_star_mklc)(i, lightcurve.smphot_stars_path, lightcurve.mappings_path, lightcurve.path.joinpath("smphot_driver")) for i in list(range(n))]
+        # compute(jobs)
         logger.info("Computation done, concatening catalogs")
 
         # Concatenate output catalog together
         #calib_cat_paths = [smphot_stars_folder.joinpath("smphot_stars_cat_{}.list".format(i)) for i in range(n)]
         calib_cat_paths = list(lightcurve.smphot_stars_path.glob("mklc_*/smphot_stars_cat_*.list"))
-        calib_cat_tables = [ListTable.from_filename(calib_cat_path) for calib_cat_path in calib_cat_paths]
+        calib_cat_tables = [ListTable.from_filename(calib_cat_path, delim_whitespace=False) for calib_cat_path in calib_cat_paths]
+        [calib_cat_table.write_csv() for calib_cat_table in calib_cat_tables]
 
         calib_cat_df = pd.concat([calib_cat_table.df for calib_cat_table in calib_cat_tables])
         calib_cat_len = sum([int(calib_cat_table.header['nstars']) for calib_cat_table in calib_cat_tables])
@@ -246,6 +266,8 @@ def smphot_stars(lightcurve, logger, args):
 
         calib_cat_table = ListTable(calib_cat_header, calib_cat_df)
         calib_cat_table.write_to(smphot_stars_cat_path)
+        print(smphot_stars_cat_path.with_suffix(".csv"))
+        calib_cat_table.write_to_csv(smphot_stars_cat_path.with_suffix(".csv"))
         logger.info("Done")
 
         logger.info("Deleting unuseful *.fits files...")
@@ -285,49 +307,44 @@ def smphot_stars_plot(lightcurve, logger, args):
     from saunerie.linearmodels import LinearModel, RobustLinearSolver
     # matplotlib.use('Agg')
 
-    smphot_stars_output = lightcurve.smphot_stars_path
-    calib_table = ListTable.from_filename(smphot_stars_output.joinpath("smphot_stars_cat.list"))
-    cat_calib_table = ListTable.from_filename(smphot_stars_output.joinpath("calib_stars_cat.list"))
-    calib_table.df.to_csv("calib.csv")
-    cat_calib_table.df.to_csv("cat_calib.csv")
+    smphot_stars_plot_output = lightcurve.smphot_stars_path.joinpath("plots")
+    smphot_stars_plot_output.mkdir(exist_ok=True)
 
-    stars_lc_df = calib_table.df[calib_table.df['flux'] >= 0.]
+    star_lc_folder = lightcurve.smphot_stars_path.joinpath("lc_plots")
+    star_lc_folder.mkdir(exist_ok=True)
+
+    calib_table = ListTable.from_filename(lightcurve.smphot_stars_path.joinpath("smphot_stars_cat.list"), delim_whitespace=False)
+    cat_calib_table = ListTable.from_filename(lightcurve.smphot_stars_path.joinpath("calib_stars_cat.list"))
+
     # Remove negative fluxes
-    stars_lc_df = stars_lc_df[stars_lc_df['flux']>=0.]
+    stars_lc_df = calib_table.df[calib_table.df['flux'] >= 0.]
+
     print("Removed {} negative fluxes".format(len(calib_table.df)-len(stars_lc_df)))
 
-
     # Create dataproxy
-    #piedestal = 0.0005
-    piedestal = 0.00015
+    piedestal = 0.
     stars_lc_df['m'] = -2.5*np.log10(stars_lc_df['flux'])
     stars_lc_df['em'] = np.abs(-2.5/np.log(10)*stars_lc_df['error']/stars_lc_df['flux'])
-    # stars_lc_df['em'] = np.sqrt(np.abs(-2.5/np.log(10)*stars_lc_df['error']/stars_lc_df['flux'])**2+piedestal)
-    #
-    # stars_lc_df = stars_lc_df.loc[stars_lc_df['m']<=-8.]
 
     dp = DataProxy(stars_lc_df[['m', 'em', 'star']].to_records(), m='m', em='em', star='star')
     dp.make_index('m')
     dp.make_index('star')
-    # w = 1./np.sqrt(dp.em**2+piedestal)
-    #w = 1./dp.em**2
-    w = 1./dp.em
+    w = 1./np.sqrt(dp.em**2+piedestal**2)
 
     model = LinearModel(list(range(len(dp.nt))), dp.star_index, np.ones_like(dp.m))
     solver = RobustLinearSolver(model, dp.m, weights=w)
     solver.model.params.free = solver.robust_solution()
 
-    star_lc_folder = smphot_stars_output.joinpath("lc_plots")
-    star_lc_folder.mkdir(exist_ok=True)
-
-    # mean_m = np.array([np.sum(stars_lc_df.loc[stars_lc_df['star']==star_index]['m']/stars_lc_df.loc[stars_lc_df['star']==star_index]['em']**2)/np.sum(1/stars_lc_df.loc[stars_lc_df['star']==star_index]['em']**2) for star_index in range(max(list(set(stars_lc_df['star'])))+1)])
-    # mean_m = np.nan_to_num(mean_m)
-    # stars_lc_df['mean_m'] = mean_m[stars_lc_df['star'].tolist()]
-    # stars_lc_df['res'] = (stars_lc_df['m'] - stars_lc_df['mean_m']).dropna(axis='rows')
     stars_lc_df['mean_m'] = solver.model.params.free[dp.star_index]
     stars_lc_df['res'] = solver.get_res(dp.m)
+    stars_lc_df['wres'] = stars_lc_df['res']*w
 
-    star_chi2 = np.bincount(dp.star_index, weights=1./np.abs(stars_lc_df['res']))/np.bincount(dp.star_index)
+    star_chi2 = np.bincount(dp.star_index, weights=stars_lc_df['wres']**2)/np.bincount(dp.star_index)
+    star_chi2 = np.hstack([star_chi2, np.zeros(stars_lc_df['star'].max()-len(star_chi2)+1)])
+
+    stars_lc_df['chi2'] = star_chi2[stars_lc_df['star']]
+    plt.plot(stars_lc_df['g'], stars_lc_df['res'], '.')
+    plt.show()
 
     # sigma_m = solver.get_diag_cov()
     cov = solver.get_cov()
@@ -366,7 +383,6 @@ def smphot_stars_plot(lightcurve, logger, args):
     plt.ylabel("$\\chi^2$")
     plt.show()
 
-    # res_min, res_max = stars_lc_df['res'].min(), stars_lc_df['res'].max()
     res_min, res_max = -0.5, 0.5
     x = np.linspace(res_min, res_max, 1000)
     m, s = norm.fit(stars_lc_df['res'])
@@ -385,6 +401,7 @@ def smphot_stars_plot(lightcurve, logger, args):
     plt.savefig(smphot_stars_output.joinpath("residual_dist.png"), dpi=300.)
     plt.close()
 
+
     plt.figure(figsize=(8., 4.))
     plt.suptitle("Measure incertitude vs sky level")
     ax = plt.gca()
@@ -399,6 +416,7 @@ def smphot_stars_plot(lightcurve, logger, args):
     plt.grid()
     plt.savefig(smphot_stars_output.joinpath("sky_var.png"), dpi=300.)
     plt.close()
+
 
     plt.figure(figsize=(8., 4.))
     plt.suptitle("PSF measured star magnitude vs sky level")

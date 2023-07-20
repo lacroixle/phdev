@@ -808,8 +808,6 @@ def match_catalogs(exposure, logger, args):
         hdfstore.put('cat_indices', pd.Series(cat_indices))
         hdfstore.put('ext_cat_inside', pd.Series(gaia_stars_inside))
 
-    matched_gaia_stars_df = gaia_stars_df.iloc[gaia_indices].reset_index(drop=True)
-
     return True
 
 

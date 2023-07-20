@@ -407,7 +407,7 @@ def read_list(f):
     return header, df
 
 
-def read_list_ext(f):
+def read_list_ext(f, delim_whitespace=True):
     # Extract global @ parameters
     header = {}
     line = f.readline().strip()
@@ -468,7 +468,10 @@ def read_list_ext(f):
 
         line = f.readline()
 
-    df = pd.read_csv(f, delim_whitespace=True, names=columns, index_col=False, skipinitialspace=True)
+    if delim_whitespace:
+        df = pd.read_csv(f, delim_whitespace=True, names=columns, index_col=False, skipinitialspace=True)
+    else:
+        df = pd.read_csv(f, sep=' ', names=columns, index_col=False, skipinitialspace=False)
 
     return header, df, df_desc, df_format
 
@@ -508,17 +511,23 @@ class ListTable:
         self.filename = filename
 
     @classmethod
-    def from_filename(cls, filename):
+    def from_filename(cls, filename, delim_whitespace=True):
         with open(filename, 'r') as f:
-            header, df, df_desc, df_format = read_list_ext(f)
+            header, df, df_desc, df_format = read_list_ext(f, delim_whitespace=delim_whitespace)
 
         return cls(header, df, df_desc, df_format, filename=filename)
 
     def write_to(self, filename):
         write_list(filename, self.header, self.df, self.df_desc, self.df_format)
 
+    def write_to_csv(self, filename):
+        self.df.to_csv(filename)
+
     def write(self):
         self.write_to(self.filename)
+
+    def write_csv(self):
+        self.write_to_csv(self.filename.with_suffix(".csv"))
 
 
 class BiPol2DModel():
