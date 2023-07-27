@@ -83,10 +83,11 @@ def smphot(lightcurve, logger, args):
                                                                                 sn_parameters['t_inf'].values[0],
                                                                                 sn_parameters['t_sup'].values[0],
                                                                                 lightcurve.name,
-                                                                                lightcurve.filterid))
+                                                                                lightcurve.filterid[1]))
         f.write("IMAGES\n")
-        for exposure in exposures:
-            f.write("{}\n".format(exposure.path))
+        # for exposure in exposures:
+        #     f.write("{}\n".format(exposure.path))
+        [f.write("{}\n".format(exposure.path)) for exposure in exposures if exposure.name != reference_exposure]
         f.write("PHOREF\n")
         f.write("{}\n".format(str(lightcurve.path.joinpath(reference_exposure))))
         f.write("PMLIST\n")
@@ -250,8 +251,8 @@ def smphot_stars(lightcurve, logger, args):
             calib_table.write_to(calib_stars_folder.joinpath("calib_stars_cat_{}.list".format(i)))
 
         logger.info("Submitting into scheduler")
-        # jobs = [delayed(_run_star_mklc)(i, lightcurve.smphot_stars_path, lightcurve.mappings_path, lightcurve.path.joinpath("smphot_driver")) for i in list(range(n))]
-        # compute(jobs)
+        jobs = [delayed(_run_star_mklc)(i, lightcurve.smphot_stars_path, lightcurve.mappings_path, lightcurve.path.joinpath("smphot_driver")) for i in list(range(n))]
+        compute(jobs)
         logger.info("Computation done, concatening catalogs")
 
         # Concatenate output catalog together
