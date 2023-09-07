@@ -7,6 +7,7 @@ def calib(lightcurve, logger, args):
     from croaks import DataProxy
     from saunerie.linearmodels import LinearModel, RobustLinearSolver, indic
     import numpy as np
+    import yaml
     from utils import make_index_from_list
 
     df = ListTable.from_filename(lightcurve.smphot_stars_path.joinpath("smphot_stars_cat.list"), delim_whitespace=False).df
@@ -31,6 +32,7 @@ def calib(lightcurve, logger, args):
     def _build_model(dp):
         model = indic(np.zeros(len(dp.nt), dtype=int), val=dp.colormag, name='color') + indic(np.zeros(len(dp.nt), dtype=int), name='zp')
         return RobustLinearSolver(model, dp.delta_mag, weights=1./dp.delta_mage)
+
     def _solve_model(solver):
         solver.model.params.free = solver.robust_solution()
 
@@ -47,22 +49,40 @@ def calib(lightcurve, logger, args):
     solver = _build_model(dp)
     _solve_model(solver)
 
-    print(solver.model.params)
-
     res = solver.get_res(dp.delta_mag)
     wres = res/dp.delta_mage
     chi2 = np.bincount(dp.star_index, weights=wres**2)/np.bincount(dp.star_index)
 
+    plot_path = lightcurve.path.joinpath("calib")
+    plot_path.mkdir(exist_ok=True)
 
-
-    plt.plot(chi2, '.')
+    plt.subplots(ncols=1, nrows=1, figsize=(5., 4.))
+    plt.plot(chi2, '.', color='black')
     plt.axhline(1.)
-    plt.show()
+    plt.grid()
+    plt.xlabel("Star ID")
+    plt.ylabel("$\chi^2$")
+    plt.savefig(plot_path.joinpath("chi2.png"), dpi=200.)
 
-    plt.plot(dp.mag, res, '.')
-    plt.show()
+    plt.subplots(ncols=1, nrows=1, figsize=(7., 4.))
+    plt.plot(dp.mag, res, ',', color='black')
+    plt.grid()
+    plt.xlabel("$m$ [AB mag]")
+    plt.ylabel("$y-y_\mathrm{model}$ [mag]")
+    plt.savefig(plot_path.joinpath("res.png"), dpi=200.)
 
-    with open(lightcurve.path.joinpath("zp"), 'w') as f:
-        f.write(str(solver.model.params['zp'].full[0]))
+    lightcurve_yaml = {}
+    if lightcurve.path.joinpath("lightcurve.yaml").exists():
+        with open(lightcurve.path.joinpath("lightcurve.yaml"), 'r') as f:
+            lightcurve_yaml = yaml.load(f, Loader=yaml.Loader)
+
+    if lightcurve_yaml is None:
+        lightcurve_yaml = {}
+
+    with open(lightcurve.path.joinpath("lightcurve.yaml"), 'w') as f:
+        lightcurve_yaml['calib'] = {'color': solver.model.params['color'].full[0].item(),
+                                    'zp': solver.model.params['zp'].full[0].item(),
+                                    'cov': solver.get_cov().todense().tolist()}
+        yaml.dump(lightcurve_yaml, f)
 
     return True
