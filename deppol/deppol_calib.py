@@ -49,12 +49,14 @@ def calib(lightcurve, logger, args):
     solver = _build_model(dp)
     _solve_model(solver)
 
-    res = solver.get_res(dp.delta_mag)
-    wres = res/dp.delta_mage
-    chi2 = np.bincount(dp.star_index, weights=wres**2)/np.bincount(dp.star_index)
+    res = solver.get_res(dp.delta_mag)[~solver.bads]
+    wres = res/dp.delta_mage[~solver.bads]
+    chi2 = np.bincount(dp.star_index[~solver.bads], weights=wres**2)/np.bincount(dp.star_index[~solver.bads])
 
     plot_path = lightcurve.path.joinpath("calib")
     plot_path.mkdir(exist_ok=True)
+
+    print(np.sum(wres**2), len(dp.nt[~solver.bads]), np.sum(wres**2)/len(dp.nt[~solver.bads]))
 
     plt.subplots(ncols=1, nrows=1, figsize=(5., 4.))
     plt.plot(chi2, '.', color='black')
@@ -65,7 +67,7 @@ def calib(lightcurve, logger, args):
     plt.savefig(plot_path.joinpath("chi2.png"), dpi=200.)
 
     plt.subplots(ncols=1, nrows=1, figsize=(7., 4.))
-    plt.plot(dp.mag, res, ',', color='black')
+    plt.plot(dp.mag[~solver.bads], res, ',', color='black')
     plt.grid()
     plt.xlabel("$m$ [AB mag]")
     plt.ylabel("$y-y_\mathrm{model}$ [mag]")
@@ -82,7 +84,11 @@ def calib(lightcurve, logger, args):
     with open(lightcurve.path.joinpath("lightcurve.yaml"), 'w') as f:
         lightcurve_yaml['calib'] = {'color': solver.model.params['color'].full[0].item(),
                                     'zp': solver.model.params['zp'].full[0].item(),
-                                    'cov': solver.get_cov().todense().tolist()}
+                                    'cov': solver.get_cov().todense().tolist(),
+                                    'chi2': np.sum(wres**2).item(),
+                                    'ndof': len(dp.nt[~solver.bads]),
+                                    'chi2/ndof': np.sum(wres**2).item()/len(dp.nt[~solver.bads])}
+
         yaml.dump(lightcurve_yaml, f)
 
     return True
