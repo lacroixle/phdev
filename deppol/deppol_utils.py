@@ -8,6 +8,7 @@ from collections.abc import Iterable
 import json
 import tarfile
 import shutil
+import yaml
 
 
 def run_and_log(cmd, logger=None, return_log=False):
@@ -110,3 +111,16 @@ def noprocess_quadrants(band_path):
 
     return noprocess
 
+
+def update_yaml(path, key, value):
+    _yaml = {}
+    if path.exists():
+        with open(path, 'r') as f:
+            _yaml = yaml.load(f, Loader=yaml.Loader)
+
+    if _yaml is None:
+        _yaml = {}
+
+    with open(path, 'w') as f:
+        _yaml[key] = value
+        yaml.dump(_yaml, f)
