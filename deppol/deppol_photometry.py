@@ -46,12 +46,21 @@ def photometry_fit(lightcurve, logger, args):
     logger.info("Building DataProxy")
 
     ext_cat_df = lightcurve.extract_star_catalog(['ps1'])
-    matched_stars_df = pd.concat([lightcurve.extract_star_catalog(['psfstars']),
-                                  ext_cat_df[['objID',
-                                              filtercode2extcatband['ps1'][lightcurve.filterid],
-                                              'e_{}'.format(filtercode2extcatband['ps1'][lightcurve.filterid])]]], axis='columns').drop(columns='cat_index').rename(columns={'objID': 'catid',
-                                                                                                                                                                             filtercode2extcatband['ps1'][lightcurve.filterid]: 'cat_mag',
-                                                                                                                                                                             'e_{}'.format(filtercode2extcatband['ps1'][lightcurve.filterid]): 'cat_emag'})
+    if args.photom_use_aper:
+        matched_stars_df = pd.concat([lightcurve.extract_star_catalog(['aperstars']),
+                                      ext_cat_df[['objID', filtercode2extcatband['ps1'][lightcurve.filterid], 'e_{}'.format(filtercode2extcatband['ps1'][lightcurve.filterid])]]], axis='columns')
+        matched_stars_df = matched_stars_df.drop(columns={'cat_index', 'flux', 'eflux').rename(columns={'objID': 'catid',
+                                                                                                        filtercode2extcatband['ps1'][lightcurve.filterid]: 'cat_mag',
+                                                                                                        'e_{}'.format(filtercode2extcatband['ps1'][lightcurve.filterid]): 'cat_emag'})
+        matched_stars_df.rename({'apfl6': 'flux', 'eapfl6': 'eflux'}, inplace=True)
+
+    else:
+        matched_stars_df = pd.concat([lightcurve.extract_star_catalog(['psfstars']),
+                                      ext_cat_df[['objID', filtercode2extcatband['ps1'][lightcurve.filterid], 'e_{}'.format(filtercode2extcatband['ps1'][lightcurve.filterid])]]], axis='columns')
+        matched_stars_df = matched_stars_df.drop(columns='cat_index').rename(columns={'objID': 'catid',
+                                                                                      filtercode2extcatband['ps1'][lightcurve.filterid]: 'cat_mag',
+                                                                                      'e_{}'.format(filtercode2extcatband['ps1'][lightcurve.filterid]): 'cat_emag'})
+
     matched_stars_df['mag'] = -2.5*np.log10(matched_stars_df['flux'])
     matched_stars_df['emag'] = 1.08*matched_stars_df['eflux']/matched_stars_df['flux']
     matched_stars_df['colormag'] = ext_cat_df['imag'] - ext_cat_df['gmag']

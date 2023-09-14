@@ -314,6 +314,7 @@ if __name__ == '__main__':
     argparser.add_argument('--recompute-ext-catalogs', action='store_true', help="(Debug) If set, external catalogs (such as Gaia, PS1) are recomputed.")
     argparser.add_argument('--footprints', type=pathlib.Path)
     argparser.add_argument('--starflats', action='store_true', help="Indicates we are processing starflats. This changes some behaviours in the pipeline (for example no PS1 catalog gets retrieved).")
+    argparser.add_argument('--photom-use-aper', action='store_true', help="Use aperture catalog for relative photometry.")
 
     logger = logging.getLogger("main")
     #logger.addHandler(logging.StreamHandler())
