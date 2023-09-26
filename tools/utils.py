@@ -172,6 +172,23 @@ def match_to_gaia(cat_df, cat_gaia_df):
     return cat_gaia_df.iloc[i[i>=0]].gaiaid
 
 
+def ps1_cat_remove_bad(df):
+    flags_bad = {'icrf_quasar': 4,
+                 'likely_qso': 8,
+                 'possible_qso': 16,
+                 'likely_rr_lyra': 32,
+                 'possible_rr_lyra': 64,
+                 'variable_chi2': 128,
+                 'suspect_object':536870912,
+                 'poor_quality': 1073741824}
+
+    flags_good = {'quality_measurement': 33554432,
+                  'quality_stack': 134217728}
+
+    df = df.loc[~(df['f_objID'] & sum(flags_bad.values())>0)]
+    return df.loc[(df['f_objID'] & sum(flags_good.values())>0)]
+
+
 def match_by_gaia_catalogs(cat1_df, cat2_df, cat1_gaia_df, cat2_gaia_df):
     cat1_gaia_df.set_index('gaiaid', inplace=True)
     cat2_gaia_df.set_index('gaiaid', inplace=True)
@@ -228,7 +245,6 @@ def get_wcs_from_quadrant(quadrant_path):
 
     hdr = get_header_from_quadrant_path(quadrant_path)
     return WCS(hdr)
-
 
 
 def get_mjd_from_quadrant_path(quadrant_path):

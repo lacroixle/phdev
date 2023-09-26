@@ -23,7 +23,6 @@ def calib(lightcurve, logger, args):
     dp_index_list = ['istar', 'cat_mag', 'cat_color']
 
     dp = DataProxy(df.to_records(), **kwargs)
-    print(dp.nt.dtype)
     make_index_from_list(dp, dp_index_list)
 
     def _build_model(dp):
@@ -52,8 +51,6 @@ def calib(lightcurve, logger, args):
 
     plot_path = lightcurve.path.joinpath("calib")
     plot_path.mkdir(exist_ok=True)
-
-    print(np.sum(wres[~solver.bads]**2), len(dp.nt[~solver.bads]), np.sum(wres[~solver.bads]**2)/len(dp.nt[~solver.bads]))
 
     plt.subplots(ncols=1, nrows=1, figsize=(5., 4.))
     plt.plot(chi2, '.', color='black')

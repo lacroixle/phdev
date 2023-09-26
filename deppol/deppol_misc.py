@@ -612,6 +612,12 @@ def retrieve_catalogs(lightcurve, logger, args):
     import pandas as pd
     import numpy as np
     from croaks.match import NearestNeighAssoc
+    import matplotlib
+    import matplotlib.pyplot as plt
+
+    from utils import ps1_cat_remove_bad
+
+    matplotlib.use('Agg')
 
     # Retrieve Gaia and PS1 catalogs
     exposures = lightcurve.get_exposures()
@@ -696,9 +702,14 @@ def retrieve_catalogs(lightcurve, logger, args):
 
             catalog_df.dropna(subset=['ra', 'dec'], inplace=True)
 
-            # Remove low detection counts PS1 objects
+            # Remove low detection counts PS1 objects, variable objects, possible non stars objects
             if name == 'ps1':
                 catalog_df = catalog_df.loc[catalog_df['Nd']>=30].reset_index(drop=True)
+                catalog_df = ps1_cat_remove_bad(catalog_df)
+                catalog_df = catalog_df.loc[catalog_df['gmag']-catalog_df['rmag']<=2.]
+                catalog_df = catalog_df.loc[catalog_df['gmag']-catalog_df['rmag']>=-1.]
+                catalog_df = catalog_df.loc[catalog_df['gmag']<=20.]
+
 
             if name == 'gaia':
                 # Change proper motion units
@@ -730,6 +741,19 @@ def retrieve_catalogs(lightcurve, logger, args):
 
     gaia_df = gaia_df.iloc[i[i>=0]].reset_index(drop=True)
     ps1_df = ps1_df.iloc[i>=0].reset_index(drop=True)
+
+    # Color-color plot
+    plt.subplots(figsize=(6., 6.))
+    plt.suptitle("Color-color plot of the PS1 catalog")
+    plt.scatter((ps1_df['gmag']-ps1_df['rmag']).to_numpy(), (ps1_df['rmag']-ps1_df['imag']).to_numpy(), c=ps1_df['gmag'], s=1.)
+    plt.xlabel("$g_\mathrm{PS1}-r_\mathrm{PS1}$ [mag]")
+    plt.ylabel("$r_\mathrm{PS1}-i_\mathrm{PS1}$ [mag]")
+    plt.axis('equal')
+    plt.grid()
+    plt.colorbar(label="$g_\mathrm{PS1}$ [mag]")
+    plt.tight_layout()
+    plt.savefig(lightcurve.ext_catalogs_path.joinpath("color_color.png"), dpi=300.)
+    plt.close()
 
     logger.info("Saving matched catalogs")
     gaia_df.to_parquet(lightcurve.ext_catalogs_path.joinpath("gaia.parquet"))

@@ -69,6 +69,7 @@ poloka_func.append({'reduce': deppol_smphot.smphot_plot})
 poloka_func.append({'reduce': deppol_smphot.smphot_stars})
 poloka_func.append({'reduce': deppol_smphot.smphot_stars_plot})
 poloka_func.append({'reduce': deppol_smphot.smphot_stars_constant})
+poloka_func.append({'reduce': deppol_smphot.smphot_flux_bias})
 
 
 import deppol_astrometry

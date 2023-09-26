@@ -142,25 +142,31 @@ class AstromModel():
     """
 
     """
-    def __init__(self, degree, exposure_count):
+    def __init__(self, degree, exposure_count, piedestal=0., full_cov=False):
         self.degree = degree
         self.params = self.init_params(exposure_count)
+        self.piedestal = piedestal
+        self.full_cov = full_cov
 
     def init_params(self, exposure_count):
         self.tp2px = compfuncs.BiPol2D(deg=self.degree, key='exposure', n=exposure_count)
         return fp.FitParameters(self.tp2px.get_struct())
 
     def sigma(self, dp):
-        return np.hstack((dp.sx, dp.sy))
+        return np.hstack((np.sqrt(dp.sx**2+self.piedestal**2), np.sqrt(dp.sy**2+self.piedestal**2)))
 
     def W(self, dp):
-        a = np.array([np.pad(-dp.rhoxy/dp.sx/dp.sy, (0, len(dp.nt))),
-                      np.hstack([1./dp.sx**2, 1./dp.sy**2]),
-                      np.pad(-dp.rhoxy/dp.sx/dp.sy, (len(dp.nt), 0))])
+        if not self.full_cov:
+            return sparse.dia_array((1./self.sigma(dp)**2, 0), shape=(2*len(dp.nt), 2*len(dp.nt)))
 
-        a *= np.hstack([1./(1.-dp.rhoxy**2)]*2)
+        else:
+            a = np.array([np.pad(-dp.rhoxy/dp.sx/dp.sy, (0, len(dp.nt))),
+                            np.hstack([1./dp.sx**2, 1./dp.sy**2]),
+                            np.pad(-dp.rhoxy/dp.sx/dp.sy, (len(dp.nt), 0))])
 
-        return dia_matrix((a, (-len(dp.nt), 0, len(dp.nt))), shape=(2*len(dp.nt), 2*len(dp.nt))).tocsc()
+            a *= np.hstack([1./(1.-dp.rhoxy**2)]*2)
+
+            return dia_matrix((a, (-len(dp.nt), 0, len(dp.nt))), shape=(2*len(dp.nt), 2*len(dp.nt))).tocsc()
 
     def __call__(self, x, pm, mjd, exposure_indices, jac=False):
         # Correct for proper motion in tangent plane
@@ -239,11 +245,14 @@ def astrometry_fit(lightcurve, logger, args):
     from croaks import DataProxy
     from utils import ztf_latitude, BiPol2D_fit, create_2D_mesh_grid, poly2d_to_file, ListTable
     from saunerie.plottools import binplot
+    from deppol_utils import update_yaml
 
-    # matplotlib.use('Agg')
+    matplotlib.use('Agg')
 
     lightcurve.astrometry_path.mkdir(exist_ok=True)
     lightcurve.mappings_path.mkdir(exist_ok=True)
+    astrometry_stats = {}
+    astrometry_stats['degree'] = args.astro_degree
 
     reference_exposure = lightcurve.get_reference_exposure()
     logger.info("Reference exposure: {}".format(reference_exposure))
@@ -280,13 +289,16 @@ def astrometry_fit(lightcurve, logger, args):
                              'gaia_e_Gmag': 'cat_emag',
                              'name': 'exposure'},
                             axis='columns', inplace=True)
-    matched_stars_df = matched_stars_df[['exposure', 'gaiaid', 'ra', 'dec', 'x', 'y', 'sx', 'sy', 'rhoxy', 'pmra', 'pmdec', 'cat_mag', 'cat_emag', 'mag', 'emag', 'bpmag', 'rpmag', 'mjd', 'seeing', 'z', 'ha', 'airmass', 'rcid']]
+    matched_stars_df = matched_stars_df[['exposure', 'gaiaid', 'ra', 'dec', 'x', 'y', 'sx', 'sy', 'rhoxy', 'pmra', 'pmdec', 'cat_mag', 'cat_emag', 'mag', 'emag', 'bpmag', 'rpmag', 'mjd', 'seeing', 'z', 'ha', 'airmass', 'rcid', 'gfseeing']]
     matched_stars_df.dropna(inplace=True)
     logger.info("N={}".format(len(matched_stars_df)))
     if args.astro_min_mag:
         logger.info("Filtering out faint stars (magnitude cut={} [mag])".format(args.astro_min_mag))
+        #matched_stars_df = matched_stars_df.loc[matched_stars_df['cat_mag']<=args.astro_min_mag]
         matched_stars_df = matched_stars_df.loc[matched_stars_df['mag']<=args.astro_min_mag]
         logger.info("N={}".format(len(matched_stars_df)))
+
+    astrometry_stats['min_mag'] = args.astro_min_mag
 
     # Computes covariance matrix
     matched_stars_df['sxy'] = matched_stars_df['sx']*matched_stars_df['sy']*matched_stars_df['rhoxy']
@@ -328,22 +340,15 @@ def astrometry_fit(lightcurve, logger, args):
     matched_stars_df['epmtpx'] = 0.
     matched_stars_df['epmtpy'] = 0.
 
-    # Do proper motion correction in tangent plane
-    #dT = matched_stars_df['mjd'] - gaiarefmjd
-    # matched_stars_df['tpx'] = matched_stars_df['tpx'] + matched_stars_df['pmtpx']*dT
-    # matched_stars_df['tpy'] = matched_stars_df['tpy'] + matched_stars_df['pmtpy']*dT
-
     matched_stars_df['color'] = matched_stars_df['bpmag'] - matched_stars_df['rpmag']
     matched_stars_df['centered_color'] = matched_stars_df['color'] - matched_stars_df['color'].mean()
 
-    # matched_stars_df = matched_stars_df.loc[matched_stars_df['exposure']==reference_exposure]
-    # matched_stars_df = matched_stars_df.iloc[:10]
     # Build dataproxy for model
     dp = DataProxy(matched_stars_df.to_records(),
                    x='x', sx='sx', sy='sy', y='y', sxy='sxy',rhoxy='rhoxy', ra='ra', dec='dec', exposure='exposure', mag='mag', cat_mag='cat_mag', gaiaid='gaiaid', mjd='mjd',
                    bpmag='bpmag', rpmag='rpmag', seeing='seeing', z='z', airmass='airmass', tpx='tpx', tpy='tpy', pmtpx='pmtpx', pmtpy='pmtpy',
                    parallactic_angle_x='parallactic_angle_x', parallactic_angle_y='parallactic_angle_y', color='color',
-                   centered_color='centered_color', rcid='rcid', pmra='pmra', pmdec='pmdec')
+                   centered_color='centered_color', rcid='rcid', pmra='pmra', pmdec='pmdec', gfseeing='gfseeing')
 
     dp.make_index('exposure')
     dp.make_index('gaiaid')
@@ -357,25 +362,36 @@ def astrometry_fit(lightcurve, logger, args):
     # Tangent space to pixel space
 
     # Build model
-    tp2px_model = AstromModel(args.astro_degree, len(dp.exposure_set))
+    piedestal = 0.05
+    tp2px_model = AstromModel(args.astro_degree, len(dp.exposure_set), piedestal=piedestal, full_cov=False)
 
     # Model fitting
     _fit_astrometry(tp2px_model, dp, logger)
 
     res = tp2px_model.residuals((dp.tpx, dp.tpy), (dp.x, dp.y), (dp.pmtpx, dp.pmtpy), dp.mjd, dp.exposure_index)
-    pied = 0.042
-    wres = (res/np.array([np.sqrt(dp.sx**2+pied**2), np.sqrt(dp.sy**2+pied**2)])).flatten()
+    # wres = (res/np.array([np.sqrt(dp.sx**2+piede**2), np.sqrt(dp.sy**2+pied**2)])).flatten()
+    # wres = (res/np.array([dp.sx, dp.sy])).flatten()
+    wres = res.flatten()/tp2px_model.sigma(dp)
     chi2 = np.sum(wres**2)
     ndof = (2*len(dp.nt)-len(lightcurve.exposures)*(args.astro_degree+1)*(args.astro_degree+2))
     print("Chi2={}".format(chi2))
     print("NDoF={}".format(ndof))
     print("Chi2/NDoF={}".format(chi2/ndof))
+    astrometry_stats['tp2px'] = {}
+    astrometry_stats['tp2px']['chi2'] = chi2.item()
+    astrometry_stats['tp2px']['ndof'] = ndof
+    astrometry_stats['tp2px']['chi2/ndof'] = chi2.item()/ndof
+    astrometry_stats['tp2px']['piedestal'] = piedestal
+    astrometry_stats['tp2px']['mu_x'] = np.mean(res[0]).item()
+    astrometry_stats['tp2px']['mu_y'] = np.mean(res[1]).item()
+    astrometry_stats['tp2px']['sigma_x'] = np.std(res[0]).item()
+    astrometry_stats['tp2px']['sigma_y'] = np.std(res[1]).item()
     tp2px_chi2_exposure = np.bincount(np.hstack([dp.exposure_index]*2), weights=wres**2)/(np.bincount(np.hstack([dp.exposure_index]*2))-2*(args.astro_degree+1)*(args.astro_degree+2))
 
     tp2px_exposure_df = pd.DataFrame(data=tp2px_chi2_exposure, index=list(dp.exposure_map.keys()), columns=['chi2'])
     tp2px_exposure_df.to_csv(lightcurve.astrometry_path.joinpath("tp2px_chi2.csv"), sep=",")
 
-    tp2px_model.pied = pied
+    tp2px_model.piedestal = piedestal
 
     # Dump proper motion catalog
     def _dump_pm_catalog():
@@ -441,7 +457,7 @@ def astrometry_fit(lightcurve, logger, args):
     # Pixel space to tangent space for reference exposure
     #
 
-    grid_res = 100
+    grid_res = 25
     def _ref2tp_polymodel(degree):
         logger.info("Reference exposure={}".format(reference_exposure))
         wcs = lightcurve.exposures[reference_exposure].wcs
@@ -477,8 +493,6 @@ def astrometry_fit(lightcurve, logger, args):
 
     logger.info("Transforming reference pixel space to exposures pixel space")
 
-    grid_res = 25
-
     # Point grid position in exposure (pixel) space
     grid_points_px = create_2D_mesh_grid(np.linspace(0., quadrant_width_px, grid_res), np.linspace(0., quadrant_height_px, grid_res)).T
 
@@ -513,6 +527,8 @@ def astrometry_fit(lightcurve, logger, args):
     with open(lightcurve.astrometry_path.joinpath("models.pickle"), 'wb') as f:
         pickle.dump({'tp2px': tp2px_model, 'ref2tp': ref2tp_model, 'ref2px': ref2px_model, 'dp': dp}, f)
 
+    update_yaml(lightcurve.path.joinpath("lightcurve.yaml"), 'astrometry', astrometry_stats)
+
     return True
 
 
@@ -538,7 +554,7 @@ def astrometry_fit_plot(lightcurve, logger, args):
     with open(lightcurve.astrometry_path.joinpath("models.pickle"), 'rb') as f:
         models = pickle.load(f)
 
-    def _show(filename, save_folder_path, plot_ext='.png'):
+    def _show(filename, plot_ext='.png'):
         plt.tight_layout()
         plt.savefig(save_folder_path.joinpath("{}{}".format(filename, plot_ext)), dpi=250.)
         plt.close()
@@ -598,8 +614,8 @@ def astrometry_fit_plot(lightcurve, logger, args):
     m, s = norm.fit(ref2px_residuals[1])
     plt.hist(ref2px_residuals[1], histtype='step', orientation='horizontal', density=True, bins='auto', color='black')
     plt.plot(norm.pdf(x, loc=m, scale=s), x, color='black')
-    plt.text(0.1, 0.8, "$\sigma={0:.4f}$".format(s), transform=ax.transAxes, fontsize=13)
-    plt.text(0.1, 0.77, "$\mu={0:.4f}$".format(m), transform=ax.transAxes, fontsize=13)
+    plt.text(0.1, 0.8, "$\sigma={0:.4f} [pixel]$".format(s), transform=ax.transAxes, fontsize=13)
+    plt.text(0.1, 0.77, "$\mu={0:.4f} [pixel]$".format(m), transform=ax.transAxes, fontsize=13)
     plt.ylim(lims)
     plt.grid()
     ax.set_xticklabels([])
@@ -609,8 +625,8 @@ def astrometry_fit_plot(lightcurve, logger, args):
     m, s = norm.fit(ref2px_residuals[0])
     plt.plot(x, norm.pdf(x, loc=m, scale=s), color='black')
     plt.hist(ref2px_residuals[0], histtype='step', density=True, bins='auto', color='black')
-    plt.text(0.75, 0.82, "$\sigma={0:.4f}$".format(s), transform=ax.transAxes, fontsize=13)
-    plt.text(0.75, 0.7, "$\mu={0:.4f}$".format(m), transform=ax.transAxes, fontsize=13)
+    plt.text(0.75, 0.82, "$\sigma={0:.4f} [pixel]$".format(s), transform=ax.transAxes, fontsize=13)
+    plt.text(0.75, 0.7, "$\mu={0:.4f}$ [pixel]".format(m), transform=ax.transAxes, fontsize=13)
     plt.xlim(lims)
     plt.grid()
     ax.set_xticklabels([])
@@ -618,8 +634,27 @@ def astrometry_fit_plot(lightcurve, logger, args):
 
     plt.subplot(2, 2, 4)
     plt.axis('off')
+    plt.tight_layout()
     _show("residuals_scatter")
     ################################################################################
+
+    ################################################################################
+    # Gaussian PSF flux bias distribution induced by astrometry imprecision
+    #
+
+    def gaussian_flux_bias(dx, dy, seeing):
+        return 0.25*(dx**2+dy**2)/seeing**2
+
+    plt.subplots(figsize=(6., 5.))
+    plt.suptitle("Gaussian PSF flux bias due to astrometry accuracy")
+    bin_counts, _, _ = plt.hist(100.*gaussian_flux_bias(ref2px_residuals[0], ref2px_residuals[1], dp.gfseeing[measure_mask]), bins='auto', range=[0., 0.5])
+    plt.text(0.105, 0.6*max(bin_counts), "Per mil level", rotation='vertical', fontsize='large', fontweight='bold')
+    plt.axvline(0.1, ls='--')
+    plt.xlim(0., 0.5)
+    plt.xlabel("$\\frac{\\Delta f}{f}$ [%]")
+    plt.ylabel("Count")
+    plt.grid()
+    _show("astro_psf_bias")
 
     ################################################################################
     # Residuals distributions
@@ -867,7 +902,7 @@ def astrometry_fit_plot(lightcurve, logger, args):
     #
     logger.info("Plotting control plots for the tp2px model")
     res = tp2px_model.residuals((dp.tpx, dp.tpy), (dp.x, dp.y), (dp.pmtpx, dp.pmtpy), dp.mjd, dp.exposure_index)
-    pied = 0.
+    pied = 0.05
     wres = res/np.array([np.sqrt(dp.sx**2+pied**2), np.sqrt(dp.sy**2+pied**2)])
     chi2 = np.sum(wres**2)
     ndof = (2*len(dp.nt)-len(lightcurve.exposures)*(args.astro_degree+1)*(args.astro_degree+2))
@@ -970,7 +1005,7 @@ def astrometry_fit_plot(lightcurve, logger, args):
     plt.axis('equal')
     plt.ylabel("$y-y_\\mathrm{model}$ [pixel]")
     plt.xlabel("$x-x_\\mathrm{model}$ [pixel]")
-    plt.legend(title="RCID")
+    plt.legend(title="RCID", markerscale=20.)
     plt.grid()
 
     plt.tight_layout()
@@ -1073,8 +1108,8 @@ def astrometry_fit_plot(lightcurve, logger, args):
     m, s = norm.fit(tp2px_residuals[1])
     plt.hist(tp2px_residuals[1], histtype='step', orientation='horizontal', density=True, bins='auto', color='black')
     plt.plot(norm.pdf(x, loc=m, scale=s), x, color='black')
-    plt.text(0.1, 0.8, "$\sigma={0:.4f}$".format(s), transform=ax.transAxes, fontsize=13)
-    plt.text(0.1, 0.77, "$\mu={0:.4f}$".format(m), transform=ax.transAxes, fontsize=13)
+    plt.text(0.1, 0.8, "$\sigma={0:.4f} [pixel]$".format(s), transform=ax.transAxes, fontsize=13)
+    plt.text(0.1, 0.77, "$\mu={0:.4f}$ [pixel]".format(m), transform=ax.transAxes, fontsize=13)
     plt.ylim(lims)
     plt.grid()
     ax.set_xticklabels([])
@@ -1084,8 +1119,8 @@ def astrometry_fit_plot(lightcurve, logger, args):
     m, s = norm.fit(tp2px_residuals[0])
     plt.plot(x, norm.pdf(x, loc=m, scale=s), color='black')
     plt.hist(tp2px_residuals[0], histtype='step', density=True, bins='auto', color='black')
-    plt.text(0.75, 0.82, "$\sigma={0:.4f}$".format(s), transform=ax.transAxes, fontsize=13)
-    plt.text(0.75, 0.7, "$\mu={0:.4f}$".format(m), transform=ax.transAxes, fontsize=13)
+    plt.text(0.75, 0.82, "$\sigma={0:.4f} [pixel]$".format(s), transform=ax.transAxes, fontsize=13)
+    plt.text(0.75, 0.7, "$\mu={0:.4f} [pixel]$".format(m), transform=ax.transAxes, fontsize=13)
     plt.xlim(lims)
     plt.grid()
     ax.set_xticklabels([])
@@ -1093,6 +1128,7 @@ def astrometry_fit_plot(lightcurve, logger, args):
 
     plt.subplot(2, 2, 4)
     plt.axis('off')
+    plt.tight_layout()
     plt.savefig(tp2px_save_folder_path.joinpath("residuals_scatter.png"), dpi=300.)
     plt.close()
     ################################################################################

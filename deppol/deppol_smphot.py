@@ -339,11 +339,15 @@ def smphot_stars_constant(lightcurve, logger, args):
     stars_df['cat_emag'] = cat_calib_table.df.iloc[stars_df['star']]['emag'+lightcurve.filterid[1]].tolist()
     stars_df['cat_color'] = (cat_calib_table.df.iloc[stars_df['star']]['magi'] - cat_calib_table.df.iloc[stars_df['star']]['magg']).tolist()
     stars_df['sigma_m'] = [stars_lc_df.loc[~stars_lc_df['bad']].loc[stars_lc_df.loc[~stars_lc_df['bad']]['star'] == star]['res'].std() for star in stars_df['star'].tolist()]
+    stars_df['ra'] = cat_calib_table.df.iloc[stars_df['star']]['ra']
+    stars_df['dec'] = cat_calib_table.df.iloc[stars_df['star']]['dec']
 
     stars_df.set_index('star', drop=True, inplace=True)
 
     stars_lc_df.to_parquet(lightcurve.smphot_stars_path.joinpath("stars_lightcurves.parquet"))
     stars_df.to_parquet(lightcurve.smphot_stars_path.joinpath("constant_stars.parquet"))
+
+    return True
 
 
 def smphot_stars_plot(lightcurve, logger, args):
@@ -358,7 +362,7 @@ def smphot_stars_plot(lightcurve, logger, args):
     from scipy import stats
     from croaks import DataProxy
     from saunerie.linearmodels import LinearModel, RobustLinearSolver
-    # matplotlib.use('Agg')
+    matplotlib.use('Agg')
 
     smphot_stars_plot_output = lightcurve.smphot_stars_path.joinpath("plots")
     smphot_stars_plot_output.mkdir(exist_ok=True)
@@ -408,19 +412,19 @@ def smphot_stars_plot(lightcurve, logger, args):
     plt.savefig(lightcurve.smphot_stars_path.joinpath("repeatability_mag_zoomin.png"), dpi=300.)
     plt.close()
 
-
-    return
-
     # plt.hist(stars_df['m'], bins=15)
     # plt.xlabel("$m$ [mag]")
     # plt.ylabel("Count")
     # plt.show()
 
-    # plt.plot(stars_df['m'].to_numpy(), stars_df['chi2'].to_numpy(), '.')
-    # plt.grid()
-    # plt.xlabel("$m$ [mag]")
-    # plt.ylabel("$\\chi^2$")
-    # plt.show()
+    plt.subplots(figsize=(8., 5.))
+    plt.suptitle("$\chi^2$ / $m$")
+    plt.plot(stars_df['cat_mag'].to_numpy(), stars_df['chi2'].to_numpy(), '.')
+    plt.grid()
+    plt.xlabel("$m$ [AB mag]")
+    plt.ylabel("$\\chi^2$")
+    plt.savefig(lightcurve.smphot_stars_path.joinpath("mag_chi2.png"), dpi=300.)
+    plt.close()
 
     # res_min, res_max = -0.5, 0.5
     # x = np.linspace(res_min, res_max, 1000)
@@ -485,18 +489,18 @@ def smphot_stars_plot(lightcurve, logger, args):
     # plt.close()
 
 
-    # plt.figure(figsize=(8., 4.))
-    # ax = plt.gca()
-    # ax.tick_params(which='both', direction='in')
-    # ax.xaxis.set_minor_locator(AutoMinorLocator())
-    # ax.yaxis.set_minor_locator(AutoMinorLocator())
-    # plt.plot(stars_lc_df['m'].to_numpy(), stars_lc_df['em'].to_numpy(), ',', color='black')
-    # plt.ylim(0., 0.3)
-    # plt.xlabel("$m$ [mag]")
-    # plt.ylabel("$\\sigma_m$")
-    # plt.grid()
-    # plt.savefig(smphot_stars_output.joinpath("mag_var.png"), dpi=300.)
-    # plt.close()
+    plt.figure(figsize=(8., 4.))
+    ax = plt.gca()
+    ax.tick_params(which='both', direction='in')
+    ax.xaxis.set_minor_locator(AutoMinorLocator())
+    ax.yaxis.set_minor_locator(AutoMinorLocator())
+    plt.plot(stars_df['cat_mag'].to_numpy(), stars_df['em'].to_numpy(), '.', color='black')
+    plt.ylim(0., 0.03)
+    plt.xlabel("$m$ [AB mag]")
+    plt.ylabel("$\\sigma_\hat{m}$")
+    plt.grid()
+    plt.savefig(lightcurve.smphot_stars_path.joinpath("mag_var.png"), dpi=300.)
+    plt.close()
 
 
     # plt.figure(figsize=(8., 5.))
@@ -638,3 +642,77 @@ def smphot_stars_plot(lightcurve, logger, args):
         plt.close()
 
     return True
+
+
+def smphot_flux_bias(lightcurve, logger, args):
+    import pickle
+    import numpy as np
+    import pandas as pd
+    from utils import ListTable, match_pixel_space
+    from croaks.match import NearestNeighAssoc
+    import matplotlib.pyplot as plt
+
+    exposures = lightcurve.get_exposures()
+    smp_stars_df = ListTable.from_filename(lightcurve.smphot_stars_path.joinpath("smphot_stars_cat.list")).df
+    with open(lightcurve.astrometry_path.joinpath("models.pickle"), 'rb') as f:
+        astro_models = pickle.load(f)
+        tp2px_model = astro_models['tp2px']
+        astro_dp = astro_models['dp']
+
+
+    smp_stars_df = pd.read_parquet(lightcurve.smphot_stars_path.joinpath("constant_stars.parquet")).dropna(subset=['ra', 'dec'])
+    tp2px_residuals = tp2px_model.residuals(np.array([astro_dp.tpx, astro_dp.tpy]), np.array([astro_dp.x, astro_dp.y]), np.array([astro_dp.pmtpx, astro_dp.pmtpy]), astro_dp.mjd, exposure_indices=astro_dp.exposure_index)
+    astro_stars = {}
+    for gaiaid in astro_dp.gaiaid_map.keys():
+        star_mask = (astro_dp.gaiaid == gaiaid)
+        sigma_x = np.std(tp2px_residuals[0][star_mask])
+        sigma_y = np.std(tp2px_residuals[1][star_mask])
+        cat_mag = astro_dp.cat_mag[star_mask][0]
+        astro_stars[gaiaid] = {'sx': sigma_x, 'sy': sigma_y, 'ra': np.mean(astro_dp.ra[star_mask]), 'dec': np.mean(astro_dp.dec[star_mask]), 'cat_mag': cat_mag}
+
+    astro_stars_df = pd.DataFrame.from_dict(data=astro_stars, orient='index')
+
+    assoc = NearestNeighAssoc(first=[astro_stars_df['ra'].to_numpy(), astro_stars_df['dec'].to_numpy()], radius = 1./60./60.)
+    i = assoc.match(smp_stars_df['ra'].to_numpy(), smp_stars_df['dec'].to_numpy())
+
+    astro_stars_df = astro_stars_df.iloc[i[i>=0]].reset_index(drop=True)
+    smp_stars_df = smp_stars_df.iloc[i>=0].reset_index(drop=True)
+
+    plt.subplots(nrows=1, ncols=2, figsize=(10., 5.))
+    plt.suptitle("Astrometry repeatability as a function of star magnitude (Gaia $G$ band)")
+    plt.subplot(1, 2, 1)
+    plt.plot(astro_stars_df['cat_mag'].to_numpy(), astro_stars_df['sx'], '.')
+    plt.ylim(0., 0.2)
+    plt.xlabel("G [mag]")
+    plt.ylabel("$\sqrt{x-x_\mathrm{model}}$")
+    plt.grid()
+
+    plt.subplot(1, 2, 2)
+    plt.plot(astro_stars_df['cat_mag'].to_numpy(), astro_stars_df['sy'], '.')
+    plt.ylim(0., 0.2)
+    plt.xlabel("G [mag]")
+    plt.ylabel("$\sqrt{y-y_\mathrm{model}}$")
+    plt.grid()
+
+    plt.tight_layout()
+    plt.savefig(lightcurve.smphot_stars_path.joinpath("astro_repeatability.png"), dpi=300.)
+    plt.close()
+
+    plt.subplots(nrows=1, ncols=1, figsize=(15., 7.))
+    plt.subplot(1, 2, 1)
+    # plt.plot(astro_stars_df.sample(frac=1)['sx'].to_numpy(), smp_stars_df.sample(frac=1)['sigma_m'].to_numpy(),  '.')
+    plt.plot(astro_stars_df['sx'].to_numpy(), smp_stars_df['sigma_m'].to_numpy(),  '.')
+    plt.xlabel("Astrometry precision - $x$ axis [pixel]")
+    plt.ylabel("Photometry repeatability [mag]")
+    plt.grid()
+
+    plt.subplot(1, 2, 2)
+    # plt.plot(astro_stars_df.sample(frac=1)['sy'].to_numpy(), smp_stars_df.sample(frac=1)['sigma_m'].to_numpy(),  '.') #
+    plt.plot(astro_stars_df['sy'].to_numpy(), smp_stars_df['sigma_m'].to_numpy(),  '.')
+    plt.xlabel("Astrometry precision - $y$ axis [pixel]")
+    plt.ylabel("Photometry repeatability [mag]")
+    plt.grid()
+
+    plt.tight_layout()
+    plt.savefig(lightcurve.smphot_stars_path.joinpath("astro_smp_flux_bias.png"), dpi=300.)
+    plt.close()

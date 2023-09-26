@@ -30,6 +30,7 @@ def _dump_photoratios(model, dp, y_model, bads, reference_exposure, save_folder_
 
 
 def photometry_fit(lightcurve, logger, args):
+    from deppol_utils import update_yaml
     import pandas as pd
     from croaks import DataProxy
     from utils import filtercode2extcatband, make_index_from_list, filtercode2extcatband
@@ -39,6 +40,8 @@ def photometry_fit(lightcurve, logger, args):
     import matplotlib.pyplot as plt
     matplotlib.use('Agg')
 
+    photometry_stats = {}
+
     save_folder_path = lightcurve.photometry_path
     save_folder_path.mkdir(exist_ok=True)
     lightcurve.mappings_path.mkdir(exist_ok=True)
@@ -47,14 +50,16 @@ def photometry_fit(lightcurve, logger, args):
 
     ext_cat_df = lightcurve.extract_star_catalog(['ps1'])
     if args.photom_use_aper:
+        photometry_stats['cat'] = 'aper'
         matched_stars_df = pd.concat([lightcurve.extract_star_catalog(['aperstars']),
                                       ext_cat_df[['objID', filtercode2extcatband['ps1'][lightcurve.filterid], 'e_{}'.format(filtercode2extcatband['ps1'][lightcurve.filterid])]]], axis='columns')
-        matched_stars_df = matched_stars_df.drop(columns={'cat_index', 'flux', 'eflux').rename(columns={'objID': 'catid',
+        matched_stars_df = matched_stars_df.drop(columns={'cat_index', 'flux', 'eflux'}).rename(columns={'objID': 'catid',
                                                                                                         filtercode2extcatband['ps1'][lightcurve.filterid]: 'cat_mag',
                                                                                                         'e_{}'.format(filtercode2extcatband['ps1'][lightcurve.filterid]): 'cat_emag'})
-        matched_stars_df.rename({'apfl6': 'flux', 'eapfl6': 'eflux'}, inplace=True)
+        matched_stars_df.rename(columns={'apfl4': 'flux', 'eapfl4': 'eflux'}, inplace=True)
 
     else:
+        photometry_stats['cat'] = 'psf'
         matched_stars_df = pd.concat([lightcurve.extract_star_catalog(['psfstars']),
                                       ext_cat_df[['objID', filtercode2extcatband['ps1'][lightcurve.filterid], 'e_{}'.format(filtercode2extcatband['ps1'][lightcurve.filterid])]]], axis='columns')
         matched_stars_df = matched_stars_df.drop(columns='cat_index').rename(columns={'objID': 'catid',
@@ -70,6 +75,8 @@ def photometry_fit(lightcurve, logger, args):
 
     matched_stars_df.dropna(inplace=True) # You never know...
 
+    photometry_stats['initial_measurements'] = len(matched_stars_df)
+
     catids = list(set(matched_stars_df['catid']))
     min_measurements = max([2, int(0.05*len(list(set(matched_stars_df['exposure']))))])
     to_remove = [catid for catid in catids if len(matched_stars_df.loc[matched_stars_df['catid']==catid])<min_measurements]
@@ -77,6 +84,9 @@ def photometry_fit(lightcurve, logger, args):
     matched_stars_df = matched_stars_df.set_index('catid').drop(index=to_remove).reset_index()
     logger.info("Removing {} stars (out of {}) with less than {} measurements.".format(len(to_remove), star_count, min_measurements))
     logger.info("Total measurements={}".format(len(matched_stars_df)))
+
+    photometry_stats['removed_stars'] = len(to_remove)
+    photometry_stats['final_measurements'] = len(matched_stars_df)
 
     exposures_df = lightcurve.extract_exposure_catalog(files_to_check="match_catalogs.success")
     for column in ['mjd', 'airmass', 'rcid']:
@@ -94,6 +104,7 @@ def photometry_fit(lightcurve, logger, args):
     piedestal = 0.
 
     logger.info("Piedestal={}".format(piedestal))
+    photometry_stats['piedestal'] = piedestal
 
     def _build_model(dp):
         model = indic(dp.catid_index, name='star') + indic(dp.exposure_index, name='zp')
@@ -131,10 +142,22 @@ def photometry_fit(lightcurve, logger, args):
         logger.info("Filtered {} stars...".format(len(noisy_stars)))
         logger.info("New star count={}".format(len(list(set(dp.catid)))))
         logger.info("New measurement count={}".format(len(dp.nt)))
+
+        photometry_stats['filtered_stars'] = len(noisy_stars)
+
         return _build_model(dp)
+
 
     solver = _build_model(dp)
     _solve_model(solver)
+
+    res = solver.get_res(dp.mag)
+    wres = res/dp.emag
+
+    photometry_stats['unfiltered'] = {}
+    photometry_stats['unfiltered']['chi2'] = np.sum(wres[~solver.bads]**2).item()
+    photometry_stats['unfiltered']['ndof'] = len(dp.nt[~solver.bads])
+    photometry_stats['unfiltered']['chi2/ndof'] = np.sum(wres[~solver.bads]**2).item()/len(dp.nt[~solver.bads])
 
     y_model = solver.model()
     with open(save_folder_path.joinpath("unfiltered_model.pickle"), 'wb') as f:
@@ -144,12 +167,21 @@ def photometry_fit(lightcurve, logger, args):
 
     _solve_model(new_solver)
 
+    res = new_solver.get_res(dp.mag)
+    wres = res/dp.emag
+
+    photometry_stats['filtered'] = {}
+    photometry_stats['filtered']['chi2'] = np.sum(wres[~new_solver.bads]**2).item()
+    photometry_stats['filtered']['ndof'] = len(dp.nt[~new_solver.bads])
+    photometry_stats['filtered']['chi2/ndof'] = np.sum(wres[~new_solver.bads]**2).item()/len(dp.nt[~new_solver.bads])
     y_new_model = new_solver.model()
     with open(save_folder_path.joinpath("filtered_model.pickle"), 'wb') as f:
         pickle.dump([new_solver.model, dp, new_solver.bads, new_solver.get_cov(), new_solver.get_res(dp.mag), y_new_model, piedestal], f)
 
     logger.info("Computing photometric ratios")
     _dump_photoratios(new_solver.model, dp, y_new_model, new_solver.bads, lightcurve.get_reference_exposure(), lightcurve.mappings_path)
+
+    update_yaml(lightcurve.path.joinpath("lightcurve.yaml"), 'photometry', photometry_stats)
 
     return True
 
@@ -160,8 +192,9 @@ def photometry_fit_plot(lightcurve, logger, args):
     import matplotlib.pyplot as plt
     from scipy.stats import norm
     from saunerie.plottools import binplot
-    from utils import idx2markerstyle, filtercode2extcatband, extcat2colorstr
-    # matplotlib.use('Agg')
+    from utils import idx2markerstyle, filtercode2extcatband, extcat2colorstr, quadrant_name_explode
+    from ztfquery.fields import ccdid_qid_to_rcid
+    matplotlib.use('Agg')
 
     from utils import idx2markerstyle
 
@@ -193,6 +226,7 @@ def photometry_fit_plot(lightcurve, logger, args):
         stars_df['emag'] = sqrtcovdiag[model.params['star'].indexof()]
         stars_df['chi2'] = np.bincount(dp.catid_index, weights=wres**2)/(np.bincount(dp.catid_index)-1)
         stars_df['count'] = np.bincount(dp.catid_index)
+        stars_df['sigma_mag'] = [np.std(res[dp.catid==catid]) for catid in dp.catid_set]
 
         stars_df.set_index('catid', drop=True, inplace=True)
 
@@ -207,10 +241,14 @@ def photometry_fit_plot(lightcurve, logger, args):
         stars_df['color'] = stars_df['imag'] - stars_df['gmag']
 
         zp_df = pd.DataFrame({'exposure': list(dp.exposure_map.keys())})
+        zp_df['expid'] = list(dp.exposure_map.values())
         zp_df['zp'] = model.params['zp'].full
         zp_df['ezp'] = sqrtcovdiag[model.params['zp'].indexof()]
         zp_df['chi2'] = np.bincount(dp.exposure_index, weights=wres**2)/(np.bincount(dp.exposure_index)-1)
         zp_df['count'] = np.bincount(dp.exposure_index)
+        zp_df['qid'] = list(map(lambda x: x[6], [quadrant_name_explode(exposure_name) for exposure_name in dp.exposure_map.keys()]))
+        zp_df['ccdid'] = list(map(lambda x: x[5], [quadrant_name_explode(exposure_name) for exposure_name in dp.exposure_map.keys()]))
+        zp_df['rcid'] = ccdid_qid_to_rcid(zp_df['ccdid'].to_numpy(), zp_df['qid'].to_numpy())
 
         exposures_df = lightcurve.extract_exposure_catalog()
         for column in ['mjd', 'airmass', 'rcid', 'skylev', 'seeing']:
@@ -226,9 +264,14 @@ def photometry_fit_plot(lightcurve, logger, args):
         # Measurements per stars
         plt.subplots(figsize=(7., 5.))
         plt.suptitle("Measurement count per stars")
-        plt.plot(stars_df['mag'].to_numpy(), stars_df['count'].to_numpy(), '.')
-        plt.xlabel("$m$ [mag]")
+        plt.plot(stars_df['cat_mag'].to_numpy(), stars_df['count'].to_numpy(), '.', color='black')
+        for i, rcid_row in enumerate(rcid_df.iterrows()):
+            rcid = rcid_row[0]
+            plt.axhline(len(zp_df.loc[zp_df['rcid']==rcid]), label="{} - {}".format(rcid, len(zp_df.loc[zp_df['rcid']==rcid])), lw=3., color='C{}'.format(i))
+        plt.legend(title="RCID - Count")
+        plt.xlabel("$m$ [AB mag]")
         plt.ylabel("Measurement count")
+        plt.grid()
         _show("stars_measurement_count")
 
         # ZP measurement count as a function of seeing
@@ -330,29 +373,56 @@ def photometry_fit_plot(lightcurve, logger, args):
 
         plt.subplots(figsize=(7., 5.))
         plt.suptitle("Star magnitude residuals to PS1 compared to color")
-        plt.plot(stars_df['color'].to_numpy(), (stars_df['mag'].to_numpy()-stars_df['cat_mag'].to_numpy())-(stars_df['mag'].to_numpy()-stars_df['gmag'].to_numpy()).mean(), '.')
+        plt.plot(stars_df['color'].to_numpy(), (stars_df['mag'].to_numpy()-stars_df['cat_mag'].to_numpy())-(stars_df['mag'].to_numpy()-stars_df['cat_mag'].to_numpy()).mean(), '.')
         plt.xlabel("Color - $m_i-m_g$ [mag]")
         plt.ylabel("$m-m_\\mathrm{PS1}-\\left<m-m_\\mathrm{PS1}\\right>$ [mag]")
         plt.grid()
         _show("star_mag_res_ps1_color")
+
+        plt.subplots(figsize=(7., 5.))
+        plt.suptitle("Star magnitude residuals to PS1 compared to PS1 mag")
+        # plt.scatter(stars_df['cat_mag'].to_numpy(), (stars_df['mag'].to_numpy()-stars_df['cat_mag'].to_numpy())-(stars_df['mag'].to_numpy()-stars_df['cat_mag'].to_numpy()).mean(), s=5, c=stars_df['color'])
+        plt.scatter(stars_df['cat_mag'].to_numpy(), (stars_df['mag'].to_numpy()-stars_df['cat_mag'].to_numpy()), s=5, c=stars_df['color'])
+        plt.xlabel("$m_\mathrm{PS1}$ [AB mag]")
+        plt.ylabel("$m-m_\\mathrm{PS1}-\\left<m-m_\\mathrm{PS1}\\right>$ [mag]")
+        plt.colorbar()
+        plt.grid()
+        _show("star_mag_res_ps1_mag")
 
         # Star magnitude vs repetability
         plt.subplots(nrows=2, ncols=1, figsize=(10., 6.))
         plt.suptitle("Star AB magnitude $m$ compared to its repetability")
 
         plt.subplot(2, 1, 1)
-        plt.plot(stars_df['cat_mag'].to_numpy(), stars_df['emag'].to_numpy(), '.')
+        plt.plot(stars_df['cat_mag'].to_numpy(), stars_df['sigma_mag'].to_numpy(), '.')
         plt.xlabel("$m$ [mag]")
         plt.ylabel("$\\sigma_m$ [mag]")
         plt.grid()
 
         plt.subplot(2, 1, 2)
-        plt.plot(stars_df['cat_mag'].to_numpy(), stars_df['emag'].to_numpy(), '.')
+        plt.plot(stars_df['cat_mag'].to_numpy(), stars_df['sigma_mag'].to_numpy(), '.')
         plt.xlabel("$m$ [mag]")
         plt.ylabel("$\\sigma_m$ [mag]")
-        plt.ylim(0., 0.01)
+        plt.ylim(0., 0.05)
         plt.grid()
         _show("star_repetability")
+
+        plt.subplots(nrows=2, ncols=1, figsize=(10., 6.))
+        plt.suptitle("Star AB magnitude $m$ compared to its error on the magnitude")
+
+        plt.subplot(2, 1, 1)
+        plt.scatter(stars_df['cat_mag'].to_numpy(), stars_df['emag'].to_numpy(), s=5., c=stars_df['count'].to_numpy().astype(float))
+        plt.xlabel("$m$ [mag]")
+        plt.ylabel("$\\sigma_\hat{m}$ [mag]")
+        plt.grid()
+
+        plt.subplot(2, 1, 2)
+        plt.scatter(stars_df['cat_mag'].to_numpy(), stars_df['emag'].to_numpy(), s=5., c=stars_df['count'].to_numpy().astype(float))
+        plt.xlabel("$m$ [mag]")
+        plt.ylabel("$\\sigma_\hat{m}$ [mag]")
+        plt.ylim(0., 0.02)
+        plt.grid()
+        _show("star_mag_error")
 
         # ZP distribution
         plt.hist(zp_df['zp'].to_numpy(), bins=40, histtype='step', color='black')
@@ -370,10 +440,20 @@ def photometry_fit_plot(lightcurve, logger, args):
         plt.ylabel("$\\chi^2$")
         _show("zp_chi2")
 
+        # eZP / expid, color=qid
+        plt.subplots(figsize=(7., 5.))
+        plt.suptitle("ZP compared to mjd")
+        plt.scatter(zp_df['expid'].to_numpy(), zp_df['ezp'].to_numpy(), s=5., c=zp_df['qid'])
+        plt.grid()
+        plt.colorbar(cmap='jet')
+        plt.xlabel("MJD")
+        plt.ylabel("ZP [mag]")
+        _show("ezp_expid")
+
         # ZP / mjd
         plt.subplots(figsize=(7., 5.))
         plt.suptitle("ZP compared to mjd")
-        plt.plot(zp_df['mjd'].to_numpy(), zp_df['zp'].to_numpy(), '.')
+        plt.plot(zp_df['mjd'].to_numpy(), zp_df['ezp'].to_numpy(), '.')
         plt.grid()
         plt.xlabel("MJD")
         plt.ylabel("ZP [mag]")

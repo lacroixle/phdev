@@ -166,6 +166,7 @@ class Exposure(_Exposure):
         if pm_correction:
             obsmjd = self.mjd
             if cat_name == 'gaia':
+                ext_cat_df.fillna(0., inplace=True)
                 ext_cat_df['ra'] = ext_cat_df['ra']+(obsmjd-j2000mjd)*ext_cat_df['pmRA']
                 ext_cat_df['dec'] = ext_cat_df['dec']+(obsmjd-j2000mjd)*ext_cat_df['pmDE']
             elif cat_name == 'ps1':
@@ -432,6 +433,7 @@ class Lightcurve(_Lightcurve):
             exposure_dict['airmass'] = float(header['airmass'])
             exposure_dict['mjd'] = float(header['obsmjd'])
             exposure_dict['seeing'] = float(header['seeing'])
+            exposure_dict['gfseeing'] = float(header['gfseeing'])
             exposure_dict['ha'] = float(header['hourangd']) #*15
             exposure_dict['ha_15'] = 15.*float(header['hourangd'])
             exposure_dict['lst'] = header['oblst']
