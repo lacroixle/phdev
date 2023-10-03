@@ -230,6 +230,7 @@ def photometry_fit_plot(lightcurve, logger, args):
 
         stars_df.set_index('catid', drop=True, inplace=True)
 
+
         ps1_df = lightcurve.get_ext_catalog('ps1', matched=False)
         ps1_df = ps1_df.drop_duplicates('objID').set_index('objID', drop=True)
 
@@ -239,6 +240,8 @@ def photometry_fit_plot(lightcurve, logger, args):
         stars_df['cat_mag'] = ps1_df[filtercode2extcatband['ps1'][lightcurve.filterid]]
 
         stars_df['color'] = stars_df['imag'] - stars_df['gmag']
+
+        stars_df.to_parquet(lightcurve.photometry_path.joinpath("psf_constant_stars.parquet"))
 
         zp_df = pd.DataFrame({'exposure': list(dp.exposure_map.keys())})
         zp_df['expid'] = list(dp.exposure_map.values())

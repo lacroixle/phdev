@@ -2,21 +2,14 @@
 
 
 def psf_study(exposure, logger, args):
-    from utils import ListTable, match_pixel_space, quadrant_size_px
     import numpy as np
     from saunerie.plottools import binplot
-    from scipy.stats import norm
-    import matplotlib
-    import matplotlib.pyplot as plt
-    import pickle
-    from matplotlib.ticker import MultipleLocator, FormatStrFormatter, AutoMinorLocator
+    from yaml import dump
     from numpy.polynomial.polynomial import Polynomial
-    # matplotlib.use('Agg')
 
     if not exposure.path.joinpath("psfstars.list").exists():
         return True
 
-    # psf_resid = ListTable.from_filename(quadrant_path.joinpath("psf_resid_tuple.dat"))
     psf_stars_df = exposure.get_matched_catalog('psfstars')
     aper_stars_df = exposure.get_matched_catalog('aperstars')
     gaia_stars_df = exposure.get_matched_ext_catalog('gaia')
@@ -52,6 +45,7 @@ def psf_study(exposure, logger, args):
     d_mag_binned = np.array(d_mag_binned)[bin_mask]
     ed_mag_binned = ed_mag_binned[bin_mask]
 
+
     poly0, ([poly0_chi2], _, _, _) = Polynomial.fit(gmag_binned, d_mag_binned, 0, w=1./ed_mag_binned, full=True)
     poly1, ([poly1_chi2], _, _, _) = Polynomial.fit(gmag_binned, d_mag_binned, 1, w=1./ed_mag_binned, full=True)
     poly2, ([poly2_chi2], _, _, _) = Polynomial.fit(gmag_binned, d_mag_binned, 2, w=1./ed_mag_binned, full=True)
@@ -60,551 +54,46 @@ def psf_study(exposure, logger, args):
     poly1_chi2 = poly1_chi2/(len(gmag_binned)-2)
     poly2_chi2 = poly2_chi2/(len(gmag_binned)-3)
 
-    # plt.subplots(ncols=1, nrows=2, figsize=(10., 6.), sharex=True)
-    # plt.suptitle("Skewness of stars as a function of magnitude")
-    # plt.subplot(2, 1, 1)
-    # plt.plot(gaia_stars_df['Gmag'].to_numpy(), aper_stars_df['gmx3'].to_numpy(), '.')
-    # plt.grid()
-    # plt.axhline(0.)
-    # plt.ylabel("$M_x^3$")
-    # plt.subplot(2, 1, 2)
-    # plt.plot(gaia_stars_df['Gmag'].to_numpy(), aper_stars_df['gmy3'].to_numpy(), '.')
-    # plt.grid()
-    # plt.axhline()
-    # plt.ylabel("$M_y^3$")
-    # plt.xlabel("$m_\\mathrm{Gaia}$ [mag]")
-    # plt.show()
-
-    mag_space = np.linspace(min_mag, max_mag, 100)
-
-    plt.figure()
-    plt.subplots(ncols=1, nrows=1, figsize=(10., 6.))
-    plt.suptitle("{}\n{}\nSky level={}ADU".format(exposure.name, poly0_chi2-poly2_chi2, exposure.exposure_header['sexsky']))
-    plt.plot(gaia_stars_df['Gmag'].to_numpy(), d_mag, '.')
-    plt.plot(mag_space, poly0(mag_space))
-    plt.plot(mag_space, poly2(mag_space))
-    plt.ylabel("$m_\\mathrm{Aper}-m_\\mathrm{PSF}$ [mag]")
-    plt.xlabel("$m_\\mathrm{Gaia}$ [mag]")
-    plt.xlim(13., 21.)
-    plt.ylim(-2., 2.)
-    plt.grid()
-    plt.show()
-
-    with open(exposure.path.joinpath("psfskewness.pickle"), 'wb') as f:
-        pickle.dump(f, {'exposure': exposure.name,
-                        'poly0_chi2': poly0_chi2,
-                        'poly1_chi2': poly1_chi2,
-                        'poly2_chi2': poly2_chi2,
-                        'skylev': exposure.exposure_header['sexsky']})
-
-    return True
-    # psf_residuals_px = (psf_resid.df['fimg'] - psf_resid.df['fpsf']).to_numpy()
-
-    subx = 4
-    suby = 1
-
-    # Fit order 2 polynomials on skewness/mag relation
-    def _fit_skewness_subquadrants(axis, sub):
-        ranges = np.linspace(0., quadrant_size_px[axis], sub+1)
-        skew_polynomials = []
-        for i in range(sub):
-            range_mask = (stand_stars_df['y'] >= ranges[i]) & (stand_stars_df['y'] < ranges[i+1])
-            skew_polynomials.append(np.polynomial.Polynomial.fit(stand_stars_df.loc[range_mask]['mag'], stand_stars_df.loc[range_mask]['gm{}3'.format(axis)], 1))
-
-        return skew_polynomials
-
-    skew_polynomial_x = np.polynomial.Polynomial.fit(stand_stars_df['mag'], stand_stars_df['gmx3'], 1)
-    skew_polynomial_y = np.polynomial.Polynomial.fit(stand_stars_df['mag'], stand_stars_df['gmy3'], 1)
-
-    skew_polynomial_subx = _fit_skewness_subquadrants('x', subx)
-    skew_polynomial_suby = _fit_skewness_subquadrants('y', suby)
-
-    with open(exposure.path.joinpath("stamp_skewness.pickle"), 'wb') as f:
-        pickle.dump({'poly_x': skew_polynomial_x, 'poly_y': skew_polynomial_y,
-                     'poly_x_sub': skew_polynomial_subx, 'poly_y_sub': skew_polynomial_suby}, f)
-
-    plt.figure(figsize=(7., 7.))
-    ax = plt.axes()
-    ax.tick_params(which='both', direction='in')
-    ax.xaxis.set_minor_locator(AutoMinorLocator())
-    ax.yaxis.set_minor_locator(AutoMinorLocator())
-    plt.grid(linestyle='--', color='xkcd:sky blue')
-    plt.suptitle("Skewness plane for standalone stars stamps in \n {}".format(quadrant_path.name))
-    plt.scatter(stand_stars_df['gmx3'], stand_stars_df['gmy3'], s=2., color='black')
-    plt.xlabel("$M^g_{xxx}$")
-    plt.ylabel("$M^g_{yyy}$")
-    plt.axvline(0.)
-    plt.axhline(0.)
-    plt.axvline(skew_polynomial_x.coef[0], ls='--')
-    plt.axhline(skew_polynomial_y.coef[0], ls='--')
-    plt.axis('equal')
-    plt.savefig(quadrant_path.joinpath("{}_mx3_my3_plane.png".format(quadrant_path.name)), dpi=300.)
-    plt.close()
-
-    plt.subplots(ncols=1, nrows=2, sharex=True, figsize=(10., 5.))
-    plt.suptitle("Skewness vs magnitude for standalone stars stamps in {}".format(quadrant_path.name))
-
-    ax = plt.subplot(2, 1, 1)
-    ax.tick_params(which='both', direction='in')
-    ax.xaxis.set_minor_locator(AutoMinorLocator())
-    ax.yaxis.set_minor_locator(AutoMinorLocator())
-    plt.grid(linestyle='--', color='xkcd:sky blue')
-    plt.scatter(stand_stars_df['mag'], stand_stars_df['gmx3'], s=2.)
-    # plt.plot(mag, skew_polynomial_x(mag), color='black')
-    plt.axhline(0.)
-    # plt.ylim(-0.5, 0.3)
-    # plt.xlim(-15., -7)
-    plt.ylabel("$M^g_{xxx}$")
-
-    ax = plt.subplot(2, 1, 2)
-    ax.tick_params(which='both', direction='in')
-    ax.xaxis.set_minor_locator(AutoMinorLocator())
-    ax.yaxis.set_minor_locator(AutoMinorLocator())
-    plt.grid(linestyle='--', color='xkcd:sky blue')
-    plt.scatter(stand_stars_df['mag'], stand_stars_df['gmy3'], s=2.)
-    # plt.plot(mag, skew_polynomial_y(mag), color='black')
-    plt.axhline(0.)
-    plt.xlabel("$m$")
-    # plt.ylim(-0.3, 0.3)
-    # plt.xlim(-15., -6)
-    plt.ylabel("$M^g_{yyy}$")
-
-    plt.savefig(exposure.path.joinpath("{}_skewness_magnitude.png".format(quadrant_path.name)), dpi=300.)
-    plt.close()
-    return
-
-    # star_indices = match_pixel_space(psf_stars_df[['x', 'y']].to_records(), psf_resid_df[['xc', 'yc']].rename(mapper={'xc': 'x', 'yc': 'y'}, axis='columns').to_records())
-    # psf_size = int(np.sqrt(sum(star_indices==0)))
-    # psf_residuals = np.zeros([len(psf_stars.df), psf_size*psf_size])
-    # for star_index in range(len(np.bincount(star_indices))):
-    #     star_mask = (star_indices==star_index)
-    #     ij = (psf_resid.df.iloc[star_mask]['j']*psf_size + psf_resid.df.iloc[star_mask]['i'] + int(np.floor(psf_size**2/2))).to_numpy()
-    #     np.put_along_axis(psf_residuals[star_index], ij, psf_residuals_px[star_mask], 0)
-
-    # psf_residuals = psf_residuals.reshape(len(psf_stars.df), psf_size, psf_size)
-
-    # bins_count = 5
-    # mag_range = (psf_stars.df['mag'].min(), psf_stars.df['mag'].max())
-    # bins = np.linspace(*mag_range, bins_count+1)
-    # psf_residual_means = []
-    # psf_residual_count = []
-    # for i in range(bins_count):
-    #     lower_bound = bins[i]
-    #     upper_bound = bins[i+1]
-
-    #     binned_stars_mask = np.all([psf_stars.df['mag'] < upper_bound, psf_stars.df['mag'] >= lower_bound], axis=0)
-    #     psf_residual_means.append(np.mean(psf_residuals[binned_stars_mask], axis=0))
-    #     psf_residual_count.append(sum(binned_stars_mask))
-
-    # plt.subplots(ncols=bins_count, nrows=1, figsize=(5.*bins_count, 5.))
-    # plt.suptitle("Binned PSF residuals for {}".format(quadrant_path.name))
-    # for i, psf_residual_mean in enumerate(psf_residual_means):
-    #     plt.subplot(1, bins_count,  1+i)
-    #     plt.imshow(psf_residual_mean)
-    #     plt.axis('off')
-    #     plt.title("${0:.2f} \leq m < {1:.2f}$\n$N={2}$".format(bins[i], bins[i+1], psf_residual_count[i]))
-
-    # plt.savefig(quadrant_path.joinpath("{}_psf_residuals.png".format(quadrant_path.name)))
-    # plt.close()
-    # plt.subplots(ncols=2, nrows=1, sharex=True, sharey=True)
-    # # plt.subplot(1, 2, 1)
-    # # plt.scatter(stand.df['gmx3'], stand.df['gmy3'], c=stand.df['x'], s=2.)
-    # # plt.axvline(0.)
-    # # plt.axhline(0.)
-
-    # # plt.subplot(1, 2, 2)
-    # # plt.scatter(stand.df['gmx3'], stand.df['gmy3'], c=stand.df['y'], s=2.)
-    # # plt.axvline(0.)
-    # # plt.axhline(0.)
-    # # plt.show()
-
-    # plt.subplot(2, 2, 1)
-    # plt.scatter(stand.df['mag'], stand.df['gmx3'], c=stand.df['x'], s=1.)
-    # plt.axhline(0.)
-    # plt.subplot(2, 2, 2)
-    # plt.scatter(stand.df['mag'], stand.df['gmy3'], c=stand.df['x'])
-    # plt.axhline(0.)
-    # plt.subplot(2, 2, 3)
-    # plt.scatter(stand.df['mag'], stand.df['gmx3'], c=stand.df['y'])
-    # plt.axhline(0.)
-    # plt.subplot(2, 2, 4)
-    # plt.scatter(stand.df['mag'], stand.df['gmy3'], c=stand.df['y'])
-    # plt.axhline(0.)
-    # plt.show()
-
-    # psf_resid.df.to_csv("psf_resid_tuple.csv", sep=",")
-    # psf_tuple.df.to_csv("psftuple.csv", sep=",")
-    # psf_stars.df.to_csv("psfstars.csv", sep=",")
-
-
-    # psf_resid.df['flux'] = psf_stars.df['flux'].iloc[idx].reset_index(drop=True)
-    # psf_resid.df['eflux'] = psf_stars.df['eflux'].iloc[idx].reset_index(drop=True)
-
-    # limits = [np.min(res), np.max(res)]
-    # f = np.linspace(*limits, 200)
-    # s = np.var(res)
-    # m = np.mean(res)
-    # print(np.sqrt(s))
-    # print(m)
-
-    # plt.hist(res, bins=1000, density=True)
-    # plt.plot(f, norm.pdf(f, loc=m, scale=np.sqrt(s)))
-    # plt.xlim(limits)
-    # plt.show()
-
-    # plt.plot(psf_resid.df['flux'], psf_resid.df['eflux']/psf_resid.df['flux'], '.')
-    # plt.show()
-
-    # plt.subplots(nrows=2, ncols=1, figsize=(10., 5.), sharex=True)
-    # plt.subplot(2, 1, 1)
-    # binned_mag, plot_res, res_dispersion = binplot(psf_resid.df['flux'].to_numpy(), psf_resid.df['fimg'] - psf_resid.df['fpsf'], nbins=10, data=True, rms=True, scale=False)
-
-    # plt.ylabel("res")
-    # plt.grid()
-
-    # plt.subplot(2, 1, 2)
-    # plt.plot(binned_mag, res_dispersion, color='black')
-    # plt.xlabel("Flux [ADU]")
-    # plt.ylabel("$\sigma_\\mathrm{res}$")
-    # plt.grid()
-
-    # plt.show()
+    with open(exposure.path.joinpath("psfskewness.yaml"), 'w') as f:
+        dump({'poly0_chi2': poly0_chi2.item(),
+              'poly1_chi2': poly1_chi2.item(),
+              'poly2_chi2': poly2_chi2.item()}, f)
 
     return True
 
-
-def psf_study_reduce(band_path, ztfname, filtercode, logger, args):
-    import numpy as np
+def psf_study_reduce(lightcurve, logger, args):
     import pandas as pd
-    from deppol_utils import quadrants_from_band_path
-    from utils import get_header_from_quadrant_path, ListTable
-    import matplotlib
-    import matplotlib.pyplot as plt
-    from matplotlib.ticker import MultipleLocator, FormatStrFormatter, AutoMinorLocator
-    from utils import idx2markerstyle, plot_ztf_focal_plan_values
-    import itertools
-    import pickle
-    from astropy import time
-    from matplotlib.cm import ScalarMappable
-    from matplotlib.colorbar import Colorbar
-    # matplotlib.use('Agg')
+    from yaml import load, Loader
 
-    output_path = band_path.joinpath("psf_study")
-    output_path.mkdir(exist_ok=True)
+    exposures = lightcurve.get_exposures(files_to_check='psfskewness.yaml')
+    headers = lightcurve.extract_exposure_catalog(files_to_check='psfskewness.yaml')
 
-    # Compare seeing computed by sextractor vs the one computed by the ZTF pipeline
-    quadrant_paths = quadrants_from_band_path(band_path, logger, check_files="psfstars.list", ignore_noprocess=False)
+    psfskewness_list = []
+    for exposure in exposures:
+        with open(exposure.path.joinpath("psfskewness.yaml"), 'r') as f:
+            psfskewness = load(f, Loader=Loader)
 
-    #chi2_df = pd.read_csv(band_path.joinpath("astrometry/ref2px_plots/chi2_quadrants.csv"), index_col=0)
+        header = headers.loc[exposure.name]
 
-    # def _extract_seeing(quadrant_path):
-    #     hdr = get_header_from_quadrant_path(quadrant_path)
-    #     if quadrant_path.name in chi2_df.index.tolist():
-    #         chi2 = chi2_df.at[quadrant_path.name, 'chi2']
-    #     else:
-    #         chi2 = float('nan')
+        d = {'quadrant': exposure.name,
+             'poly0_chi2': psfskewness['poly0_chi2'],
+             'poly1_chi2': psfskewness['poly1_chi2'],
+             'poly2_chi2': psfskewness['poly2_chi2'],
+             'airmass': header['airmass'],
+             'mjd': header['mjd'],
+             'seeing': header['seeing'],
+             'gfseeing': header['gfseeing'],
+             'field': header['field'],
+             'ccdid': header['ccdid'],
+             'qid': header['qid'],
+             'rcid': header['rcid'],
+             'filtercode': header['filtercode'],
+             'skylev': header['skylev']}
 
-    #     psfstars_list = ListTable.from_filename(quadrant_path.joinpath("psfstars.list"))
-    #     return 2.355*hdr['gfseeing'], hdr['seeing'], len(psfstars_list.df), chi2
+        psfskewness_list.append(d)
 
-    # seeings = np.array(list(map(_extract_seeing, quadrant_paths))).T
-
-    def _extract_skewness(quadrant_path):
-        hdr = get_header_from_quadrant_path(quadrant_path)
-        with open(quadrant_path.joinpath("stamp_skewness.pickle"), 'rb') as f:
-            poly = pickle.load(f)
-            poly_x = poly['poly_x']
-            poly_y = poly['poly_y']
-            poly_x_sub = poly['poly_x_sub']
-            poly_y_sub = poly['poly_y_sub']
-
-        #out_dict = {'mjd': hdr['obsmjd'], 'quadrant_id': "{}_{}".format(hdr['ccdid'], hdr['qid'])}
-        out_dict = {'mjd': hdr['obsmjd'], 'ccdid': int(hdr['ccdid']), 'qid': int(hdr['qid']), 'rcid': int(hdr['rcid']),
-                    'sky': hdr['sexsky'], 'skysigma': hdr['sexsigma'], 'gfseeing': hdr['gfseeing'], 'seeing': hdr['seeing']}
-
-        out_dict.update(dict(('x{}'.format(i), coef) for i, coef in enumerate(poly_x.coef)))
-        out_dict.update(dict(('y{}'.format(i), coef) for i, coef in enumerate(poly_y.coef)))
-        out_dict.update({'x1_sub': [poly.coef[1] for poly in poly_x_sub],
-                         'y1_sub': [poly.coef[1] for poly in poly_y_sub]})
-
-        return out_dict
-
-    skewness_df = pd.DataFrame(list(map(_extract_skewness, quadrant_paths)))
-    cmap = 'coolwarm'
-
-    unique_mjds = list(set(skewness_df['mjd']))
-    xskewness = dict([(mjd, dict([(i+1, dict([(j, None) for j in range(4)])) for i in range(16)])) for mjd in unique_mjds])
-    yskewness = dict([(mjd, dict([(i+1, dict([(j, None) for j in range(4)])) for i in range(16)])) for mjd in unique_mjds])
-
-    for mjd in unique_mjds:
-        skewness_today_df = skewness_df.loc[skewness_df['mjd']==mjd]
-        for row in skewness_today_df.iterrows():
-            # Dirty
-            row = row[1]
-            ccdid = int(row['ccdid'])
-            qid = int(row['qid'])
-
-            xskewness[mjd][ccdid][qid-1] = np.tile(np.array(row['x1_sub']), (len(row['x1_sub']), 1))
-            yskewness[mjd][ccdid][qid-1] = np.tile(np.array(row['y1_sub']), (len(row['y1_sub']), 1))
-
-    def _plot_focal_plane_skewness(x, vmin, vmax):
-        cm = ScalarMappable(cmap=cmap)
-        cm.set_clim(vmin=vmin, vmax=vmax)
-
-        if x == 'x1':
-            skewness = xskewness
-        elif x == 'y1':
-            skewness = yskewness
-
-        for mjd in unique_mjds:
-            t = time.Time(mjd, format='mjd')
-            fig = plt.figure(figsize=(5., 6.), constrained_layout=True)
-            f1, f2 = fig.subfigures(ncols=1, nrows=2, height_ratios=[8., 1.])
-            plot_ztf_focal_plan_values(f1, skewness[mjd], vmin=vmin, vmax=vmax, cmap=cmap)
-            ax = f2.add_subplot()
-            Colorbar(ax, cm, orientation='horizontal', label="${}_{}$".format(x[0], x[1]))
-            fig.suptitle("Focal plane skewness in ${}$ direction the {}".format(x[0], t.to_value('iso', subfmt='date')), fontsize='large')
-            plt.savefig(output_path.joinpath("{}_focal_plane_{}skewness.png".format(t.to_value('iso', subfmt='date'), x[0])), dpi=300.)
-            plt.close()
-
-    sharedscale = False
-    center = True
-    if sharedscale:
-        vmin, vmax = np.min([skewness_df['x1'], skewness_df['y1']]), np.max([skewness_df['x1'], skewness_df['y1']])
-        xvmin = vmin
-        xvmax = vmax
-        yvmin = vmin
-        yvmax = vmax
-    else:
-        xvmin, xvmax = np.min(skewness_df['x1']), np.max(skewness_df['x1'])
-        yvmin, yvmax = np.min(skewness_df['y1']), np.max(skewness_df['y1'])
-
-    if center:
-        if sharedscale:
-            m = max(np.abs(vmin), np.abs(vmax))
-            xvmin = -m
-            xvmax = m
-            yvmin = -m
-            yvmax = m
-        else:
-            m = max(np.abs(xvmin), np.abs(xvmax))
-            xvmin = -m
-            xvmax = m
-            m = max(np.abs(yvmin), np.abs(yvmax))
-            yvmin = -m
-            yvmax = m
-
-    _plot_focal_plane_skewness('x1', xvmin, xvmax)
-    _plot_focal_plane_skewness('y1', yvmin, yvmax)
-
-    rcids = set(skewness_df['rcid'])
-    plt.subplots(nrows=2, ncols=1, figsize=(10., 5.))
-    plt.suptitle("Order 1 polynomial coefficients fit on skewness/mag")
-    ax = plt.subplot(2, 1, 1)
-    if len(rcids) <= len(idx2markerstyle):
-        for i, rcid in enumerate(rcids):
-            rcid_mask = (skewness_df['rcid'] == rcid)
-            plt.plot(skewness_df.loc[rcid_mask]['mjd'], skewness_df[rcid_mask]['x1'], idx2markerstyle[i], color='black', label=rcid)
-        plt.legend(title="Quadrant ID")
-    else:
-        plt.scatter(skewness_df['mjd'], skewness_df['x1'], c=skewness_df['rcid'].tolist(), s=1.)
-        plt.colorbar()
-    plt.axhline(0., color='black')
-    plt.ylim(vmin, vmax)
-    ax.tick_params(which='both', direction='in')
-    ax.xaxis.set_minor_locator(AutoMinorLocator())
-    ax.yaxis.set_minor_locator(AutoMinorLocator())
-    plt.grid(linestyle='--', color='xkcd:sky blue')
-    plt.xlabel("MJD")
-    plt.ylabel("$S^x_1$")
-
-    ax = plt.subplot(2, 1, 2)
-    if len(rcids) <= len(idx2markerstyle):
-        for i, rcid in enumerate(rcids):
-            rcid_mask = (skewness_df['rcid'] == rcid)
-            plt.plot(skewness_df.loc[rcid_mask]['mjd'], skewness_df[rcid_mask]['y1'], idx2markerstyle[i], color='black', label=rcid)
-        plt.legend(title="Quadrant ID")
-    else:
-        plt.scatter(skewness_df['mjd'], skewness_df['y1'], c=skewness_df['rcid'].tolist(), s=1.)
-        plt.colorbar()
-    plt.axhline(0., color='black')
-    plt.ylim(vmin, vmax)
-    ax.tick_params(which='both', direction='in')
-    ax.xaxis.set_minor_locator(AutoMinorLocator())
-    ax.yaxis.set_minor_locator(AutoMinorLocator())
-    plt.grid(linestyle='--', color='xkcd:sky blue')
-    plt.xlabel("MJD")
-    plt.ylabel("$S^y_1$")
-
-    plt.tight_layout()
-    plt.savefig(output_path.joinpath("skewness_mjd.png"), dpi=300.)
-    plt.close()
-
-    # ax = plt.subplot(2, 1, 2)
-    # if len(qids) <= len(idx2markerstyle):
-    #     for i, qid in enumerate(qids):
-    #         qid_mask = (skewness_df['quadrant_id'] == qid)
-    #         plt.plot(skewness_df.loc[qid_mask]['mjd'], skewness_df[qid_mask]['y1'], idx2markerstyle[i], color='black', label=qid)
-    #     plt.legend(title="Quadrant ID")
-    # else:
-    #     plt.scatter(skewness_df['mjd'], skewness_df['y1'], c=skewness_df['quadrant_id'].tolist(), s=1.)
-    #     plt.colorbar()
-    # plt.axhline(0., color='black')
-    # plt.ylim(*ylim)
-    # ax.tick_params(which='both', direction='in')
-    # ax.xaxis.set_minor_locator(AutoMinorLocator())
-    # ax.yaxis.set_minor_locator(AutoMinorLocator())
-    # plt.grid(linestyle='--', color='xkcd:sky blue')
-    # plt.xlabel("MJD")
-    # plt.ylabel("$S^y_1$")
-
-    return
-
-    # ax = plt.axes()
-    # plt.plot(seeings[0], seeings[1], '.')
-    # ax.tick_params(which='both', direction='in')
-    # ax.xaxis.set_minor_locator(AutoMinorLocator())
-    # ax.yaxis.set_minor_locator(AutoMinorLocator())
-    # plt.grid(linestyle='--', color='xkcd:sky blue')
-    # plt.xlabel("GF seeing [pixel]")
-    # plt.ylabel("ZTF seeing [pixel]")
-    # plt.show()
-    # plt.close()
-
-    # ax = plt.axes()
-    # plt.plot(seeings[2], seeings[3], '.')
-    # ax.tick_params(which='both', direction='in')
-    # ax.xaxis.set_minor_locator(AutoMinorLocator())
-    # ax.yaxis.set_minor_locator(AutoMinorLocator())
-    # plt.grid(linestyle='--', color='xkcd:sky blue')
-    # plt.xlabel("PSF stars count")
-    # plt.ylabel("Chi2")
-    # plt.show()
-    # plt.close()
-
-    # ax = plt.axes()
-    # plt.plot(seeings[2], seeings[0]-seeings[1]-np.mean(seeings[0]-seeings[1]), '.')
-    # ax.tick_params(which='both', direction='in')
-    # ax.xaxis.set_minor_locator(AutoMinorLocator())
-    # ax.yaxis.set_minor_locator(AutoMinorLocator())
-    # plt.grid(linestyle='--', color='xkcd:sky blue')
-    # plt.xlabel("PSF stars count")
-    # plt.ylabel("GF - ZTF - <GF-ZTF> (seeing) [pixel]")
-    # plt.show()
-    # plt.close()
-
-    # ax = plt.axes()
-    # plt.plot(seeings[3], seeings[0]-seeings[1]-np.mean(seeings[0]-seeings[1]), '.')
-    # ax.tick_params(which='both', direction='in')
-    # ax.xaxis.set_minor_locator(AutoMinorLocator())
-    # ax.yaxis.set_minor_locator(AutoMinorLocator())
-    # plt.grid(linestyle='--', color='xkcd:sky blue')
-    # plt.xlabel("Chi2")
-    # plt.ylabel("GF - ZTF - <GF-ZTF> (seeing) [pixel]")
-    # plt.show()
-    # plt.close()
-
-    # ax = plt.axes()
-    # plt.hist(seeings[0]-seeings[1]-np.mean(seeings[0]-seeings[1]), bins='auto', histtype='step', color='black')
-    # ax.tick_params(which='both', direction='in')
-    # ax.xaxis.set_minor_locator(AutoMinorLocator())
-    # ax.yaxis.set_minor_locator(AutoMinorLocator())
-    # plt.grid(linestyle='--', color='xkcd:sky blue')
-    # plt.show()
-
-
-# def seeing_study(band_path, ztfname, filtercode, logger, args):
-#     from utils import get_header_from_quadrant_path, plot_ztf_focal_plan_values, ListTable
-#     from deppol_utils import quadrants_from_band_path
-#     import pickle
-#     import numpy as np
-#     import itertools
-#     import matplotlib
-#     import matplotlib.pyplot as plt
-#     from matplotlib.cm import ScalarMappable
-#     from matplotlib.colorbar import Colorbar
-#     quadrant_paths = quadrants_from_band_path(band_path, logger, check_files="psfstars.list", ignore_noprocess=False)
-
-#     keys = {'seeing': 'hdr',
-#             'seseeing': 'hdr',
-#             'gfseeing': 'gfseeing',
-#             'momentx1': 'psfstars',
-#             'momenty1': 'psfstars',
-#             'momentx2': 'psfstars',
-#             'momenty2': 'psfstars',
-#             'momentxy': 'psfstars'}
-
-#     if not band_path.joinpath("seeings.pickle").exists() or args.from_scratch:
-#         vals = {}
-
-#         for key in keys:
-#             vals[key] = {}
-#             for i in range(1, 17):
-#                 vals[key][i] = {}
-#                 for j in range(4):
-#                     vals[key][i][j] = []
-
-#         for quadrant_path in quadrant_paths:
-#             hdr = get_header_from_quadrant_path(quadrant_path)
-#             psfstars_list = ListTable.from_filename(quadrant_path.joinpath("psfstars.list"))
-
-#             for key in keys.keys():
-#                 if keys[key] == 'psfstars':
-#                     vals[key][hdr['ccdid']][hdr['qid']-1].append(psfstars_list.header[key])
-#                 elif key == 'seseeing':
-#                     vals[key][hdr['ccdid']][hdr['qid']-1].append(2.355*hdr[key])
-#                 elif keys[key] == 'hdr':
-#                     vals[key][hdr['ccdid']][hdr['qid']-1].append(hdr[key])
-#                 elif key == 'gfseeing':
-#                     with open(quadrant_path.joinpath("psf.dat"), 'r') as f:
-#                         lines = f.readlines()
-#                         gfseeing = float(lines[3].split(" ")[0].strip())
-#                     vals[key][hdr['ccdid']][hdr['qid']-1].append(2.355*gfseeing)
-
-#         with open(band_path.joinpath("seeings.pickle"), 'wb') as f:
-#             pickle.dump(vals, f)
-#     else:
-#         with open(band_path.joinpath("seeings.pickle"), 'rb') as f:
-#             vals = pickle.load(f)
-
-#     for key in keys:
-#         for key_i in vals[key].keys():
-#             for key_j in vals[key][key_i].keys():
-#                 vals[key][key_i][key_j] = np.median(list(map(lambda x: float(x), vals[key][key_i][key_j])))
-
-#     cmap = 'coolwarm'
-#     def _plot_focal_plane_seeing(key):
-#         val_list = [[vals[key][key_i][key_j] for key_j in vals[key][key_i].keys()] for key_i in vals[key].keys()]
-#         val_list = list(itertools.chain(*val_list))
-#         vmin = min(val_list)
-#         vmax = max(val_list)
-
-#         cm = ScalarMappable(cmap=cmap)
-#         cm.set_clim(vmin=vmin, vmax=vmax)
-
-#         fig = plt.figure(figsize=(5., 6.), constrained_layout=False)
-#         #f1, f2, f3 = fig.subfigures(ncols=1, nrows=3, height_ratios=[12., 1., 1.])
-#         f1, f2 = fig.subfigures(ncols=1, nrows=2, height_ratios=[12., 0.3], wspace=-1., hspace=-1.)
-#         f1.suptitle("\n{}-{} Focal plane {}".format(ztfname, filtercode, key), fontsize='large')
-#         plot_ztf_focal_plan_values(f1, vals[key], vmin=vmin, vmax=vmax, cmap=cmap, scalar=True)
-#         ax2 = f2.add_subplot(clip_on=False)
-#         f2.subplots_adjust(bottom=-5, top=5.)
-#         ax2.set_position((0.2, 0, 0.6, 1))
-#         # ax2 = f2.add_subplot()
-#         # ax3 = f3.add_subplot(axis='none')
-#         # Colorbar(ax, cm, orientation='horizontal')
-#         cb = f1.colorbar(cm, cax=ax2, orientation='horizontal')
-#         # ax2.autoscale(tight=True)
-#         ax2.set_clip_on(False)
-#         ax2.minorticks_on()
-#         ax2.tick_params(direction='inout')
-#         plt.savefig(band_path.joinpath("{}-{}_focal_plane_{}.png".format(ztfname, filtercode, key)), dpi=300., bbox_inches='tight', pad_inches=0.1)
-#         plt.close()
-
-#     for key in keys:
-#         # print("Plotting {}".format(key))
-#         _plot_focal_plane_seeing(key)
-
+    df = pd.DataFrame(psfskewness_list)
+    df.to_parquet(lightcurve.path.joinpath("psfskewness.parquet"))
 
 def retrieve_catalogs(lightcurve, logger, args):
     from ztfquery.fields import get_rcid_centroid, FIELDSNAMES
