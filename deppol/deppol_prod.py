@@ -47,8 +47,9 @@ def generate_jobs(wd, run_folder, func, run_name):
             job_count += len(filtercodes)
 
     print("Job count: {}".format(job_count))
-#OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 deppol --ztfname={} --filtercode={} -j {j} --wd={} --func={} --lc-folder=/sps/ztf/data/storage/scenemodeling/lc --exposure-workspace=/dev/shm/llacroix --rm-intermediates --scratch=${{TMPDIR}}/llacroix --astro-degree=5 --max-seeing=4.5 --discard-calibrated --from-scratch --dump-timings --parallel-reduce --use-gaia-stars --ext-catalog-cache=/sps/ztf/data/storage/scenemodeling/cat_cache --footprints=~/data/ztf/starflat_footprints.csv
-
+#OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 deppol --ztfname={} --filtercode={} -j {j} --wd={} --func={} --lc-folder=/sps/ztf/data/storage/scenemodeling/lc --exposure-workspace=/dev/shm/llacroix --rm-intermediates --scratch=${{TMPDIR}}/llacroix --astro-degree=5 --max-seeing=4.5 --discard-calibrated --from-scratch --dump-timings --parallel-reduce --use-gaia-stars --ext-catalog-cache=/sps/ztf/data/storage/scenemodeling/cat_cache --footprints=~/data/ztf/starflat_footprints.csv --discard-calibrated
+# deppol --ztfname={} --filtercode={} -j {j} --wd={} --func={} --lc-folder=/sps/ztf/data/storage/scenemodeling/lc --rm-intermediates --dump-timings --parallel-reduce --use-gaia-stars --ext-catalog-cache=/sps/ztf/data/storage/scenemodeling/cat_cache --photom-max-star-chi2=4. --photom-cat=ps1 --astro-max-chi2=3. --astro-degree=5 --scratch=$TMPDIR/llacroix --from-scratch
+#
     for ztfname in sne_jobs.keys():
         for filtercode in sne_jobs[ztfname]:
             job = """#!/bin/sh
@@ -58,7 +59,7 @@ deppol_dask_env.sh
 ulimit -n 4096
 export OMP_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
-deppol --ztfname={} --filtercode={} -j {j} --wd={} --func={} --lc-folder=/sps/ztf/data/storage/scenemodeling/lc --rm-intermediates --max-seeing=4.5 --dump-timings --parallel-reduce --use-gaia-stars --ext-catalog-cache=/sps/ztf/data/storage/scenemodeling/cat_cache --starflats
+deppol --ztfname={} --filtercode={} -j {j} --wd={} --func={} --lc-folder=/sps/ztf/data/storage/scenemodeling/lc
 echo "done" > {status_path}
 """.format(ztfname, filtercode, wd, ",".join(func), status_path=run_folder.joinpath("{}/status/{}-{}".format(run_name, ztfname, filtercode)), j=args.ntasks)
             with open(batch_folder.joinpath("{}-{}.sh".format(ztfname, filtercode)), 'w') as f:
@@ -87,9 +88,14 @@ def schedule_jobs(run_folder, run_name):
     if args.ztfname:
         if args.ztfname.exists():
             with open(args.ztfname, 'r') as f:
-                lines = f.readlines()
+                lines = list(map(lambda x: x.strip(), f.readlines()))
 
-            batches = [batch_folder.joinpath("{}.sh".format(line.strip())) for line in lines]
+            batches = []
+            for line in lines:
+                batches.append(batch_folder.joinpath("{}.sh".format(line)))
+                # batches.extend([batch_folder.joinpath("{}-{}.sh".format(line, filtercode)) for filtercode in utils.filtercodes])
+            batches = list(filter(lambda x: x.exists(), batches))
+
             for batch in batches:
                 if not batch.exists():
                     print("{} does not exist!".format(batch))
@@ -103,7 +109,6 @@ def schedule_jobs(run_folder, run_name):
             else:
                 print("--ztfname specified but does not correspond to a list or a sn-filtercode!")
                 exit()
-
 
     for batch in batches:
         batch_name = batch.name.split(".")[0]
@@ -123,7 +128,7 @@ def schedule_jobs(run_folder, run_name):
                "-o", log_folder.joinpath("log_{}".format(batch_name)),
                "-A", "ztf",
                "-L", "sps",
-               "--mem={}G".format(5*args.ntasks),
+               "--mem={}G".format(10*args.ntasks),
                "-t", "5-0",
                batch]
 
@@ -133,8 +138,8 @@ def schedule_jobs(run_folder, run_name):
             if returncode == 0:
                 f.write("scheduled")
             else:
-                break
                 f.write("failedtoschedule")
+                break
         print("{}: {}".format(batch_name, returncode))
 
 

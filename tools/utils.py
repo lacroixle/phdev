@@ -225,12 +225,12 @@ def quadrant_name_explode(quadrant_name, kind='sci'):
 
     elif kind == 'raw':
         assert(False, "quadrant_name_explode(): needs to be updates/tested for raw image name")
-        year = int(quadrant_name[4:8])
-        month = int(quadrant_name[8:10])
-        day = int(quadrant_name[10:12])
-        field = int(quadrant_name[19:25])
-        filterid = quadrant_name[26:28]
-        ccdid = int(quadrant_name[30:32])
+        year = int(quadrant_name[0:4])
+        month = int(quadrant_name[4:6])
+        day = int(quadrant_name[6:8])
+        field = int(quadrant_name[15:21])
+        filterid = quadrant_name[22:24]
+        ccdid = int(quadrant_name[26:28])
 
         return year, month, day, field, filterid, ccdid
 
@@ -261,6 +261,9 @@ def get_header_from_quadrant_path(quadrant_path, key=None):
                 return hdul[0].header[key]
     elif quadrant_path.joinpath("calibrated_hdr").exists():
         with fits.open(quadrant_path.joinpath("calibrated_hdr")) as hdul:
+            return hdul[0].header
+    elif quadrant_path.joinpath("calibrated.header").exists():
+        with fits.open(quadrant_path.joinpath("calibrated.header")) as hdul:
             return hdul[0].header
     elif quadrant_path.joinpath("calibrated_header.pickle").exists():
         with open(quadrant_path.joinpath("calibrated_header.pickle"), 'rb') as f:
@@ -339,7 +342,7 @@ def get_ref_quadrant_from_driver(driver_path):
 
 
 def get_ref_quadrant_from_band_folder(band_path):
-    with open(band_path.joinpath("reference_quadrant")) as f:
+    with open(band_path.joinpath("reference_exposure")) as f:
         return f.readline()
 
 

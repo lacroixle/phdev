@@ -60,6 +60,7 @@ def calib(lightcurve, logger, args):
     plt.ylabel("$\chi^2$")
     plt.show()
     plt.savefig(plot_path.joinpath("chi2.png"), dpi=200.)
+    plt.close()
 
     plt.subplots(ncols=1, nrows=1, figsize=(7., 4.))
     plt.plot(dp.cat_mag[~solver.bads], res, '.', color='black')
@@ -67,6 +68,7 @@ def calib(lightcurve, logger, args):
     plt.xlabel("$m$ [AB mag]")
     plt.ylabel("$y-y_\mathrm{model}$ [mag]")
     plt.savefig(plot_path.joinpath("res.png"), dpi=200.)
+    plt.close()
 
 
     update_yaml(lightcurve.path.joinpath("lightcurve.yaml"), 'calib',

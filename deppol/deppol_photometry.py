@@ -53,7 +53,7 @@ def photometry_fit(lightcurve, logger, args):
         photometry_stats['cat'] = 'aper'
         matched_stars_df = pd.concat([lightcurve.extract_star_catalog(['aperstars']),
                                       ext_cat_df[['objID', filtercode2extcatband['ps1'][lightcurve.filterid], 'e_{}'.format(filtercode2extcatband['ps1'][lightcurve.filterid])]]], axis='columns')
-        matched_stars_df = matched_stars_df.drop(columns={'cat_index', 'flux', 'eflux'}).rename(columns={'objID': 'catid',
+        matched_stars_df = matched_stars_df.drop(columns=['cat_index', 'flux', 'eflux']).rename(columns={'objID': 'catid',
                                                                                                         filtercode2extcatband['ps1'][lightcurve.filterid]: 'cat_mag',
                                                                                                         'e_{}'.format(filtercode2extcatband['ps1'][lightcurve.filterid]): 'cat_emag'})
         matched_stars_df.rename(columns={'apfl4': 'flux', 'eapfl4': 'eflux'}, inplace=True)

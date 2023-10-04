@@ -308,7 +308,7 @@ def smphot_stars_constant(lightcurve, logger, args):
     cat_calib_table = ListTable.from_filename(lightcurve.smphot_stars_path.joinpath("calib_stars_cat.list"))
 
     stars_lc_df = calib_table.df.loc[calib_table.df['flux'] >= 0.]
-    print("Removed {} negative fluxes".format(len(calib_table.df)-len(stars_lc_df)))
+    logger.info("Removed {} negative fluxes".format(len(calib_table.df)-len(stars_lc_df)))
 
     # Create dataproxy
     piedestal = 0.015

@@ -523,10 +523,52 @@ def plot_footprint(lightcurve, logger, args):
     plt.close()
 
 def concat_catalogs(lightcurve, logger, args):
-    catalog = lightcurve.extract_star_catalog(['aperstars'])[['exposure', 'x', 'y', 'gmxx', 'gmyy', 'gmxy', 'apfl5', 'rad5']].rename(columns={'apfl5': 'aperflux', 'rad5': 'aperrad'})
-    catalog['ccdid'] = catalog.apply(lambda x: int(x['exposure'][30:32]), axis=1)
-    catalog['qid'] = catalog.apply(lambda x: int(x['exposure'][36]), axis=1)
-    catalog.to_parquet(lightcurve.path.joinpath("bigcat_{}_{}.parquet".format(lightcurve.name, lightcurve.filterid)))
+    import pandas as pd
+    from astropy import log
+
+    log.setLevel('ERROR')
+    # log.disable_warnings_logging()
+    # catalog = lightcurve.extract_star_catalog(['aperstars'])[['exposure', 'x', 'y', 'gmxx', 'gmyy', 'gmxy', 'apfl5', 'rad5']].rename(columns={'apfl5': 'aperflux', 'rad5': 'aperrad'})
+    # catalog['ccdid'] = catalog.apply(lambda x: int(x['exposure'][30:32]), axis=1)
+    # catalog['qid'] = catalog.apply(lambda x: int(x['exposure'][36]), axis=1)
+    # catalog.to_parquet(lightcurve.path.joinpath("bigcat_{}_{}.parquet".format(lightcurve.name, lightcurve.filterid)))
+    #
+    logger.info("Retrieving exposures")
+    exposures = lightcurve.get_exposures(files_to_check='match_catalogs.success')
+    logger.info("Retrieving headers")
+    headers = lightcurve.extract_exposure_catalog(files_to_check='match_catalogs.success')
+
+    def _add_prefix_to_column(df, prefix):
+        column_names = dict([(column, prefix+column) for column in df.columns])
+        df.rename(columns=column_names, inplace=True)
+
+    def _extract_quadrant(ccdid, qid):
+        cat_dfs = []
+        for exposure in exposures:
+            if exposure.ccdid == ccdid and exposure.qid == qid:
+                print(".", flush=True, end="")
+                aperstars_df = exposure.get_matched_catalog('aperstars')
+                psfstars_df = exposure.get_matched_catalog('psfstars')
+                gaia_df = exposure.get_matched_ext_catalog('gaia')
+                _add_prefix_to_column(aperstars_df, 'aper_')
+                _add_prefix_to_column(psfstars_df, 'psf_')
+                _add_prefix_to_column(gaia_df, 'gaia_')
+                cat_df = pd.concat([aperstars_df, psfstars_df, gaia_df], axis='columns')
+                cat_df.insert(0, 'quadrant', exposure.name)
+                for column in headers.columns:
+                    cat_df[column] = headers.at[exposure.name, column]
+                cat_dfs.append(cat_df)
+
+        print("")
+        return pd.concat(cat_dfs)
+
+    logger.info("Extracting star catalogs")
+    lightcurve.path.joinpath("measures").mkdir(exist_ok=True)
+    for ccdid in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]:
+        for qid in [1, 2, 3, 4]:
+            print("ccdid={}, qid={}".format(ccdid, qid))
+            df = _extract_quadrant(ccdid, qid)
+            df.to_parquet(lightcurve.path.joinpath("measures/measures_{}-{}-c{}-q{}.parquet".format(lightcurve.name, lightcurve.filterid, str(ccdid).zfill(2), str(qid)))
     return True
 
 
