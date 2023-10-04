@@ -6,6 +6,9 @@ def psf_study(exposure, logger, args):
     from saunerie.plottools import binplot
     from yaml import dump
     from numpy.polynomial.polynomial import Polynomial
+    import pandas as pd
+
+    pd.options.mode.chained_assignment = None
 
     if not exposure.path.joinpath("psfstars.list").exists():
         return True
@@ -44,7 +47,6 @@ def psf_study(exposure, logger, args):
     gmag_binned = gmag_binned[bin_mask]
     d_mag_binned = np.array(d_mag_binned)[bin_mask]
     ed_mag_binned = ed_mag_binned[bin_mask]
-
 
     poly0, ([poly0_chi2], _, _, _) = Polynomial.fit(gmag_binned, d_mag_binned, 0, w=1./ed_mag_binned, full=True)
     poly1, ([poly1_chi2], _, _, _) = Polynomial.fit(gmag_binned, d_mag_binned, 1, w=1./ed_mag_binned, full=True)
@@ -94,6 +96,8 @@ def psf_study_reduce(lightcurve, logger, args):
 
     df = pd.DataFrame(psfskewness_list)
     df.to_parquet(lightcurve.path.joinpath("psfskewness.parquet"))
+
+    return True
 
 def retrieve_catalogs(lightcurve, logger, args):
     from ztfquery.fields import get_rcid_centroid, FIELDSNAMES
@@ -568,7 +572,8 @@ def concat_catalogs(lightcurve, logger, args):
         for qid in [1, 2, 3, 4]:
             print("ccdid={}, qid={}".format(ccdid, qid))
             df = _extract_quadrant(ccdid, qid)
-            df.to_parquet(lightcurve.path.joinpath("measures/measures_{}-{}-c{}-q{}.parquet".format(lightcurve.name, lightcurve.filterid, str(ccdid).zfill(2), str(qid)))
+            df.to_parquet(lightcurve.path.joinpath("measures/measures_{}-{}-c{}-q{}.parquet".format(lightcurve.name, lightcurve.filterid, str(ccdid).zfill(2), str(qid))))
+
     return True
 
 
