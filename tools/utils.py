@@ -20,6 +20,8 @@ from croaks import DataProxy
 from sksparse import cholmod
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+from saunerie.linearmodels import indic, RobustLinearSolver
+from croaks import DataProxy
 
 
 filtercodes = ['zg', 'zr', 'zi']
@@ -643,6 +645,38 @@ def BiPol2D_fit(x, y, degree, space_indices=None, control_plots=None, simultaneo
         model.control_plots(x, y, control_plots, space_indices=space_indices)
 
     return model
+
+
+def RobustPolynomialFit(x, y, degree, dy=None, just_chi2=False):
+    assert len(x) == len(y)
+    model = None
+
+    dp = DataProxy(pd.DataFrame({'x': x, 'y': x}).to_records(), x='x', y='y')
+
+    for i in range(degree+1):
+        deg_model = indic([0]*len(x), val=x**i, name='deg{}'.format(i))
+        if model is None:
+            model = deg_model
+        else:
+            model = model + deg_model
+
+    if dy is not None:
+        solver = RobustLinearSolver(model, y, weights=1./dy)
+    else:
+        solver = RobustLinearSolver(model, dp.y)
+
+    solver.model.params.free = solver.robust_solution()
+    res = solver.get_res(y)
+    if dy is not None:
+        wres = res/dy
+    else:
+        wres = res
+
+    chi2 = sum(wres**2/(len(x)-degree-1))
+    if just_chi2:
+        return chi2
+    else:
+        return solver.model.params.free[:], chi2
 
 
 def create_2D_mesh_grid(*meshgrid_space):

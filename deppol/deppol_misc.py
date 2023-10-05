@@ -7,32 +7,35 @@ def psf_study(exposure, logger, args):
     from yaml import dump
     from numpy.polynomial.polynomial import Polynomial
     import pandas as pd
+    from utils import RobustPolynomialFit
 
     pd.options.mode.chained_assignment = None
 
     if not exposure.path.joinpath("psfstars.list").exists():
         return True
 
+    apfl = 'apfl6'
     psf_stars_df = exposure.get_matched_catalog('psfstars')
     aper_stars_df = exposure.get_matched_catalog('aperstars')
     gaia_stars_df = exposure.get_matched_ext_catalog('gaia')
+
+    to_remove = np.any([psf_stars_df['flux'] < 0., aper_stars_df[apfl] < 0.], axis=0)
+    psf_stars_df = psf_stars_df.loc[~to_remove]
+    aper_stars_df = aper_stars_df.loc[~to_remove]
+    gaia_stars_df = gaia_stars_df.loc[~to_remove]
 
     def _aperflux_to_mag(aper, cat_df):
         cat_df['mag_{}'.format(aper)] = -2.5*np.log10(cat_df[aper])
         cat_df['emag_{}'.format(aper)] = 1.08*cat_df['e{}'.format(aper)]/cat_df[aper]
 
-    aper_stars_df['mag'] = -2.5*np.log10(aper_stars_df['flux'])
-    aper_stars_df['emag'] = 1.08*aper_stars_df['eflux']/aper_stars_df['flux']
+
     psf_stars_df['mag'] = -2.5*np.log10(psf_stars_df['flux'])
     psf_stars_df['emag'] = 1.08*np.log10(psf_stars_df['eflux'])
-    _aperflux_to_mag('apfl0', aper_stars_df)
-    _aperflux_to_mag('apfl4', aper_stars_df)
-    _aperflux_to_mag('apfl6', aper_stars_df)
-    _aperflux_to_mag('apfl8', aper_stars_df)
+    _aperflux_to_mag(apfl, aper_stars_df)
 
-    d_mag = (psf_stars_df['mag'] - aper_stars_df['mag_apfl6']).to_numpy()
+    d_mag = (psf_stars_df['mag'] - aper_stars_df['mag_{}'.format(apfl)]).to_numpy()
     d_mag = d_mag - np.nanmean(d_mag)
-    ed_mag = np.sqrt(psf_stars_df['emag']**2+aper_stars_df['emag_apfl6']**2).to_numpy()
+    ed_mag = np.sqrt(psf_stars_df['emag']**2+aper_stars_df['emag_{}'.format(apfl)]**2).to_numpy()
 
     d_mag_mask = ~np.isnan(d_mag)
     d_mag = d_mag[d_mag_mask]
@@ -48,13 +51,28 @@ def psf_study(exposure, logger, args):
     d_mag_binned = np.array(d_mag_binned)[bin_mask]
     ed_mag_binned = ed_mag_binned[bin_mask]
 
+    def _poly_fit(degree):
+        return RobustPolynomialFit(gmag_binned, d_mag_binned, degree, dy=ed_mag_binned, just_chi2=True)
+
+    # poly0, ([poly0_chi2], _, _, _) = Polynomial.fit(gmag_binned, d_mag_binned, 0, w=1./ed_mag_binned, full=True)
+    # poly1, ([poly1_chi2], _, _, _) = Polynomial.fit(gmag_binned, d_mag_binned, 1, w=1./ed_mag_binned, full=True)
+    # poly2, ([poly2_chi2], _, _, _) = Polynomial.fit(gmag_binned, d_mag_binned, 2, w=1./ed_mag_binned, full=True)
     poly0, ([poly0_chi2], _, _, _) = Polynomial.fit(gmag_binned, d_mag_binned, 0, w=1./ed_mag_binned, full=True)
     poly1, ([poly1_chi2], _, _, _) = Polynomial.fit(gmag_binned, d_mag_binned, 1, w=1./ed_mag_binned, full=True)
     poly2, ([poly2_chi2], _, _, _) = Polynomial.fit(gmag_binned, d_mag_binned, 2, w=1./ed_mag_binned, full=True)
 
-    poly0_chi2 = poly0_chi2/(len(gmag_binned)-1)
-    poly1_chi2 = poly1_chi2/(len(gmag_binned)-2)
-    poly2_chi2 = poly2_chi2/(len(gmag_binned)-3)
+    polyfit0_chi2 = poly0_chi2/(len(gmag_binned)-1)
+    polyfit1_chi2 = poly1_chi2/(len(gmag_binned)-2)
+    polyfit2_chi2 = poly2_chi2/(len(gmag_binned)-3)
+
+    poly0_chi2 = _poly_fit(0)
+    poly1_chi2 = _poly_fit(1)
+    poly2_chi2 = _poly_fit(2)
+
+    print(poly0_chi2, polyfit0_chi2)
+    print(poly1_chi2, polyfit1_chi2)
+    print(poly2_chi2, polyfit2_chi2)
+    print("="*100)
 
     with open(exposure.path.joinpath("psfskewness.yaml"), 'w') as f:
         dump({'poly0_chi2': poly0_chi2.item(),
@@ -62,6 +80,7 @@ def psf_study(exposure, logger, args):
               'poly2_chi2': poly2_chi2.item()}, f)
 
     return True
+
 
 def psf_study_reduce(lightcurve, logger, args):
     import pandas as pd
