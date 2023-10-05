@@ -82,6 +82,11 @@ def psf_study(exposure, logger, args):
     # poly1_chi2 = _poly_fit(1)
     # poly2_chi2 = _poly_fit(2)
 
+    # print(poly0_chi2, polyfit0_chi2)
+    # print(poly1_chi2, polyfit1_chi2)
+    # print(poly2_chi2, polyfit2_chi2)
+    # print("="*100)
+
     with open(exposure.path.joinpath("psfskewness.yaml"), 'w') as f:
         dump({'poly0_chi2': poly0_chi2.item(),
               'poly1_chi2': poly1_chi2.item(),
@@ -558,12 +563,6 @@ def concat_catalogs(lightcurve, logger, args):
     from astropy import log
 
     log.setLevel('ERROR')
-    # log.disable_warnings_logging()
-    # catalog = lightcurve.extract_star_catalog(['aperstars'])[['exposure', 'x', 'y', 'gmxx', 'gmyy', 'gmxy', 'apfl5', 'rad5']].rename(columns={'apfl5': 'aperflux', 'rad5': 'aperrad'})
-    # catalog['ccdid'] = catalog.apply(lambda x: int(x['exposure'][30:32]), axis=1)
-    # catalog['qid'] = catalog.apply(lambda x: int(x['exposure'][36]), axis=1)
-    # catalog.to_parquet(lightcurve.path.joinpath("bigcat_{}_{}.parquet".format(lightcurve.name, lightcurve.filterid)))
-    #
     logger.info("Retrieving exposures")
     exposures = lightcurve.get_exposures(files_to_check='match_catalogs.success')
     logger.info("Retrieving headers")
@@ -581,10 +580,12 @@ def concat_catalogs(lightcurve, logger, args):
                 aperstars_df = exposure.get_matched_catalog('aperstars')
                 psfstars_df = exposure.get_matched_catalog('psfstars')
                 gaia_df = exposure.get_matched_ext_catalog('gaia')
+                ps1_df = exposure.get_matched_ext_catalog('ps1')
                 _add_prefix_to_column(aperstars_df, 'aper_')
                 _add_prefix_to_column(psfstars_df, 'psf_')
                 _add_prefix_to_column(gaia_df, 'gaia_')
-                cat_df = pd.concat([aperstars_df, psfstars_df, gaia_df], axis='columns')
+                _add_prefix_to_column(ps1_df, 'ps1_')
+                cat_df = pd.concat([aperstars_df, psfstars_df, gaia_df, ps1_df], axis='columns')
                 cat_df.insert(0, 'quadrant', exposure.name)
                 for column in headers.columns:
                     cat_df[column] = headers.at[exposure.name, column]
@@ -597,9 +598,11 @@ def concat_catalogs(lightcurve, logger, args):
     lightcurve.path.joinpath("measures").mkdir(exist_ok=True)
     for ccdid in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]:
         for qid in [1, 2, 3, 4]:
-            print("ccdid={}, qid={}".format(ccdid, qid))
-            df = _extract_quadrant(ccdid, qid)
-            df.to_parquet(lightcurve.path.joinpath("measures/measures_{}-{}-c{}-q{}.parquet".format(lightcurve.name, lightcurve.filterid, str(ccdid).zfill(2), str(qid))))
+            filename = lightcurve.path.joinpath("measures/measures_{}-{}-c{}-q{}.parquet".format(lightcurve.name, lightcurve.filterid, str(ccdid).zfill(2), str(qid)))
+            if not filename.exists():
+                print("ccdid={}, qid={}".format(ccdid, qid))
+                df = _extract_quadrant(ccdid, qid)
+                df.to_parquet(filename)
 
     return True
 
