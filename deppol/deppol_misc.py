@@ -9,7 +9,9 @@ def psf_study(exposure, logger, args):
     import pandas as pd
     from utils import RobustPolynomialFit
     import matplotlib.pyplot as plt
+    import matplotlib
 
+    matplotlib.use('Agg')
     pd.options.mode.chained_assignment = None
 
     if not exposure.path.joinpath("psfstars.list").exists():
@@ -20,7 +22,7 @@ def psf_study(exposure, logger, args):
     aper_stars_df = exposure.get_matched_catalog('aperstars')
     gaia_stars_df = exposure.get_matched_ext_catalog('gaia')
 
-    to_remove = np.any([psf_stars_df['flux'] < 0., aper_stars_df[apfl] < 0., gaia_stars_df['Gmag']>=19.], axis=0)
+    to_remove = np.any([psf_stars_df['flux'] < 0., aper_stars_df[apfl] < 0., gaia_stars_df['Gmag']>=20.], axis=0)
     psf_stars_df = psf_stars_df.loc[~to_remove]
     aper_stars_df = aper_stars_df.loc[~to_remove]
     gaia_stars_df = gaia_stars_df.loc[~to_remove]
@@ -30,7 +32,7 @@ def psf_study(exposure, logger, args):
         cat_df['emag_{}'.format(aper)] = 1.08*cat_df['e{}'.format(aper)]/cat_df[aper]
 
     psf_stars_df['mag'] = -2.5*np.log10(psf_stars_df['flux'])
-    psf_stars_df['emag'] = 1.08*np.log10(psf_stars_df['eflux'])
+    psf_stars_df['emag'] = 1.08*psf_stars_df['eflux']/psf_stars_df['flux']
     _aperflux_to_mag(apfl, aper_stars_df)
 
     d_mag = (psf_stars_df['mag'] - aper_stars_df['mag_{}'.format(apfl)]).to_numpy()
@@ -41,12 +43,13 @@ def psf_study(exposure, logger, args):
     d_mag = d_mag[d_mag_mask]
     ed_mag = ed_mag[d_mag_mask]
 
-    min_mag, max_mag = 13., 21.
-    low_bin, high_bin = 14, 17
+    min_mag, max_mag = 13., 20.
 
+    bins = np.arange(min_mag, max_mag, 0.5)
     plt.subplots(ncols=1, nrows=1, figsize=(8., 5.))
     plt.title("{} - PSF/aper magnitude plot".format(exposure.name))
-    gmag_binned, d_mag_binned, ed_mag_binned = binplot(gaia_stars_df.iloc[d_mag_mask]['Gmag'].to_numpy(), d_mag, robust=True, data=True, scale=True, weights=1./ed_mag, bins=np.linspace(min_mag, max_mag, 15), color='black', zorder=15)
+    plt.errorbar(gaia_stars_df.iloc[d_mag_mask]['Gmag'], d_mag, yerr=ed_mag, ls="", marker='.')
+    gmag_binned, d_mag_binned, ed_mag_binned = binplot(gaia_stars_df.iloc[d_mag_mask]['Gmag'].to_numpy(), d_mag, robust=True, data=False, scale=True, weights=1./ed_mag, bins=bins, color='red', lw=2., zorder=15)
 
     bin_mask = (ed_mag_binned > 0.)
     gmag_binned = gmag_binned[bin_mask]
@@ -63,20 +66,19 @@ def psf_study(exposure, logger, args):
     poly1, ([poly1_chi2], _, _, _) = Polynomial.fit(gmag_binned, d_mag_binned, 1, w=1./ed_mag_binned, full=True)
     poly2, ([poly2_chi2], _, _, _) = Polynomial.fit(gmag_binned, d_mag_binned, 2, w=1./ed_mag_binned, full=True)
 
-    plt.plot(gmag_binned, poly0(gmag_binned), label="Order 0 - $\\chi^2={{{}}}$".format(poly0_chi2))
-    plt.plot(gmag_binned, poly1(gmag_binned), label="Order 1 - $\\chi^2={{{}}}$".format(poly1_chi2))
-    plt.plot(gmag_binned, poly2(gmag_binned), label="Order 2 - $\\chi^2={{{}}}$".format(poly2_chi2))
+    polyfit0_chi2 = poly0_chi2/(len(gmag_binned)-1)
+    polyfit1_chi2 = poly1_chi2/(len(gmag_binned)-2)
+    polyfit2_chi2 = poly2_chi2/(len(gmag_binned)-3)
+
+    plt.plot(gmag_binned, poly0(gmag_binned), label="Order 0 - $\\chi^2={{{}}}$".format(polyfit0_chi2), lw=4.)
+    plt.plot(gmag_binned, poly1(gmag_binned), label="Order 1 - $\\chi^2={{{}}}$".format(polyfit1_chi2), lw=4.)
+    plt.plot(gmag_binned, poly2(gmag_binned), label="Order 2 - $\\chi^2={{{}}}$".format(polyfit2_chi2), lw=4.)
     plt.legend()
     plt.xlabel("$G$ [Gaia mag]")
     plt.ylabel("$m_\mathrm{PSF}-m_\mathrm{aper}$ [mag]")
     plt.ylim([-0.6, 0.6])
     plt.grid()
-    plt.savefig(exposure.path.joinpath("psfaperfit.png"), dpi=200.)
-    plt.close()
 
-    polyfit0_chi2 = poly0_chi2/(len(gmag_binned)-1)
-    polyfit1_chi2 = poly1_chi2/(len(gmag_binned)-2)
-    polyfit2_chi2 = poly2_chi2/(len(gmag_binned)-3)
 
     # poly0_chi2 = _poly_fit(0)
     # poly1_chi2 = _poly_fit(1)
@@ -87,10 +89,12 @@ def psf_study(exposure, logger, args):
     # print(poly2_chi2, polyfit2_chi2)
     # print("="*100)
 
+    plt.savefig(exposure.path.joinpath("psfaperfit.png"), dpi=250.)
+    plt.close()
     with open(exposure.path.joinpath("psfskewness.yaml"), 'w') as f:
-        dump({'poly0_chi2': poly0_chi2.item(),
-              'poly1_chi2': poly1_chi2.item(),
-              'poly2_chi2': poly2_chi2.item()}, f)
+        dump({'poly0_chi2': polyfit0_chi2.item(),
+              'poly1_chi2': polyfit1_chi2.item(),
+              'poly2_chi2': polyfit2_chi2.item()}, f)
 
     return True
 
