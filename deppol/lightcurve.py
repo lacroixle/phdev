@@ -474,6 +474,10 @@ class Lightcurve(_Lightcurve):
             exposure_dict['cd_21'] = float(header['cd2_1'])
             exposure_dict['cd_22'] = float(header['cd2_2'])
 
+            exposure_dict['gain'] = float(header['gain'])
+            exposure_dict['readnoise'] = float(header['readnoi'])
+            exposure_dict['darkcurrent'] = float(header['darkcur'])
+
             exposure_dict['skylev'] = float(header['sexsky'])
             exposure_dict['sigma_skylev'] = float(header['sexsigma'])
 
