@@ -292,16 +292,12 @@ def smphot_stars(lightcurve, logger, args):
     return True
 
 
-class ConstantStarModel:
-    def __init__(self):
-        pass
-
-
 def smphot_stars_constant(lightcurve, logger, args):
     from utils import ListTable
     import numpy as np
     import matplotlib.pyplot as plt
     import pandas as pd
+    from deppol_utils import update_yaml
 
     from croaks import DataProxy
     from saunerie.linearmodels import LinearModel, RobustLinearSolver
@@ -340,7 +336,7 @@ def smphot_stars_constant(lightcurve, logger, args):
 
     stars_df['cat_mag'] = cat_calib_table.df.iloc[stars_df['star']]['mag'+lightcurve.filterid[1]].tolist()
     stars_df['cat_emag'] = cat_calib_table.df.iloc[stars_df['star']]['emag'+lightcurve.filterid[1]].tolist()
-    stars_df['cat_color'] = (cat_calib_table.df.iloc[stars_df['star']]['magi'] - cat_calib_table.df.iloc[stars_df['star']]['magg']).tolist()
+    stars_df['cat_color'] = (cat_calib_table.df.iloc[stars_df['star']]['magg'] - cat_calib_table.df.iloc[stars_df['star']]['magi']).tolist()
     stars_df['sigma_m'] = [stars_lc_df.loc[~stars_lc_df['bad']].loc[stars_lc_df.loc[~stars_lc_df['bad']]['star'] == star]['res'].std() for star in stars_df['star'].tolist()]
     stars_df['ra'] = cat_calib_table.df.iloc[stars_df['star']]['ra']
     stars_df['dec'] = cat_calib_table.df.iloc[stars_df['star']]['dec']
@@ -349,6 +345,13 @@ def smphot_stars_constant(lightcurve, logger, args):
 
     stars_lc_df.to_parquet(lightcurve.smphot_stars_path.joinpath("stars_lightcurves.parquet"))
     stars_df.to_parquet(lightcurve.smphot_stars_path.joinpath("constant_stars.parquet"))
+
+    update_yaml(exposure.path.joinpath("lightcurve.yaml"), 'constant_stars',
+                {'star_count': len(stars_df),
+                 'chi2': np.sum(stars_lc_df['wres']).item(),
+                 'chi2/ndof': np.sum(stars_lc_df['wres']).item()/len(stars_df),
+                 'ndof': len(stars_df),
+                 'piedestal': piedestal})
 
     return True
 
