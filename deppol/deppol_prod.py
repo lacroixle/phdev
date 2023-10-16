@@ -49,6 +49,7 @@ def generate_jobs(wd, run_folder, func, run_name):
     print("Job count: {}".format(job_count))
 #OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 deppol --ztfname={} --filtercode={} -j {j} --wd={} --func={} --lc-folder=/sps/ztf/data/storage/scenemodeling/lc --exposure-workspace=/dev/shm/llacroix --rm-intermediates --scratch=${{TMPDIR}}/llacroix --astro-degree=5 --max-seeing=4.5 --discard-calibrated --from-scratch --dump-timings --parallel-reduce --use-gaia-stars --ext-catalog-cache=/sps/ztf/data/storage/scenemodeling/cat_cache --footprints=~/data/ztf/starflat_footprints.csv --discard-calibrated
 # deppol --ztfname={} --filtercode={} -j {j} --wd={} --func={} --lc-folder=/sps/ztf/data/storage/scenemodeling/lc --rm-intermediates --dump-timings --parallel-reduce --use-gaia-stars --ext-catalog-cache=/sps/ztf/data/storage/scenemodeling/cat_cache --photom-max-star-chi2=4. --photom-cat=ps1 --astro-max-chi2=3. --astro-degree=5 --scratch=$TMPDIR/llacroix --from-scratch
+#OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 deppol --ztfname={ztfname} --filtercode={filtercode} -j {j} --wd={wd} --func={func} --lc-folder={lc_folder} --exposure-workspace=/dev/shm/llacroix --rm-intermediates --scratch=${{TMPDIR}}/llacroix --astro-degree=5 --discard-calibrated --from-scratch --dump-timings --parallel-reduce --use-gaia-stars --ext-catalog-cache=/sps/ztf/data/storage/scenemodeling/cat_cache --discard-calibrated
 #
     for ztfname in sne_jobs.keys():
         for filtercode in sne_jobs[ztfname]:
@@ -59,9 +60,9 @@ deppol_dask_env.sh
 ulimit -n 4096
 export OMP_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
-deppol --ztfname={} --filtercode={} -j {j} --wd={} --func={} --lc-folder=/sps/ztf/data/storage/scenemodeling/lc
+OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 deppol --ztfname={ztfname} --filtercode={filtercode} -j {j} --wd={wd} --func={func} --rm-intermediates --dump-timings --use-gaia-stars --ext-catalog-cache=/sps/ztf/data/storage/scenemodeling/cat_cache
 echo "done" > {status_path}
-""".format(ztfname, filtercode, wd, ",".join(func), status_path=run_folder.joinpath("{}/status/{}-{}".format(run_name, ztfname, filtercode)), j=args.ntasks)
+""".format(ztfname=ztfname, filtercode=filtercode, wd=wd, func=",".join(func), status_path=run_folder.joinpath("{}/status/{}-{}".format(run_name, ztfname, filtercode)), j=args.ntasks, lc_folder="/sps/ztf/data/storage/scenemodeling/jacco/lc_jacco")
             with open(batch_folder.joinpath("{}-{}.sh".format(ztfname, filtercode)), 'w') as f:
                 f.write(job)
 
@@ -103,7 +104,7 @@ def schedule_jobs(run_folder, run_name):
 
             print("Scheduling {} jobs".format(len(batches)))
         else:
-            ztfbatch = batch_folder.joinpath("{}.sh".format(args.ztfname))
+            ztfbatch = batch_folder.joinpath("{}.sh".format(ztfname))
             if ztfbatch.exists():
                 batches = [ztfbatch]
             else:
