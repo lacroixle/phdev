@@ -12,6 +12,8 @@ def reference_quadrant(lightcurve, logger, args):
     import pandas as pd
     import numpy as np
 
+    from deppol_utils import update_yaml
+
     # Determination of the best seeing quadrant
     # First determine the most represented field
     logger.info("Determining best seeing quadrant...")
@@ -21,8 +23,6 @@ def reference_quadrant(lightcurve, logger, args):
                                'fieldid': list(map(lambda x: x.field, exposures)),
                                'star_count': list(map(lambda x: len(x.get_matched_catalog('psfstars')), exposures))},
                               index=list(map(lambda x: x.name, exposures)))
-
-    print(seeings_df.sort_values('star_count'))
 
     fieldids = seeings_df.value_counts(subset='fieldid').index.tolist()
     fieldids_count = seeings_df.value_counts(subset='fieldid').values
@@ -52,6 +52,16 @@ def reference_quadrant(lightcurve, logger, args):
     logger.info("Writing into {}".format(lightcurve.path.joinpath("reference_exposure")))
     with open(lightcurve.path.joinpath("reference_exposure"), 'w') as f:
         f.write(idxmin)
+
+    update_yaml(lightcurve.path.joinpath("lightcurve.yaml"), 'reference',
+                {'name': idxmin,
+                 'seeing': minseeing.item(),
+                 'psfstarcount': len(lightcurve.exposures[idxmin].get_catalog('psfstars.list').df),
+                 'mjd': float(lightcurve.exposures[idxmin].exposure_header['obsmjd']),
+                 'min_psfstars': float(min_psfstars),
+                 'fieldids': fieldids,
+                 'fieldids_count': fieldids_count.tolist(),
+                 'maxcount_fieldid': maxcount_fieldid})
 
     return True
 
@@ -346,7 +356,7 @@ def smphot_stars_constant(lightcurve, logger, args):
     stars_lc_df.to_parquet(lightcurve.smphot_stars_path.joinpath("stars_lightcurves.parquet"))
     stars_df.to_parquet(lightcurve.smphot_stars_path.joinpath("constant_stars.parquet"))
 
-    update_yaml(exposure.path.joinpath("lightcurve.yaml"), 'constant_stars',
+    update_yaml(lightcurve.path.joinpath("lightcurve.yaml"), 'constant_stars',
                 {'star_count': len(stars_df),
                  'chi2': np.sum(stars_lc_df['wres']).item(),
                  'chi2/ndof': np.sum(stars_lc_df['wres']).item()/len(stars_df),

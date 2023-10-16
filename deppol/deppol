@@ -33,6 +33,7 @@ poloka_func = []
 
 import deppol_misc
 
+poloka_func.append({'map': deppol_misc.psf_resid})
 poloka_func.append({'map': deppol_misc.psf_study, 'reduce': deppol_misc.psf_study_reduce})
 #poloka_func.append({'map': deppol_misc.clean, 'reduce': deppol_misc.clean_reduce})
 poloka_func.append({'reduce': deppol_misc.clean})

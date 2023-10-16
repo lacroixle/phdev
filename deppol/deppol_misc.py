@@ -1,6 +1,44 @@
 #!/usr/bin/env python3
 
 
+def psf_resid(exposure, logger, args):
+    from utils import ListTable
+    import numpy as np
+    import matplotlib.pyplot as plt
+
+    resid_df = ListTable.from_filename(exposure.path.joinpath("psf_resid_tuple.dat")).df
+    star_ids = list(set(resid_df['obj']))
+    magnification = 2
+    star_resid_dict = {}
+    pos_list = []
+    resid_list = []
+    for star_id in star_ids:
+        resid_star_df = resid_df.loc[resid_df['obj']==star_id]
+        star_offset = np.array([resid_star_df.iloc[0]['xc']-resid_star_df.iloc[0]['ic'], resid_star_df.iloc[0]['yc']-resid_star_df.iloc[0]['jc']])
+        pos_list.append(resid_star_df[['i', 'j']].to_numpy()+star_offset)
+        resid_list.append((resid_star_df['fpsf']-resid_star_df['fimg']).to_numpy())
+        quarter_stamp_size = np.array([resid_df['i'].max(), resid_df['j'].max()])
+        # resid = np.empty(2*quarter_stamp_size+1)
+        # for idx, [i, j, fpsf, fimg] in resid_star_df[['i', 'j', 'fpsf', 'fimg']].iterrows():
+        #     resid[int(i+quarter_stamp_size[0]), int(j+quarter_stamp_size[1])] = fpsf-fimg
+        # star_resid_dict[star_id] = {'offset': star_offset, 'resid': resid}
+
+    # resid = np.sum(np.stack([star_resid_dict[star_id]['resid'] for star_id in star_ids]), axis=0)
+    pos = magnification*np.concatenate(pos_list)
+    resid = np.concatenate(resid_list)
+    plt.subplots(figsize=(7., 7.))
+    plt.suptitle(exposure.name)
+    plt.hist2d(pos[:, 0], pos[:, 1], weights=resid, range=[[-quarter_stamp_size[0], quarter_stamp_size[0]], [-quarter_stamp_size[1], quarter_stamp_size[1]]], bins=30)
+    plt.colorbar()
+    plt.axis('equal')
+    plt.tight_layout()
+    plt.show()
+
+    print(resid_df)
+
+    return True
+
+
 def psf_study(exposure, logger, args):
     import numpy as np
     from saunerie.plottools import binplot
@@ -117,10 +155,10 @@ def psf_study_reduce(lightcurve, logger, args):
              'poly0_chi2': psfskewness['poly0_chi2'],
              'poly1_chi2': psfskewness['poly1_chi2'],
              'poly2_chi2': psfskewness['poly2_chi2'],
-             'airmass': header['airmass'],
-             'mjd': header['mjd'],
-             'seeing': header['seeing'],
-             'gfseeing': header['gfseeing'],
+             'airmass': float(header['airmass']),
+             'mjd': float(header['mjd']),
+             'seeing': float(header['seeing']),
+             'gfseeing': float(header['gfseeing']),
              'field': header['field'],
              'ccdid': header['ccdid'],
              'qid': header['qid'],
