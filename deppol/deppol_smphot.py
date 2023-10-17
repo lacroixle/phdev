@@ -347,6 +347,7 @@ def smphot_stars_constant(lightcurve, logger, args):
     stars_df['cat_mag'] = cat_calib_table.df.iloc[stars_df['star']]['mag'+lightcurve.filterid[1]].tolist()
     stars_df['cat_emag'] = cat_calib_table.df.iloc[stars_df['star']]['emag'+lightcurve.filterid[1]].tolist()
     stars_df['cat_color'] = (cat_calib_table.df.iloc[stars_df['star']]['magg'] - cat_calib_table.df.iloc[stars_df['star']]['magi']).tolist()
+    stars_df['cat_ecolor'] = np.sqrt(cat_calib_table.df.iloc[stars_df['star']]['emagg']**2+cat_calib_table.df.iloc[stars_df['star']]['emagi']**2).to_list()
     stars_df['sigma_m'] = [stars_lc_df.loc[~stars_lc_df['bad']].loc[stars_lc_df.loc[~stars_lc_df['bad']]['star'] == star]['res'].std() for star in stars_df['star'].tolist()]
     stars_df['ra'] = cat_calib_table.df.iloc[stars_df['star']]['ra']
     stars_df['dec'] = cat_calib_table.df.iloc[stars_df['star']]['dec']

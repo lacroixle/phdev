@@ -12,6 +12,7 @@ def calib(lightcurve, logger, args):
     import matplotlib.pyplot as plt
     import matplotlib
     from saunerie.plottools import binplot
+    from scipy.stats import norm
 
     # matplotlib.use('Agg')
 
@@ -19,7 +20,7 @@ def calib(lightcurve, logger, args):
     df['istar'] = df.index
     df['delta_mag'] = df['m'] - df['cat_mag']
 
-    piedestal = 0.0
+    piedestal = 0.
     df['delta_mage'] = np.sqrt(df['em']**2+df['cat_emag']**2+piedestal**2)
 
     kwargs = dict([(keyword, keyword) for keyword in df.columns])
@@ -79,12 +80,13 @@ def calib(lightcurve, logger, args):
     plt.savefig(lightcurve.path.joinpath("calib/res_chromaticity.png"), dpi=200.)
     plt.close()
 
+    magerr = np.sqrt(dp.em**2+(alpha*dp.cat_ecolor)**2)
     plt.subplots(ncols=1, nrows=1, figsize=(8., 5.))
     plt.title("{}-{}\nResidual plot as a function of star color\n$\chi^2/\mathrm{{ndof}}={:.4f}$".format(lightcurve.name, lightcurve.filterid, chi2ndof))
-    plt.plot(dp.cat_color, res, '.')
+    plt.errorbar(dp.cat_color, res, yerr=magerr, fmt='.')
     plt.grid()
     plt.xlabel("$C_\mathrm{PS1}$ [mag]")
-    plt.ylabel("$m_\mathrm{ZTF}-m_\mathrm{PS1}-ZP-\alpha C_\mathrm{PS1}$ [mag]")
+    plt.ylabel("$m_\mathrm{ZTF}-m_\mathrm{PS1}-ZP-\\alpha C_\\mathrm{PS1}$ [mag]")
     plt.tight_layout()
     plt.savefig(lightcurve.path.joinpath("calib/res_color.png"), dpi=200.)
     plt.close()
@@ -92,7 +94,7 @@ def calib(lightcurve, logger, args):
     plt.subplots(ncols=1, nrows=1, figsize=(8., 5.))
     plt.title("{}-{}\nResidual plot for the calibration fit onto PS1\n$ZP$={:.4f}, $\chi^2/\mathrm{{ndof}}={:.4f}$".format(lightcurve.name, lightcurve.filterid, ZP, chi2ndof))
     xmin, xmax = np.min(dp.cat_mag)-0.2, np.max(dp.cat_mag)+0.2
-    plt.plot(dp.cat_mag, res, '.')
+    plt.errorbar(dp.cat_mag, res, yerr=magerr, fmt='.')
     plt.fill_between([xmin, bright_stars_threshold], [bright_stars_mu-bright_stars_std]*2, [bright_stars_mu+bright_stars_std]*2, color='xkcd:sky blue', alpha=0.4, label='Bright stars - $\sigma_\mathrm{{res}}={:.4f}$'.format(bright_stars_std))
     plt.xlim(xmin, xmax)
     plt.grid()
@@ -103,37 +105,60 @@ def calib(lightcurve, logger, args):
     plt.savefig(lightcurve.path.joinpath("calib/res.png"), dpi=200.)
     plt.close()
 
-
-    plt.subplots(nrows=2, ncols=1, figsize=(10., 6.), gridspec_kw={'hspace': 0.})
+    plt.subplots(nrows=2, ncols=2, figsize=(10., 6.), gridspec_kw={'width_ratios': [5., 1.5], 'hspace': 0., 'wspace': 0.}, sharex=False, sharey=False)
     plt.suptitle("{}-{}\nStandardized residuals for the calibration, wrt star magnitude\npiedestal={}".format(lightcurve.name, lightcurve.filterid, piedestal))
-    plt.subplot(2, 1, 1)
-    xbinned_mag, yplot_stdres, stdres_dispersion = binplot(dp.cat_mag, res/dp.delta_mage, data=False, rms=True, scale=False, nbins=5)
-    plt.plot(dp.cat_mag, res/dp.delta_mage, '.', color='xkcd:light blue')
+    plt.subplot(2, 2, 1)
+    xbinned_mag, yplot_stdres, stdres_dispersion = binplot(dp.cat_mag, res/magerr, data=False, scale=False, nbins=5)
+    plt.plot(dp.cat_mag, res/magerr, '.', color='xkcd:light blue')
     plt.ylabel("$\\frac{m-m_\\mathrm{model}}{\\sigma_m}$ [mag]")
+    plt.xlim([np.min(dp.cat_mag), np.max(dp.cat_mag)])
     plt.grid()
-    plt.subplot(2, 1, 2)
+    plt.subplot(2, 2, 2)
+    plt.hist(res/magerr, bins='auto', orientation='horizontal', density=True)
+    m, s = norm.fit(res/magerr)
+    x = np.linspace(np.min(res/magerr)-0.5, np.max(res/magerr)+0.5)
+    plt.plot(norm.pdf(x, loc=m, scale=s), x, label="$\sim\mathcal{{N}}(\mu={:.2f}, \sigma={:.2f})$".format(m, s))
+    plt.plot(norm.pdf(x, loc=0., scale=1.), x, label="$\sim\mathcal{N}(\mu=0, \sigma=1)$")
+    plt.legend()
+    plt.axis('off')
+    plt.subplot(2, 2, 3)
     plt.plot(xbinned_mag, stdres_dispersion)
+    plt.xlim([np.min(dp.cat_mag), np.max(dp.cat_mag)])
     plt.xlabel("$m_\mathrm{PS1}$ [AB mag]")
     plt.ylabel("$\\sigma_{\\frac{m-m_\\mathrm{model}}{\\sigma_m}}$ [mag]")
-    plt.axhline(1.)
+    # plt.axhline(1.)
     plt.grid()
+    plt.subplot(2, 2, 4)
+    plt.axis('off')
     plt.tight_layout()
     plt.savefig(lightcurve.path.joinpath("calib/pull_mag.png"), dpi=200.)
     plt.close()
 
-    plt.subplots(nrows=2, ncols=1, figsize=(10., 6.), gridspec_kw={'hspace': 0.})
-    plt.suptitle("{}-{}\nStandardized residuals for the calibration fit, wrt star color\npiedestal={}".format(lightcurve.name, lightcurve.filterid, piedestal))
-    plt.subplot(2, 1, 1)
-    xbinned_mag, yplot_stdres, stdres_dispersion = binplot(dp.cat_color, res/dp.delta_mage, data=False, rms=True, scale=False, nbins=5)
-    plt.plot(dp.cat_color, res/dp.delta_mage, '.', color='xkcd:light blue')
+    plt.subplots(nrows=2, ncols=2, figsize=(10., 6.), gridspec_kw={'width_ratios': [5., 1.5], 'hspace': 0., 'wspace': 0.}, sharex=False, sharey=False)
+    plt.suptitle("{}-{}\nStandardized residuals for the calibration, wrt star color\npiedestal={}".format(lightcurve.name, lightcurve.filterid, piedestal))
+    plt.subplot(2, 2, 1)
+    xbinned_mag, yplot_stdres, stdres_dispersion = binplot(dp.cat_color, res/magerr, data=False, scale=False, nbins=5)
+    plt.plot(dp.cat_color, res/magerr, '.', color='xkcd:light blue')
     plt.ylabel("$\\frac{m-m_\\mathrm{model}}{\\sigma_m}$ [mag]")
+    plt.xlim([np.min(dp.cat_color), np.max(dp.cat_color)])
     plt.grid()
-    plt.subplot(2, 1, 2)
+    plt.subplot(2, 2, 2)
+    plt.hist(res/magerr, bins='auto', orientation='horizontal', density=True)
+    m, s = norm.fit(res/magerr)
+    x = np.linspace(np.min(res/magerr)-0.5, np.max(res/magerr)+0.5)
+    plt.plot(norm.pdf(x, loc=m, scale=s), x, label="$\sim\mathcal{{N}}(\mu={:.2f}, \sigma={:.2f})$".format(m, s))
+    plt.plot(norm.pdf(x, loc=0., scale=1.), x, label="$\sim\mathcal{N}(\mu=0, \sigma=1)$")
+    plt.legend()
+    plt.axis('off')
+    plt.subplot(2, 2, 3)
     plt.plot(xbinned_mag, stdres_dispersion)
     plt.xlabel("$C_\mathrm{PS1}$ [mag]")
     plt.ylabel("$\\sigma_{\\frac{m-m_\\mathrm{model}}{\\sigma_m}}$ [mag]")
-    plt.axhline(1.)
+    plt.xlim([np.min(dp.cat_color), np.max(dp.cat_color)])
+    # plt.axhline(1.)
     plt.grid()
+    plt.subplot(2, 2, 4)
+    plt.axis('off')
     plt.tight_layout()
     plt.savefig(lightcurve.path.joinpath("calib/pull_color.png"), dpi=200.)
     plt.close()
@@ -146,6 +171,7 @@ def calib(lightcurve, logger, args):
                  'ndof': len(dp.nt),
                  'chi2/ndof': np.sum(wres**2).item()/(len(dp.nt)-2),
                  'outlier_count': np.sum(solver.bads).item(),
+                 'piedestal': piedestal,
                  'bright_stars_res_std': bright_stars_std.item(),
                  'bright_stars_res_mu': bright_stars_mu.item(),
                  'bright_stars_threshold': bright_stars_threshold,
