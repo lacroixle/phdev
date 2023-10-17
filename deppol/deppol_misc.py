@@ -100,9 +100,14 @@ def psf_study(exposure, logger, args):
     # poly0, ([poly0_chi2], _, _, _) = Polynomial.fit(gmag_binned, d_mag_binned, 0, w=1./ed_mag_binned, full=True)
     # poly1, ([poly1_chi2], _, _, _) = Polynomial.fit(gmag_binned, d_mag_binned, 1, w=1./ed_mag_binned, full=True)
     # poly2, ([poly2_chi2], _, _, _) = Polynomial.fit(gmag_binned, d_mag_binned, 2, w=1./ed_mag_binned, full=True)
-    poly0, ([poly0_chi2], _, _, _) = Polynomial.fit(gmag_binned, d_mag_binned, 0, w=1./ed_mag_binned, full=True)
-    poly1, ([poly1_chi2], _, _, _) = Polynomial.fit(gmag_binned, d_mag_binned, 1, w=1./ed_mag_binned, full=True)
-    poly2, ([poly2_chi2], _, _, _) = Polynomial.fit(gmag_binned, d_mag_binned, 2, w=1./ed_mag_binned, full=True)
+    try:
+        poly0, ([poly0_chi2], _, _, _) = Polynomial.fit(gmag_binned, d_mag_binned, 0, w=1./ed_mag_binned, full=True)
+        poly1, ([poly1_chi2], _, _, _) = Polynomial.fit(gmag_binned, d_mag_binned, 1, w=1./ed_mag_binned, full=True)
+        poly2, ([poly2_chi2], _, _, _) = Polynomial.fit(gmag_binned, d_mag_binned, 2, w=1./ed_mag_binned, full=True)
+    except Exception as e:
+        print("Can't fit polynomial for quadrant {}!".format(exposure.name))
+        print(e)
+        return False
 
     polyfit0_chi2 = poly0_chi2/(len(gmag_binned)-1)
     polyfit1_chi2 = poly1_chi2/(len(gmag_binned)-2)
@@ -164,7 +169,8 @@ def psf_study_reduce(lightcurve, logger, args):
              'qid': header['qid'],
              'rcid': header['rcid'],
              'filtercode': header['filtercode'],
-             'skylev': header['skylev']}
+             'skylev': header['skylev'],
+             'gain': header['gain']}
 
         psfskewness_list.append(d)
 

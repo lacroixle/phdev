@@ -174,7 +174,8 @@ def estimate_lc_params(ztfname):
 
         # Zero order SN event time interval
         if args.onoff and ztfname in onoff_df.index:
-            t_0 = onoff_df.loc[ztfname, 't0']
+            # t_0 = onoff_df.loc[ztfname, 't0']
+            t_0 = salt_df.loc[ztfname, 't0']
             t_inf = onoff_df.loc[ztfname, 't_inf']
             t_sup = onoff_df.loc[ztfname, 't_sup']
 

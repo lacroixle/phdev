@@ -19,7 +19,7 @@ if __name__ == '__main__':
     if args.ztfname:
         lc_files = [args.lc_folder.joinpath("{}.hd5".format(args.ztfname))]
     else:
-        lc_files = [args.lc_folder.glob("*.hd5")]
+        lc_files = list(args.lc_folder.glob("*.hd5"))
 
     quadrant_list = []
     for lc_file in lc_files:

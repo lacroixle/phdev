@@ -28,6 +28,7 @@ if __name__ == '__main__':
     argparser.add_argument('-j', '--n_jobs', type=int, default=1)
     argparser.add_argument('--use-raw', action='store_true')
     argparser.add_argument('--ztfin2p3-path', type=pathlib.Path)
+    argparser.add_argument('--filtercode', choices=filtercodes+['all'], default='all')
 
     args = argparser.parse_args()
     args.output = args.output.expanduser().resolve()
@@ -47,10 +48,15 @@ if __name__ == '__main__':
     prepare_logger.info("Quadrant list={}".format(args.quadrant_list))
     prepare_logger.info("Looking for list in all filtercodes")
 
+    if args.filtercode == 'all':
+        filtercode_choice = filtercodes
+    else:
+        filtercode_choice = [args.filtercode]
+
     quadrant_lists={}
-    for filtercode in filtercodes:
+    for filtercode in filtercode_choice:
         quadrant_list = args.quadrant_list.with_name("{}_{}.txt".format(args.quadrant_list.name, filtercode))
-        prepare_logger.info("Looking for {}.".format(quadrant_list))
+        prepare_logger.info("Looking for {}".format(quadrant_list))
         if quadrant_list.exists():
 
             with open(quadrant_list, 'r') as f:

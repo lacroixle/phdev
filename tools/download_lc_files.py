@@ -16,7 +16,7 @@ filtercodes = ['zr', 'zg', 'zi']
 argparser = argparse.ArgumentParser(description="")
 argparser.add_argument('--ztfname', type=str, help="", required=True)
 argparser.add_argument('--lc-folder', dest='lc_folder', type=pathlib.Path, help="", required=True)
-argparser.add_argument('--filtercode', type=str, choices=filtercodes, help="")
+argparser.add_argument('--filtercode', type=str, choices=filtercodes+['all'], default='all', help="")
 argparser.add_argument('-j', dest='n_jobs', type=int, default=1, help="")
 args = argparser.parse_args()
 
