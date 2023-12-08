@@ -8,7 +8,7 @@ import traceback
 import pandas as pd
 import numpy as np
 from ztfimg.science import ScienceQuadrant
-from ztfimg.stamps import stamp_it
+from astropy.nddata import Cutout2D
 from astropy.coordinates import SkyCoord
 import matplotlib.pyplot as plt
 from astropy.visualization import make_lupton_rgb
@@ -16,27 +16,32 @@ from joblib import Parallel, delayed
 from scipy.interpolate import RegularGridInterpolator
 from scipy.ndimage import gaussian_filter
 from astropy.io import fits
+from astropy.wcs import WCS
 
 from utils import filtercodes
 
 
-def sample_quadrant_tanspace(quadrant, wcs, center, stamp_size):
+def sample_quadrant_tanspace(wcs, center, stamp_size):
     center_px = center.to_pixel(wcs)
-    pixels = np.stack([np.meshgrid(np.linspace(center_px[0] - stamp_size/2., center_px[0] + stamp_size/2., stamp_size),
-                                   np.linspace(center_px[1] - stamp_size/2., center_px[1] + stamp_size/2., stamp_size))], axis=0).reshape(2, stamp_size, stamp_size).T.reshape(stamp_size**2, 2)
+    # pixels = np.stack([np.meshgrid(np.linspace(center_px[0] - stamp_size/2., center_px[0] + stamp_size/2., stamp_size),
+    #                                np.linspace(center_px[1] - stamp_size/2., center_px[1] + stamp_size/2., stamp_size))], axis=0).reshape(2, stamp_size, stamp_size).T.reshape(stamp_size**2, 2)
 
+    # pixels = np.stack([np.meshgrid(np.linspace(center_px[0] - stamp_size/2., center_px[0] + stamp_size/2., stamp_size),
+    #                                np.linspace(center_px[1] - stamp_size/2., center_px[1] + stamp_size/2., stamp_size), indexing='xy')], axis=0).reshape(2, stamp_size, stamp_size).T.reshape(stamp_size**2, 2)
+    pixels = np.stack([np.meshgrid(np.linspace(center_px[0] - stamp_size/2., center_px[0] + stamp_size/2., stamp_size),
+                                   np.linspace(center_px[1] - stamp_size/2., center_px[1] + stamp_size/2., stamp_size), indexing='xy')], axis=0).T.reshape(stamp_size**2, 2)
     return wcs.pixel_to_world(pixels[:, 0], pixels[:, 1])
 
 
-def sample_quadrant(quadrant, wcs, tanspace_radec, stamp_size, gaussian_blur_sigma=0.):
-    pixels = tanspace_radec.to_pixel(wcs)
-
-    # if gaussian_blur_sigma > 1e-3:
-    #     quadrant = gaussian_filter(quadrant, gaussian_blur_sigma)
+def sample_quadrant(quadrant, wcs, zp, tanspace_radec, stamp_size, sn, gaussian_blur_sigma=0.):
+    pixels = np.array(tanspace_radec.to_pixel(wcs, origin=0, mode='all')).T
+    # pixels[:, [0, 1]] = pixels[:, [1, 0]]
+    sn_pixel = sn.to_pixel(wcs)
 
     interpolator = RegularGridInterpolator([np.arange(0., wcs.array_shape[1]), np.arange(0., wcs.array_shape[0])], quadrant.T, method='linear', bounds_error=False, fill_value=0.)
 
-    return interpolator(pixels).reshape(stamp_size, stamp_size).T
+    return interpolator(pixels).reshape(stamp_size, stamp_size)
+    # return 10**(0.4*(-2.5*np.log10(interpolator(pixels).reshape(stamp_size, stamp_size)) - zp))
 
 
 def get_t0_quadrant(hdfstore, filtercode):
@@ -49,10 +54,12 @@ def get_t0_quadrant(hdfstore, filtercode):
     t0_quadrant_name = lc_quadrants.iloc[t0_idx]['ipac_file']
 
     z = ScienceQuadrant.from_filename(t0_quadrant_name + "_sciimg.fits")
-    t0_quadrant = np.asarray(z.get_data(applymask=False))
-    wcs = z.wcs
+    with fits.open(z._filepath) as hdul:
+        wcs = WCS(hdul[0].header)
+    t0_quadrant = np.asarray(z.get_data(applymask=True))
+    # wcs = z.wcs
 
-    return t0_quadrant, wcs, z.header['seeing']
+    return t0_quadrant, wcs, float(z.header['seeing']), float(z.header['magzp'])
 
 
 if __name__ == '__main__':
@@ -96,8 +103,8 @@ if __name__ == '__main__':
                 tanspace_radec = None
                 for filtercode in filtercodes:
                     if '/lc_{}'.format(filtercode) in hdfstore.keys():
-                        t0_quadrant, wcs, _ = get_t0_quadrant(hdfstore, filtercode)
-                        tanspace_radec = sample_quadrant_tanspace(t0_quadrant, wcs, object_skycoord, args.stamp_size)
+                        _, wcs, _, _ = get_t0_quadrant(hdfstore, filtercode)
+                        tanspace_radec = sample_quadrant_tanspace(wcs, object_skycoord, args.stamp_size)
                         break
 
                 if not tanspace_radec:
@@ -117,9 +124,13 @@ if __name__ == '__main__':
                         arrow_tail += d
 
                 for filtercode in filtercodes:
-                    if '/lc_{}'.format(filtercode) in hdfstore.keys():
-                        t0_quadrant, wcs, _ = get_t0_quadrant(hdfstore, filtercode)
-                        stamps[filtercode] = sample_quadrant(t0_quadrant, wcs, tanspace_radec, args.stamp_size)
+                    #if '/lc_{}'.format(filtercode) in hdfstore.keys():
+                    if filtercode == 'zg':
+                        t0_quadrant, wcs, _, zp = get_t0_quadrant(hdfstore, filtercode)
+                        print(filtercode)
+                        stamps[filtercode] = sample_quadrant(t0_quadrant, wcs, zp, tanspace_radec, args.stamp_size, object_skycoord)
+                        # plt.imshow(stamps[filtercode])
+                        # plt.show()
                     else:
                         stamps[filtercode] = None
 
@@ -127,8 +138,12 @@ if __name__ == '__main__':
                 if stamps[filtercode] is None:
                     stamps[filtercode] = np.zeros([args.stamp_size, args.stamp_size])
 
-            color_stamp = make_lupton_rgb(stamps['zr'], stamps['zg'], np.zeros([args.stamp_size, args.stamp_size]), stretch=100., Q=10.)
-            #color_stamp = make_lupton_rgb(stamps['zi'], stamps['zr'], stamps['zg'], stretch=100., Q=10.)
+            # color_stamp = make_lupton_rgb(stamps['zr'], stamps['zg'], np.zeros([args.stamp_size, args.stamp_size]), stretch=10., Q=1.)
+            color_stamp = make_lupton_rgb(stamps['zi'], stamps['zr'], stamps['zg'], stretch=100., Q=10.)
+            #plt.imshow(stamps['zg'])
+            plt.imshow(np.log10(stamps['zg']))
+            plt.show()
+            return
             plt.figure(figsize=(10., 10.), tight_layout=True)
             fig = plt.imshow(color_stamp)
             if args.arrow:
@@ -138,6 +153,7 @@ if __name__ == '__main__':
             plt.axis('off')
             #plt.savefig(args.output.joinpath("{}_{}.png".format(sn_info['ztfname'].item(), args.stamp_size)), dpi=150., pad_inches=0., bbox_inches='tight')
             plt.savefig(args.output.joinpath("{}.png".format(sn_info['ztfname'].item())), dpi=400., pad_inches=0., bbox_inches='tight')
+            plt.show()
             plt.close()
 
             print(".", end="", flush=True)

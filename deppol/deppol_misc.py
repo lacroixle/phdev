@@ -188,7 +188,8 @@ def retrieve_catalogs(lightcurve, logger, args):
     import matplotlib
     import matplotlib.pyplot as plt
 
-    from utils import ps1_cat_remove_bad
+    from utils import ps1_cat_remove_bad, get_ubercal_catalog
+
 
     matplotlib.use('Agg')
 
@@ -289,8 +290,21 @@ def retrieve_catalogs(lightcurve, logger, args):
                 catalog_df['pmRA'] = catalog_df['pmRA']/np.cos(np.deg2rad(catalog_df['dec']))/1000./3600./365.25 # TODO: check if dec should be J2000 or something else
                 catalog_df['pmDE'] = catalog_df['pmDE']/1000./3600./365.25
 
-            catalog_df.to_parquet(catalog_path)
             logger.info("Saving catalog into {}".format(catalog_path))
+            catalog_df.to_parquet(catalog_path)
+        else:
+            logger.info("Found: {}".format(catalog_path))
+            catalog_df = pd.read_parquet(catalog_path)
+
+        return catalog_df
+
+    def _get_ubercal_catalog(name, gaiaids):
+        catalog_path = lightcurve.ext_catalogs_path.joinpath("ubercal_{}_full.parquet".format(name))
+        logger.info("Getting Ubercal catalog {}...".format(name))
+        if not catalog_path.exists() or args.recompute_ext_catalogs:
+            catalog_df = get_ubercal_catalog(name, gaiaids, args.ubercal_config_path)
+            logger.info("Saving catalog into {}".format(catalog_path))
+            catalog_df.to_parquet(catalog_path)
         else:
             logger.info("Found: {}".format(catalog_path))
             catalog_df = pd.read_parquet(catalog_path)
@@ -315,9 +329,27 @@ def retrieve_catalogs(lightcurve, logger, args):
     gaia_df = gaia_df.iloc[i[i>=0]].reset_index(drop=True)
     ps1_df = ps1_df.iloc[i>=0].reset_index(drop=True)
 
-    # Color-color plot
+    logger.info("Retrieving self Ubercal")
+    ubercal_self_df = _get_ubercal_catalog('self', gaia_df['Source'].tolist())
+    logger.info("Found {} stars".format(len(ubercal_self_df)))
+
+    logger.info("Retrieving PS1 Ubercal")
+    ubercal_ps1_df = _get_ubercal_catalog('ps1', gaia_df['Source'].tolist())
+    logger.info("Found {} stars".format(len(ubercal_ps1_df)))
+
+    common_gaiaids = list(set(set(ubercal_self_df.index) & set(ubercal_ps1_df.index) & set(gaia_df['Source'])))
+    logger.info("Keeping {} stars in common in all catalogs".format(len(common_gaiaids)))
+    gaiaid_mask = gaia_df['Source'].apply(lambda x: x in common_gaiaids).tolist()
+    gaia_df = gaia_df.loc[gaiaid_mask]
+    ps1_df = ps1_df.loc[gaiaid_mask]
+    ps1_df = ps1_df.set_index(gaia_df['Source']).loc[common_gaiaids].reset_index(drop=True)
+    gaia_df = gaia_df.set_index('Source').loc[common_gaiaids].reset_index()
+    ubercal_self_df = ubercal_self_df.filter(items=common_gaiaids, axis=0).reset_index()
+    ubercal_ps1_df = ubercal_ps1_df.filter(items=common_gaiaids, axis=0).reset_index()
+
+    # PS1 color-color plot
     plt.subplots(figsize=(6., 6.))
-    plt.suptitle("Color-color plot of the PS1 catalog")
+    plt.suptitle("PS1 color-color plot")
     plt.scatter((ps1_df['gmag']-ps1_df['rmag']).to_numpy(), (ps1_df['rmag']-ps1_df['imag']).to_numpy(), c=ps1_df['gmag'], s=1.)
     plt.xlabel("$g_\mathrm{PS1}-r_\mathrm{PS1}$ [mag]")
     plt.ylabel("$r_\mathrm{PS1}-i_\mathrm{PS1}$ [mag]")
@@ -325,12 +357,27 @@ def retrieve_catalogs(lightcurve, logger, args):
     plt.grid()
     plt.colorbar(label="$g_\mathrm{PS1}$ [mag]")
     plt.tight_layout()
-    plt.savefig(lightcurve.ext_catalogs_path.joinpath("color_color.png"), dpi=300.)
+    plt.savefig(lightcurve.ext_catalogs_path.joinpath("ps1_color_color.png"), dpi=300.)
+    plt.close()
+
+    # Self Ubercal color-color plot
+    plt.subplots(figsize=(6., 6.))
+    plt.suptitle("Self Ubercal color-color plot")
+    plt.scatter((ubercal_self_df['zgmag']-ubercal_self_df['zrmag']).to_numpy(), (ubercal_self_df['zrmag']-ubercal_self_df['zimag']).to_numpy(), c=ubercal_self_df['zgmag'], s=1.)
+    plt.xlabel("$g_\mathrm{Ubercal}-r_\mathrm{Ubercal}$ [mag]")
+    plt.ylabel("$r_\mathrm{Ubercal}-i_\mathrm{Ubercal}$ [mag]")
+    plt.axis('equal')
+    plt.grid()
+    plt.colorbar(label="$g_\mathrm{Ubercal}$ [mag]")
+    plt.tight_layout()
+    plt.savefig(lightcurve.ext_catalogs_path.joinpath("self_ubercal_color_color.png"), dpi=300.)
     plt.close()
 
     logger.info("Saving matched catalogs")
     gaia_df.to_parquet(lightcurve.ext_catalogs_path.joinpath("gaia.parquet"))
     ps1_df.to_parquet(lightcurve.ext_catalogs_path.joinpath("ps1.parquet"))
+    ubercal_self_df.to_parquet(lightcurve.ext_catalogs_path.joinpath("ubercal_self.parquet"))
+    ubercal_ps1_df.to_parquet(lightcurve.ext_catalogs_path.joinpath("ubercal_ps1.parquet"))
 
     return True
 

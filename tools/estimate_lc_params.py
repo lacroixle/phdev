@@ -60,9 +60,9 @@ if args.onoff:
 # salt_df = pd.read_csv(cosmo_dr_folder.joinpath("tables/archived/2021oct26/DR2_SALT2fit_params.csv"), delimiter=",", index_col="name")
 # redshift_df = pd.read_csv(cosmo_dr_folder.joinpath("tables/archived/2021oct26/DR2_redshifts.csv"), delimiter=",", index_col="ztfname")
 # coords_df = pd.read_csv(cosmo_dr_folder.joinpath("tables/archived/2021oct26/ztfdr2_coords.csv"), delimiter=" ", index_col="ztfname")
-salt_df = pd.read_csv(cosmo_dr_folder.joinpath("params/DR2_SALT2fit_params.csv"), index_col='name')
-redshift_df = pd.read_csv(cosmo_dr_folder.joinpath("params/DR2_redshifts.csv"), index_col='ztfname')
-coords_df = pd.read_csv(cosmo_dr_folder.joinpath("ztfdr2_coords.csv"), delimiter=' ', index_col='ztfname')
+salt_df = pd.read_csv(cosmo_dr_folder.joinpath("tables/ztfdr2_salt2_params.csv"), index_col='ztfname')
+redshift_df = pd.read_csv(cosmo_dr_folder.joinpath("tables/ztfdr2_redshifts.csv"), index_col='ztfname')
+coords_df = pd.read_csv(cosmo_dr_folder.joinpath("tables/ztfdr2_coordinates.csv"), index_col='ztfname')
 
 
 # lightcurve_folder = cosmo_dr_folder.joinpath("lightcurves/previous_versions/2021oct26").expanduser().resolve()
@@ -114,7 +114,7 @@ def estimate_lc_params(ztfname):
         sql_lc_df = None
         def _sql_request():
             zquery = query.ZTFQuery()
-            zquery.load_metadata(radec=(redshift_df.at[ztfname, 'host_ra'], redshift_df.at[ztfname, 'host_dec']), sql_query="infobits < 33554432 and field <= 1895")
+            zquery.load_metadata(radec=(coords_df.at[ztfname, 'ra'], coords_df.at[ztfname, 'dec']), sql_query="infobits < 33554432 and field <= 1895")
             sql_lc_df = zquery.metatable
 
             if len(sql_lc_df) == 0:
@@ -174,7 +174,6 @@ def estimate_lc_params(ztfname):
 
         # Zero order SN event time interval
         if args.onoff and ztfname in onoff_df.index:
-            # t_0 = onoff_df.loc[ztfname, 't0']
             t_0 = salt_df.loc[ztfname, 't0']
             t_inf = onoff_df.loc[ztfname, 't_inf']
             t_sup = onoff_df.loc[ztfname, 't_sup']
@@ -190,23 +189,24 @@ def estimate_lc_params(ztfname):
             t_sup = t_0 + t0_sup
 
         # Get gaia calibrators
-        if output_folder:
-            try:
-                gaia_cal_df = io.GaiaCalibrators.fetch_data(rcids, fields).drop(labels=['ps1_id', 'sdssdr13_id'], axis=1)
-            except Exception as e:
-                print(e)
-                gaia_cal_df = pd.DataFrame()
-            else:
-                gaia_cal_df.reset_index(inplace=True)
-                gaia_cal_df.set_index('Source', inplace=True)
-                gaia_cal_df.rename(columns={'level_1': 'field', 'level_0': 'rcid'}, inplace=True)
+        # if output_folder:
+        #     try:
+        #         gaia_cal_df = io.GaiaCalibrators.fetch_data(rcids, fields).drop(labels=['ps1_id', 'sdssdr13_id'], axis=1)
+        #     except Exception as e:
+        #         print(e)
+        #         gaia_cal_df = pd.DataFrame()
+        #     else:
+        #         gaia_cal_df.reset_index(inplace=True)
+        #         gaia_cal_df.set_index('Source', inplace=True)
+        #         gaia_cal_df.rename(columns={'level_1': 'field', 'level_0': 'rcid'}, inplace=True)
+        gaia_cal_df = pd.DataFrame()
 
         sn_info = {}
         sn_info['ztfname'] = ztfname
-        sn_info['sn_ra'] = float(coords_df.loc[ztfname]['sn_ra'])
-        sn_info['sn_dec'] = coords_df.loc[ztfname]['sn_dec']
-        sn_info['host_ra'] = coords_df.loc[ztfname]['host_ra']
-        sn_info['host_dec'] = coords_df.loc[ztfname]['host_dec']
+        sn_info['sn_ra'] = float(coords_df.loc[ztfname]['ra'])
+        sn_info['sn_dec'] = coords_df.loc[ztfname]['dec']
+        sn_info['host_ra'] = coords_df.loc[ztfname]['ra']
+        sn_info['host_dec'] = coords_df.loc[ztfname]['dec']
         sn_info['redshift'] = redshift_df.loc[ztfname]['redshift']
         sn_info['fieldid'] = list(set(sql_lc_df['field']))
         sn_info['t0mjd'] = t_0
@@ -220,8 +220,10 @@ def estimate_lc_params(ztfname):
             lc_f_df = lc_df.loc[lc_df['filtercode'] == filtercode]
 
             if args.onoff and ztfname in onoff_df.index:
-                t_min = onoff_df.loc[ztfname, 't_min']
-                t_max = onoff_df.loc[ztfname, 't_max']
+                # t_min = onoff_df.loc[ztfname, 't_min']
+                # t_max = onoff_df.loc[ztfname, 't_max']
+                t_min = onoff_df.loc[ztfname, 't_inf']-200.
+                t_max = onoff_df.loc[ztfname, 't_sup']
 
                 if np.isnan(t_min):
                     t_min = lc_f_df.index.min()
@@ -357,7 +359,7 @@ def estimate_lc_params(ztfname):
         with open(output_folder.joinpath("{}.txt".format(ztfname)), mode='w') as f:
             f.write("{}\n".format(ztfname))
             f.write("z={}\n".format(redshift_df.loc[ztfname]['redshift']))
-            f.write("(ra, dec)=({}, {})".format(redshift_df.loc[ztfname]['host_ra'], redshift_df.loc[ztfname]['host_dec']))
+            f.write("(ra, dec)=({}, {})".format(coords_df.loc[ztfname]['ra'], coords_df.loc[ztfname]['dec']))
 
         if len(ztfnames) > 1 and verbosity == 0:
             print(".", end="", flush=True)

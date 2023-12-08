@@ -309,7 +309,7 @@ if __name__ == '__main__':
     argparser.add_argument('--parallel-reduce', action='store_true', help="If set, parallelize reduce operations (if op has a parallel codepath).")
     argparser.add_argument('--refexp', type=str)
     argparser.add_argument('--compress', action='store_true', help="If set, work with compressed working directory")
-    argparser.add_argument('--photom-cat', choices=['gaia', 'ps1', 'ubercal'], type=str, help="Star catalog to use for relative photometry.")
+    argparser.add_argument('--photom-cat', choices=['gaia', 'ps1', 'ubercal_self', 'ubercal_ps1'], type=str, help="Star catalog to use for relative photometry.")
     argparser.add_argument('--use-gaia-stars', action='store_true', help="If set, uses Gaia to find stars (ie to build the standalone_stars.list catalog)")
     argparser.add_argument('--ztfin2p3-path', type=pathlib.Path)
     argparser.add_argument('--ext-catalog-cache', type=pathlib.Path)
@@ -317,6 +317,7 @@ if __name__ == '__main__':
     argparser.add_argument('--footprints', type=pathlib.Path)
     argparser.add_argument('--starflats', action='store_true', help="Indicates we are processing starflats. This changes some behaviours in the pipeline (for example no PS1 catalog gets retrieved).")
     argparser.add_argument('--photom-use-aper', action='store_true', help="Use aperture catalog for relative photometry.")
+    argparser.add_argument('--ubercal-config-path', type=pathlib.Path, help="Path of the Ubercal configuration file.")
 
     logger = logging.getLogger("main")
     #logger.addHandler(logging.StreamHandler())

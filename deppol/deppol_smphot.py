@@ -204,40 +204,43 @@ def smphot_stars(lightcurve, logger, args):
             columns={'gmag': 'magg', 'rmag': 'magr', 'imag': 'magi', 'e_gmag': 'emagg', 'e_rmag': 'emagr', 'e_imag': 'emagi'})
         calib_df.insert(2, column='n', value=1)
 
-    elif args.photom_cat == 'ubercal':
-        raise NotImplementedError
+    elif args.photom_cat == 'ubercal_self' or args.photom_cat == 'ubercal_ps1':
+        cat_stars_df.dropna(subset=['zgmag', 'zrmag', 'zimag', 'ezgmag', 'ezrmag', 'ezimag'], inplace=True)
+        calib_df = cat_stars_df[['ra', 'dec', 'zgmag', 'zrmag', 'zimag', 'ezgmag', 'ezrmag', 'ezimag']].rename(
+            columns={'zgmag': 'magg', 'zrmag': 'magr', 'zimag': 'magi', 'ezgmag': 'emagg', 'ezrmag': 'emagr', 'ezimag': 'emagi'})
+        calib_df.insert(2, column='n', value=1)
     else:
         raise NotImplementedError
 
     # Filter stars by SN proximity (in some radius defined by --smphot-stars-radius) and magnitude
     logger.info("Total star count={}".format(len(calib_df)))
 
-    logger.info("Removing faint stars (mag>=20)")
-    calib_df = calib_df.loc[calib_df['magg']<=20.]
-    logger.info("Selecting brigthest stars (up to mag=17)")
-    bright_calib_df = calib_df.loc[calib_df['magg']<=17.]
-    logger.info(" {} bright stars".format(len(bright_calib_df)))
-    calib_df = calib_df.loc[calib_df['magg']>17.]
+    # logger.info("Removing faint stars (mag>=20)")
+    # calib_df = calib_df.loc[calib_df['magg']<=20.]
+    # logger.info("Selecting brigthest stars (up to mag=17)")
+    # bright_calib_df = calib_df.loc[calib_df['magg']<=17.]
+    # logger.info(" {} bright stars".format(len(bright_calib_df)))
+    # calib_df = calib_df.loc[calib_df['magg']>17.]
 
-    disc_radius = 0.5*u.deg
-    sn_parameters = pd.read_hdf(args.lc_folder.joinpath("{}.hd5".format(lightcurve.name)), key='sn_info')
-    sn_skycoord = SkyCoord(ra=sn_parameters['sn_ra'], dec=sn_parameters['sn_dec'], unit='deg')
-    gaia_stars_skycoords = SkyCoord(ra=calib_df['ra'], dec=calib_df['dec'], unit='deg')
+    # disc_radius = 0.5*u.deg
+    # sn_parameters = pd.read_hdf(args.lc_folder.joinpath("{}.hd5".format(lightcurve.name)), key='sn_info')
+    # sn_skycoord = SkyCoord(ra=sn_parameters['sn_ra'], dec=sn_parameters['sn_dec'], unit='deg')
+    # gaia_stars_skycoords = SkyCoord(ra=calib_df['ra'], dec=calib_df['dec'], unit='deg')
 
-    idxc, idxcatalog, d2d, d3d = sn_skycoord.search_around_sky(gaia_stars_skycoords, disc_radius)
+    # idxc, idxcatalog, d2d, d3d = sn_skycoord.search_around_sky(gaia_stars_skycoords, disc_radius)
 
-    inside_calib_df = calib_df.iloc[idxc]
+    # inside_calib_df = calib_df.iloc[idxc]
 
-    logger.info("Total star count in a {} radius around SN: {} (excluding bright stars)".format(disc_radius, len(inside_calib_df)))
-    calib_df = pd.concat([bright_calib_df, inside_calib_df])
-    logger.info("Total stars: {}".format(len(calib_df)))
+    # logger.info("Total star count in a {} radius around SN: {} (excluding bright stars)".format(disc_radius, len(inside_calib_df)))
+    # calib_df = pd.concat([bright_calib_df, inside_calib_df])
+    # logger.info("Total stars: {}".format(len(calib_df)))
 
-    logger.info("Removing stars outside of the reference quadrant")
-    gaia_stars_skycoords = SkyCoord(ra=calib_df['ra'], dec=calib_df['dec'], unit='deg')
-    inside = ref_exposure.wcs.footprint_contains(gaia_stars_skycoords)
-    gaia_stars_skycoords = gaia_stars_skycoords[inside]
-    calib_df = calib_df.loc[inside]
-    logger.info("New star count={}".format(len(calib_df)))
+    # logger.info("Removing stars outside of the reference quadrant")
+    # gaia_stars_skycoords = SkyCoord(ra=calib_df['ra'], dec=calib_df['dec'], unit='deg')
+    # inside = ref_exposure.wcs.footprint_contains(gaia_stars_skycoords)
+    # gaia_stars_skycoords = gaia_stars_skycoords[inside]
+    # calib_df = calib_df.loc[inside]
+    # logger.info("New star count={}".format(len(calib_df)))
 
 
     lightcurve.smphot_stars_path.mkdir(exist_ok=True)

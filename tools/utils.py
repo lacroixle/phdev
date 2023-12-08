@@ -4,6 +4,7 @@ import pathlib
 from collections.abc import Iterable
 import itertools
 import pickle
+import yaml
 
 import numpy as np
 from croaks.match import NearestNeighAssoc
@@ -682,3 +683,29 @@ def RobustPolynomialFit(x, y, degree, dy=None, just_chi2=False):
 def create_2D_mesh_grid(*meshgrid_space):
     meshgrid = np.meshgrid(*meshgrid_space)
     return np.array([meshgrid[0], meshgrid[1]]).T.reshape(-1, 2)
+
+
+def get_ubercal_catalog(name, gaiaids, ubercal_config_path):
+    with open(ubercal_config_path, 'r') as f:
+        ubercal_config = yaml.load(f, Loader=yaml.Loader)
+
+    def _get_cat(filtercode):
+        cat_df = pd.read_parquet(pathlib.Path(ubercal_config['paths']['ubercal']).joinpath(ubercal_config['paths'][name][filtercode]), filters=[('Source', 'in', gaiaids)], engine='pyarrow').set_index('Source')
+        cat_df = cat_df.loc[cat_df['n_obs']>=ubercal_config['config']['min_measure']]
+        return cat_df
+
+    cat_g_df = _get_cat('zg')
+    cat_r_df = _get_cat('zr')
+    cat_i_df = _get_cat('zi')
+
+    common_stars = list(set(set(cat_g_df.index.tolist()) & set(cat_r_df.index.tolist()) & set(cat_i_df.index.tolist())))
+
+    cat_g_df = cat_g_df.filter(items=common_stars, axis=0)
+    cat_r_df = cat_r_df.filter(items=common_stars, axis=0)
+    cat_i_df = cat_i_df.filter(items=common_stars, axis=0)
+
+    cat_g_df.rename(columns={'calmag_weighted_mean': 'zgmag', 'calmag_weighted_std': 'ezgmag', 'n_obs': 'zg_n_obs', 'chi2_Source_res': 'zg_chi2_Source_res'}, inplace=True)
+    cat_df = pd.concat([cat_g_df, cat_r_df[['calmag_weighted_mean', 'calmag_weighted_std', 'n_obs', 'chi2_Source_res']].rename(columns={'calmag_weighted_mean': 'zrmag', 'calmag_weighted_std': 'ezrmag', 'n_obs': 'zr_n_obs', 'chi2_Source_res': 'zr_chi2_Source_res'}),
+                        cat_i_df[['calmag_weighted_mean', 'calmag_weighted_std', 'n_obs', 'chi2_Source_res']].rename(columns={'calmag_weighted_mean': 'zimag', 'calmag_weighted_std': 'ezimag', 'n_obs': 'zi_n_obs', 'chi2_Source_res': 'zi_chi2_Source_res'})], axis=1)
+
+    return cat_df

@@ -165,7 +165,7 @@ class Exposure(_Exposure):
 
         if pm_correction:
             obsmjd = self.mjd
-            if cat_name == 'gaia':
+            if cat_name == 'gaia' or cat_name == 'ubercal_self' or cat_name == 'ubercal_ps1':
                 ext_cat_df.fillna(0., inplace=True)
                 ext_cat_df['ra'] = ext_cat_df['ra']+(obsmjd-j2000mjd)*ext_cat_df['pmRA']
                 ext_cat_df['dec'] = ext_cat_df['dec']+(obsmjd-j2000mjd)*ext_cat_df['pmDE']
@@ -289,7 +289,7 @@ class _Lightcurve:
 
     @property
     def ext_star_catalogs_name(self):
-        return ['gaia', 'ps1', 'ubercal']
+        return ['gaia', 'ps1', 'ubercal_self', 'ubercal_ps1']
 
     def get_exposures(self, files_to_check=None, ignore_noprocess=False):
         raise NotImplementedError()
