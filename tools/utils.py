@@ -11,7 +11,7 @@ from croaks.match import NearestNeighAssoc
 import pandas as pd
 from astropy.io import fits
 from astropy.wcs import WCS
-from astropy.coordinates import SkyCoord
+from astropy.coordinates import SkyCoord, angular_separation
 from astropy.time import Time
 import astropy.units as u
 import imageproc.composable_functions as compfuncs
@@ -36,12 +36,38 @@ ztf_altitude = 1668. # m
 gaiarefmjd = Time(2015.5, format='byear').mjd
 j2000mjd = Time(2000.0, format='jyear').mjd
 
-filtercode2extcatband = {'gaia': {'zg': 'BPmag',
-                                  'zr': 'RPmag',
-                                  'zi': 'RPmag'}, # Not a great workaround
-                         'ps1': {'zg': 'gmag',
-                                 'zr': 'rmag',
-                                 'zi': 'zmag'}}
+mag2extcatmag = {'gaia': {'zg': 'BPmag',
+                          'zr': 'RPmag',
+                          'zi': 'RPmag'}, # Not a great workaround
+                 'ps1': {'zg': 'gmag',
+                         'zr': 'rmag',
+                         'zi': 'imag'},
+                 'ubercal_fluxcatalog': {'zg': 'zgmag',
+                                         'zr': 'zrmag',
+                                         'zi': 'zimag'},
+                 'ubercal_self': {'zg': 'zgmag',
+                                  'zr': 'zrmag',
+                                  'zi': 'zimag'},
+                 'ubercal_ps1': {'zg': 'zgmag',
+                                 'zr': 'zrmag',
+                                 'zi': 'zimag'}}
+
+emag2extcatemag = {'gaia': {'zg': 'e_BPmag',
+                            'zr': 'e_RPmag',
+                            'zi': 'e_RPmag'},
+                   'ps1': {'zg': 'e_gmag',
+                           'zr': 'e_rmag',
+                           'zi': 'e_imag'},
+                   'ubercal_fluxcatalog': {'zg': 'ezgmag',
+                                           'zr': 'ezrmag',
+                                           'zi': 'ezimag'},
+                 'ubercal_self': {'zg': 'ezgmag',
+                                  'zr': 'ezrmag',
+                                  'zi': 'ezimag'},
+                 'ubercal_ps1': {'zg': 'ezgmag',
+                                 'zr': 'ezrmag',
+                                 'zi': 'ezimag'}}
+
 
 filtercode2ztffid = {'zg': 1,
                      'zr': 2,
@@ -282,8 +308,16 @@ def sc_ra(skycoord):
 def sc_dec(skycoord):
     return skycoord.frame.data.lat.value
 
+
 def sc_array(skycoord):
     return np.array([skycoord.frame.data.lon.value, skycoord.frame.data.lat.value])
+
+
+def write_ds9_reg_circles(output_path, positions, radius):
+    with open(output_path, 'w') as f:
+        f.write("J2000\n")
+        for position, r in zip(positions, radius):
+            f.write("circle {}d {}d {}p\n".format(position[0], position[1], r))
 
 
 def contained_in_exposure(objects, wcs, return_mask=False):
@@ -685,15 +719,30 @@ def create_2D_mesh_grid(*meshgrid_space):
     return np.array([meshgrid[0], meshgrid[1]]).T.reshape(-1, 2)
 
 
-def get_ubercal_catalog(name, gaiaids, ubercal_config_path):
+def filter_catalog_in_cone(cat_df, center_ra, center_dec, radius):
+    sep = np.rad2deg(angular_separation(np.deg2rad(cat_df['ra'].to_numpy()), np.deg2rad(cat_df['dec'].to_numpy()), np.deg2rad(center_ra), np.deg2rad(center_dec)))
+    return sep <= radius
+
+def get_ubercal_catalog_in_cone(name, ubercal_config_path, center_ra, center_dec, radius):
     with open(ubercal_config_path, 'r') as f:
         ubercal_config = yaml.load(f, Loader=yaml.Loader)
 
     def _get_cat(filtercode):
+        cat_pos_df = pd.read_parquet(pathlib.Path(ubercal_config['paths']['ubercal']).joinpath(ubercal_config['paths'][name][filtercode]), columns=['Source', 'ra', 'dec'], engine='pyarrow').set_index('Source')
+        mask = filter_catalog_in_cone(cat_pos_df, center_ra, center_dec, radius)
+        gaiaids = cat_pos_df.loc[mask].index.tolist()
+        del cat_pos_df
+
         cat_df = pd.read_parquet(pathlib.Path(ubercal_config['paths']['ubercal']).joinpath(ubercal_config['paths'][name][filtercode]), filters=[('Source', 'in', gaiaids)], engine='pyarrow').set_index('Source')
         cat_df = cat_df.loc[cat_df['n_obs']>=ubercal_config['config']['min_measure']]
+
+        if name == 'fluxcatalog':
+            cat_df = cat_df.assign(calmag_weighted_mean=-2.5*np.log10(cat_df['calflux_weighted_mean'].to_numpy()),
+                          calmag_weighted_std=2.5/np.log(10)*cat_df['calflux_weighted_std']/cat_df['calflux_weighted_mean'])
+            cat_df.drop(labels=['calflux_weighted_mean', 'calflux_weighted_std'], axis='columns', inplace=True)
         return cat_df
 
+    import matplotlib.pyplot as plt
     cat_g_df = _get_cat('zg')
     cat_r_df = _get_cat('zr')
     cat_i_df = _get_cat('zi')

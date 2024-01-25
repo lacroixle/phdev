@@ -309,7 +309,7 @@ if __name__ == '__main__':
     argparser.add_argument('--parallel-reduce', action='store_true', help="If set, parallelize reduce operations (if op has a parallel codepath).")
     argparser.add_argument('--refexp', type=str)
     argparser.add_argument('--compress', action='store_true', help="If set, work with compressed working directory")
-    argparser.add_argument('--photom-cat', choices=['gaia', 'ps1', 'ubercal_self', 'ubercal_ps1'], type=str, help="Star catalog to use for relative photometry.")
+    argparser.add_argument('--photom-cat', choices=['gaia', 'ps1', 'ubercal_self', 'ubercal_ps1', 'ubercal_fluxcatalog'], type=str, help="Star catalog to use for relative photometry.")
     argparser.add_argument('--use-gaia-stars', action='store_true', help="If set, uses Gaia to find stars (ie to build the standalone_stars.list catalog)")
     argparser.add_argument('--ztfin2p3-path', type=pathlib.Path)
     argparser.add_argument('--ext-catalog-cache', type=pathlib.Path)

@@ -34,8 +34,6 @@ def psf_resid(exposure, logger, args):
     plt.tight_layout()
     plt.show()
 
-    print(resid_df)
-
     return True
 
 
@@ -188,8 +186,7 @@ def retrieve_catalogs(lightcurve, logger, args):
     import matplotlib
     import matplotlib.pyplot as plt
 
-    from utils import ps1_cat_remove_bad, get_ubercal_catalog
-
+    from utils import ps1_cat_remove_bad, get_ubercal_catalog_in_cone, write_ds9_reg_circles
 
     matplotlib.use('Agg')
 
@@ -278,18 +275,23 @@ def retrieve_catalogs(lightcurve, logger, args):
 
             # Remove low detection counts PS1 objects, variable objects, possible non stars objects
             if name == 'ps1':
-                catalog_df = catalog_df.loc[catalog_df['Nd']>=30].reset_index(drop=True)
+                catalog_df = catalog_df.loc[catalog_df['Nd']>=20].reset_index(drop=True)
                 catalog_df = ps1_cat_remove_bad(catalog_df)
-                catalog_df = catalog_df.loc[catalog_df['gmag']-catalog_df['rmag']<=2.]
-                catalog_df = catalog_df.loc[catalog_df['gmag']-catalog_df['rmag']>=-1.]
-                catalog_df = catalog_df.loc[catalog_df['gmag']<=20.]
-
+                # catalog_df = catalog_df.loc[catalog_df['gmag']-catalog_df['rmag']<=1.5]
+                # catalog_df = catalog_df.loc[catalog_df['gmag']-catalog_df['rmag']>=0.]
+                catalog_df.dropna(subset=['gmag', 'e_gmag', 'rmag', 'e_rmag', 'imag', 'e_imag'], inplace=True)
 
             if name == 'gaia':
                 # Change proper motion units
                 catalog_df['pmRA'] = catalog_df['pmRA']/np.cos(np.deg2rad(catalog_df['dec']))/1000./3600./365.25 # TODO: check if dec should be J2000 or something else
                 catalog_df['pmDE'] = catalog_df['pmDE']/1000./3600./365.25
 
+                # catalog_df = catalog_df.loc[catalog_df['Gmag'] >= 10.]
+                # catalog_df = catalog_df.loc[catalog_df['Gmag'] <= 23.]
+                # catalog_df = catalog_df.loc[catalog_df['BP-RP'] <= 2.]
+                # catalog_df = catalog_df.loc[catalog_df['BP-RP'] >= -0.5]
+                catalog_df.dropna(subset=['Gmag', 'e_Gmag', 'BPmag', 'e_BPmag', 'RPmag', 'e_RPmag'], inplace=True)
+
             logger.info("Saving catalog into {}".format(catalog_path))
             catalog_df.to_parquet(catalog_path)
         else:
@@ -298,11 +300,20 @@ def retrieve_catalogs(lightcurve, logger, args):
 
         return catalog_df
 
-    def _get_ubercal_catalog(name, gaiaids):
+    def _get_ubercal_catalog(name, centroids, radius):
         catalog_path = lightcurve.ext_catalogs_path.joinpath("ubercal_{}_full.parquet".format(name))
         logger.info("Getting Ubercal catalog {}...".format(name))
         if not catalog_path.exists() or args.recompute_ext_catalogs:
-            catalog_df = get_ubercal_catalog(name, gaiaids, args.ubercal_config_path)
+            catalog_df = None
+            for centroid, r in zip(centroids, radius):
+                df = get_ubercal_catalog_in_cone(name, args.ubercal_config_path, centroid[0], centroid[1], r)
+
+                if catalog_df is None:
+                    catalog_df = df
+                else:
+                    catalog_df = pd.concat([catalog_df, df])
+                    catalog_df = catalog_df[~catalog_df.index.duplicated(keep='first')]
+
             logger.info("Saving catalog into {}".format(catalog_path))
             catalog_df.to_parquet(catalog_path)
         else:
@@ -310,18 +321,31 @@ def retrieve_catalogs(lightcurve, logger, args):
             catalog_df = pd.read_parquet(catalog_path)
 
         return catalog_df
+
+    sn_parameters = pd.read_hdf(args.lc_folder.joinpath("{}.hd5".format(lightcurve.name)), key='sn_info')
+    def _plot_catalog_coverage(cat_df, name):
+        plt.subplots(figsize=(6., 6.))
+        plt.suptitle("Coverage for catalog {}".format(name))
+        plt.plot(cat_df['ra'].to_numpy(), cat_df['dec'].to_numpy(), '.', label="Catalog stars")
+        plt.plot(sn_parameters['sn_ra'], sn_parameters['sn_dec'], 'x', label="SN")
+        plt.legend()
+        plt.axis('equal')
+        plt.tight_layout()
+        plt.savefig(lightcurve.ext_catalogs_path.joinpath("catalog_coverage_{}.png".format(name)), dpi=300.)
+        plt.close()
 
     logger.info("Retrieving external catalogs")
 
     gaia_df = _get_catalog('gaia', centroids, radius)
-
-    if args.starflats:
-        gaia_df.to_parquet(lightcurve.ext_catalogs_path.joinpath("gaia.parquet"))
-        return True
-
     ps1_df = _get_catalog('ps1', centroids, radius)
 
-    logger.info("Matching external catalogs")
+    _plot_catalog_coverage(gaia_df, 'gaia_full')
+    _plot_catalog_coverage(ps1_df, 'ps1_full')
+
+    write_ds9_reg_circles(lightcurve.ext_catalogs_path.joinpath("gaia_catalog.reg"), gaia_df[['ra', 'dec']].to_numpy(), [10.]*len(gaia_df))
+    write_ds9_reg_circles(lightcurve.ext_catalogs_path.joinpath("ps1_catalog.reg"), ps1_df[['ra', 'dec']].to_numpy(), [8]*len(ps1_df))
+
+    logger.info("Matching Gaia and PS1 catalogs")
     # For both catalogs, radec are in J2000 epoch, so no need to account for space motion
     assoc = NearestNeighAssoc(first=[gaia_df['ra'].to_numpy(), gaia_df['dec'].to_numpy()], radius = 2./60./60.)
     i = assoc.match(ps1_df['ra'].to_numpy(), ps1_df['dec'].to_numpy())
@@ -329,23 +353,54 @@ def retrieve_catalogs(lightcurve, logger, args):
     gaia_df = gaia_df.iloc[i[i>=0]].reset_index(drop=True)
     ps1_df = ps1_df.iloc[i>=0].reset_index(drop=True)
 
-    logger.info("Retrieving self Ubercal")
-    ubercal_self_df = _get_ubercal_catalog('self', gaia_df['Source'].tolist())
-    logger.info("Found {} stars".format(len(ubercal_self_df)))
+    write_ds9_reg_circles(lightcurve.ext_catalogs_path.joinpath("joined_catalog.reg"), gaia_df[['ra', 'dec']].to_numpy(), [10.]*len(gaia_df))
 
-    logger.info("Retrieving PS1 Ubercal")
-    ubercal_ps1_df = _get_ubercal_catalog('ps1', gaia_df['Source'].tolist())
-    logger.info("Found {} stars".format(len(ubercal_ps1_df)))
+    if args.ubercal_config_path:
+        logger.info("Retrieving self Ubercal")
+        ubercal_self_df = _get_ubercal_catalog('self', centroids, radius)
+        logger.info("Found {} stars".format(len(ubercal_self_df)))
+        _plot_catalog_coverage(ubercal_self_df, 'ubercal_self_full')
 
-    common_gaiaids = list(set(set(ubercal_self_df.index) & set(ubercal_ps1_df.index) & set(gaia_df['Source'])))
-    logger.info("Keeping {} stars in common in all catalogs".format(len(common_gaiaids)))
-    gaiaid_mask = gaia_df['Source'].apply(lambda x: x in common_gaiaids).tolist()
-    gaia_df = gaia_df.loc[gaiaid_mask]
-    ps1_df = ps1_df.loc[gaiaid_mask]
-    ps1_df = ps1_df.set_index(gaia_df['Source']).loc[common_gaiaids].reset_index(drop=True)
-    gaia_df = gaia_df.set_index('Source').loc[common_gaiaids].reset_index()
-    ubercal_self_df = ubercal_self_df.filter(items=common_gaiaids, axis=0).reset_index()
-    ubercal_ps1_df = ubercal_ps1_df.filter(items=common_gaiaids, axis=0).reset_index()
+        logger.info("Retrieving PS1 Ubercal")
+        ubercal_ps1_df = _get_ubercal_catalog('ps1', centroids, radius)
+        logger.info("Found {} stars".format(len(ubercal_ps1_df)))
+        _plot_catalog_coverage(ubercal_ps1_df, 'ubercal_ps1_full')
+
+        logger.info("Retrieving fluxcatalog Ubercal")
+        ubercal_fluxcatalog_df = _get_ubercal_catalog('fluxcatalog', centroids, radius)
+        logger.info("Found {} stars".format(len(ubercal_fluxcatalog_df)))
+        _plot_catalog_coverage(ubercal_fluxcatalog_df, 'ubercal_fluxcatalog')
+
+        # common_gaiaids = list(set(set(ubercal_self_df.index) & set(ubercal_ps1_df.index) & set(gaia_df['Source'])))
+        # logger.info("Keeping {} stars in common in all catalogs".format(len(common_gaiaids)))
+        # gaiaid_mask = gaia_df['Source'].apply(lambda x: x in common_gaiaids).tolist()
+        # gaia_df = gaia_df.loc[gaiaid_mask]
+        # ps1_df = ps1_df.loc[gaiaid_mask]
+        # ps1_df = ps1_df.set_index(gaia_df['Source']).loc[common_gaiaids].reset_index(drop=True)
+        # gaia_df = gaia_df.set_index('Source').loc[common_gaiaids].reset_index()
+        # ubercal_self_df = ubercal_self_df.filter(items=common_gaiaids, axis=0).reset_index()
+        # ubercal_ps1_df = ubercal_ps1_df.filter(items=common_gaiaids, axis=0).reset_index()
+
+        # Self Ubercal color-color plot
+        plt.subplots(figsize=(6., 6.))
+        plt.suptitle("Fluxcatalog Ubercal color-color plot")
+        plt.scatter((ubercal_fluxcatalog_df['zgmag']-ubercal_fluxcatalog_df['zrmag']).to_numpy(), (ubercal_fluxcatalog_df['zrmag']-ubercal_fluxcatalog_df['zimag']).to_numpy(), c=ubercal_fluxcatalog_df['zgmag'], s=1.)
+        plt.xlabel("$g_\mathrm{Ubercal}-r_\mathrm{Ubercal}$ [mag]")
+        plt.ylabel("$r_\mathrm{Ubercal}-i_\mathrm{Ubercal}$ [mag]")
+        plt.axis('equal')
+        plt.grid()
+        plt.colorbar(label="$g_\mathrm{Ubercal}$ [mag]")
+        plt.tight_layout()
+        plt.savefig(lightcurve.ext_catalogs_path.joinpath("fluxcatalog_ubercal_color_color.png"), dpi=300.)
+        plt.close()
+
+        logger.info("Saving Ubercal catalogs")
+        ubercal_fluxcatalog_df.to_parquet(lightcurve.ext_catalogs_path.joinpath("ubercal_fluxcatalog.parquet"))
+        ubercal_self_df.to_parquet(lightcurve.ext_catalogs_path.joinpath("ubercal_self.parquet"))
+        ubercal_ps1_df.to_parquet(lightcurve.ext_catalogs_path.joinpath("ubercal_ps1.parquet"))
+
+    _plot_catalog_coverage(gaia_df, 'matched')
+    write_ds9_reg_circles("out.reg", gaia_df[['ra', 'dec']].to_numpy(), [10]*len(gaia_df))
 
     # PS1 color-color plot
     plt.subplots(figsize=(6., 6.))
@@ -360,24 +415,9 @@ def retrieve_catalogs(lightcurve, logger, args):
     plt.savefig(lightcurve.ext_catalogs_path.joinpath("ps1_color_color.png"), dpi=300.)
     plt.close()
 
-    # Self Ubercal color-color plot
-    plt.subplots(figsize=(6., 6.))
-    plt.suptitle("Self Ubercal color-color plot")
-    plt.scatter((ubercal_self_df['zgmag']-ubercal_self_df['zrmag']).to_numpy(), (ubercal_self_df['zrmag']-ubercal_self_df['zimag']).to_numpy(), c=ubercal_self_df['zgmag'], s=1.)
-    plt.xlabel("$g_\mathrm{Ubercal}-r_\mathrm{Ubercal}$ [mag]")
-    plt.ylabel("$r_\mathrm{Ubercal}-i_\mathrm{Ubercal}$ [mag]")
-    plt.axis('equal')
-    plt.grid()
-    plt.colorbar(label="$g_\mathrm{Ubercal}$ [mag]")
-    plt.tight_layout()
-    plt.savefig(lightcurve.ext_catalogs_path.joinpath("self_ubercal_color_color.png"), dpi=300.)
-    plt.close()
-
-    logger.info("Saving matched catalogs")
+    logger.info("Saving Gaia/PS1 matched catalogs")
     gaia_df.to_parquet(lightcurve.ext_catalogs_path.joinpath("gaia.parquet"))
     ps1_df.to_parquet(lightcurve.ext_catalogs_path.joinpath("ps1.parquet"))
-    ubercal_self_df.to_parquet(lightcurve.ext_catalogs_path.joinpath("ubercal_self.parquet"))
-    ubercal_ps1_df.to_parquet(lightcurve.ext_catalogs_path.joinpath("ubercal_ps1.parquet"))
 
     return True
 
@@ -389,8 +429,6 @@ def match_catalogs(exposure, logger, args):
     import numpy as np
     from astropy.coordinates import SkyCoord
     import astropy.units as u
-
-    import matplotlib.pyplot as plt
 
     try:
         gaia_stars_df = exposure.lightcurve.get_ext_catalog('gaia')
@@ -601,7 +639,7 @@ def catalogs_to_ds9regions(exposure, logger, args):
         try:
             catalog_df = exposure.get_catalog(catalog_name + ".list").df
         except FileNotFoundError as e:
-            logger.error("Could not found catalog {}!".format(catalog_name))
+            logger.error("Could not find catalog {}!".format(catalog_name))
         else:
             region_path = exposure.path.joinpath("{}.reg".format(catalog_name))
             if catalog_names[catalog_name] == 'circle':
@@ -695,7 +733,6 @@ def concat_catalogs(lightcurve, logger, args):
         for qid in [1, 2, 3, 4]:
             filename = lightcurve.path.joinpath("measures/measures_{}-{}-c{}-q{}.parquet".format(lightcurve.name, lightcurve.filterid, str(ccdid).zfill(2), str(qid)))
             if not filename.exists():
-                print("ccdid={}, qid={}".format(ccdid, qid))
                 df = _extract_quadrant(ccdid, qid)
                 df.to_parquet(filename)
 

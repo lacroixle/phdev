@@ -170,18 +170,19 @@ def smphot_stars(lightcurve, logger, args):
     import pandas as pd
     from dask import delayed, compute
     import numpy as np
-    from utils import ListTable, contained_in_exposure
+    from utils import ListTable, contained_in_exposure, write_ds9_reg_circles
     from astropy.coordinates import SkyCoord
     import astropy.units as u
+    from scipy.sparse import dok_matrix
+    from itertools import chain
+
+    lightcurve.smphot_stars_path.mkdir(exist_ok=True)
 
     ref_exposure = lightcurve.exposures[lightcurve.get_reference_exposure()]
 
-    # Build calibration catalog
-    cat_stars_df = lightcurve.get_ext_catalog(args.photom_cat)
-
-    import matplotlib.pyplot as plt
-
-    # First list all calibration stars in the catalog
+    # First list all Gaia stars for wich there are measurements
+    logger.info("Retrieving all Gaia stars for which there are measurements")
+    cat_stars_df = lightcurve.get_ext_catalog('gaia', matched=True)
     cat_indices = []
     for exposure in lightcurve.get_exposures(files_to_check="cat_indices.hd5"):
         ext_cat_inside = exposure.get_catalog("cat_indices.hd5", key='ext_cat_inside')
@@ -190,30 +191,50 @@ def smphot_stars(lightcurve, logger, args):
 
     cat_indices = list(set(cat_indices))
     cat_stars_df = cat_stars_df.iloc[cat_indices]
+    logger.info("Found {} stars".format(len(cat_stars_df)))
 
-    logger.info("Building calibration catalog using {}".format(args.photom_cat))
-    if args.photom_cat == 'gaia':
-        calib_df = cat_stars_df[['ra', 'dec', 'Gmag', 'RPmag', 'e_RPmag', 'e_Gmag']].rename(columns={'RPmag': 'magr', 'e_RPmag': 'emagr', 'Gmag': 'magg', 'e_Gmag': 'emagg'})
-        calib_df['magi'] = calib_df['magr']
-        calib_df['emagi'] = calib_df['emagr']
-        calib_df.insert(2, column='n', value=1)
+    # Remove stars that are outside of the reference quadrant
+    logger.info("Removing stars outside of the reference quadrant")
+    gaia_stars_skycoords = SkyCoord(ra=cat_stars_df['ra'], dec=cat_stars_df['dec'], unit='deg')
+    inside = ref_exposure.wcs.footprint_contains(gaia_stars_skycoords)
+    gaia_stars_skycoords = gaia_stars_skycoords[inside]
+    cat_stars_df = cat_stars_df.loc[inside]
+    logger.info("{} stars remaining".format(len(cat_stars_df)))
 
-    elif args.photom_cat == 'ps1':
-        cat_stars_df.dropna(subset=['gmag', 'rmag', 'imag', 'e_gmag', 'e_rmag', 'e_imag'], inplace=True)
-        calib_df = cat_stars_df[['ra', 'dec', 'gmag', 'rmag', 'imag', 'e_gmag', 'e_rmag', 'e_imag']].rename(
-            columns={'gmag': 'magg', 'rmag': 'magr', 'imag': 'magi', 'e_gmag': 'emagg', 'e_rmag': 'emagr', 'e_imag': 'emagi'})
-        calib_df.insert(2, column='n', value=1)
+    # Remove stars that are too close of each other
+    logger.info("Removing stars that are too close (20 as)")
+    min_dist = 40/3600
+    n = len(cat_stars_df)
+    X = np.tile(cat_stars_df['ra'].to_numpy(), (n, 1))
+    Y = np.tile(cat_stars_df['dec'].to_numpy(), (n, 1))
+    dist = np.sqrt((X-X.T)**2+(Y-Y.T)**2)
+    dist_mask = (dist <= min_dist)
+    sp = dok_matrix(dist_mask)
+    keys = list(filter(lambda x: x[0]!=x[1], list(sp.keys())))
+    too_close_idx = list(set(list(chain(*keys))))
+    keep_idx = list(filter(lambda x: x not in too_close_idx, range(n)))
+    cat_stars_df = cat_stars_df.iloc[keep_idx]
+    logger.info("{} stars remaining".format(len(cat_stars_df)))
 
-    elif args.photom_cat == 'ubercal_self' or args.photom_cat == 'ubercal_ps1':
-        cat_stars_df.dropna(subset=['zgmag', 'zrmag', 'zimag', 'ezgmag', 'ezrmag', 'ezimag'], inplace=True)
-        calib_df = cat_stars_df[['ra', 'dec', 'zgmag', 'zrmag', 'zimag', 'ezgmag', 'ezrmag', 'ezimag']].rename(
-            columns={'zgmag': 'magg', 'zrmag': 'magr', 'zimag': 'magi', 'ezgmag': 'emagg', 'ezrmag': 'emagr', 'ezimag': 'emagi'})
-        calib_df.insert(2, column='n', value=1)
-    else:
-        raise NotImplementedError
+    # Build dummy catalog with remaining Gaia stars
+    logger.info("Building generic (empty) calibration catalog from Gaia stars")
+    calib_df = pd.concat([cat_stars_df[['ra', 'dec']].reset_index(drop=True),
+                          pd.DataFrame.from_dict({'n': np.ones(len(cat_stars_df), dtype=int),
+                                                  'magg': np.zeros(len(cat_stars_df)),
+                                                  'emagg': np.zeros(len(cat_stars_df)),
+                                                  'magr': np.zeros(len(cat_stars_df)),
+                                                  'emagr': np.zeros(len(cat_stars_df)),
+                                                  'magi': np.zeros(len(cat_stars_df)),
+                                                  'emagi': np.zeros(len(cat_stars_df))})], axis='columns').rename(columns={'Source': 'gaiaid'})
 
-    # Filter stars by SN proximity (in some radius defined by --smphot-stars-radius) and magnitude
+    # Output gaiaid list of calibration stars
+    with open(lightcurve.smphot_stars_path.joinpath("stars_gaiaid.txt"), 'w') as f:
+        for gaiaid in cat_stars_df['Source']:
+            f.write("{}\n".format(gaiaid))
+
     logger.info("Total star count={}".format(len(calib_df)))
+
+    # Do we still need this ?
 
     # logger.info("Removing faint stars (mag>=20)")
     # calib_df = calib_df.loc[calib_df['magg']<=20.]
@@ -235,14 +256,7 @@ def smphot_stars(lightcurve, logger, args):
     # calib_df = pd.concat([bright_calib_df, inside_calib_df])
     # logger.info("Total stars: {}".format(len(calib_df)))
 
-    # logger.info("Removing stars outside of the reference quadrant")
-    # gaia_stars_skycoords = SkyCoord(ra=calib_df['ra'], dec=calib_df['dec'], unit='deg')
-    # inside = ref_exposure.wcs.footprint_contains(gaia_stars_skycoords)
-    # gaia_stars_skycoords = gaia_stars_skycoords[inside]
-    # calib_df = calib_df.loc[inside]
-    # logger.info("New star count={}".format(len(calib_df)))
-
-
+    write_ds9_reg_circles(lightcurve.path.joinpath("{}/smphot_stars_selection.reg".format(ref_exposure.name)), calib_df[['ra', 'dec']].to_numpy(), [20]*len(calib_df))
     lightcurve.smphot_stars_path.mkdir(exist_ok=True)
 
     calib_df['ristar'] = list(range(len(calib_df)))
@@ -272,7 +286,6 @@ def smphot_stars(lightcurve, logger, args):
         logger.info("Computation done, concatening catalogs")
 
         # Concatenate output catalog together
-        #calib_cat_paths = [smphot_stars_folder.joinpath("smphot_stars_cat_{}.list".format(i)) for i in range(n)]
         calib_cat_paths = list(lightcurve.smphot_stars_path.glob("mklc_*/smphot_stars_cat_*.list"))
         calib_cat_tables = [ListTable.from_filename(calib_cat_path, delim_whitespace=False) for calib_cat_path in calib_cat_paths]
         [calib_cat_table.write_csv() for calib_cat_table in calib_cat_tables]
@@ -312,58 +325,119 @@ def smphot_stars_constant(lightcurve, logger, args):
     import pandas as pd
     from deppol_utils import update_yaml
 
+    from croaks.match import NearestNeighAssoc
     from croaks import DataProxy
     from saunerie.linearmodels import LinearModel, RobustLinearSolver
 
-    # Load SMP star lightcurves and calibration catalogs
-    calib_table = ListTable.from_filename(lightcurve.smphot_stars_path.joinpath("smphot_stars_cat.list"), delim_whitespace=False)
-    cat_calib_table = ListTable.from_filename(lightcurve.smphot_stars_path.joinpath("calib_stars_cat.list"))
+    # Load SMP star lightcurves
+    logger.info("Loading stars SMP lightcurve...")
+    smphot_lc_table = ListTable.from_filename(lightcurve.smphot_stars_path.joinpath("smphot_stars_cat.list"), delim_whitespace=False)
+    logger.info("Found {} measurements".format(len(smphot_lc_table.df)))
 
-    stars_lc_df = calib_table.df.loc[calib_table.df['flux'] >= 0.]
-    logger.info("Removed {} negative fluxes".format(len(calib_table.df)-len(stars_lc_df)))
+    # Remove negative fluxes
+    smphot_lc_df = smphot_lc_table.df.loc[smphot_lc_table.df['flux']>0.]
+    logger.info("Removing negative fluxes, down to {} measurements".format(len(smphot_lc_df)))
 
-    # Create dataproxy
-    piedestal = 0.015
-    stars_lc_df['m'] = -2.5*np.log10(stars_lc_df['flux'])
-    stars_lc_df['em'] = np.abs(-2.5/np.log(10)*stars_lc_df['error']/stars_lc_df['flux'])
-
-    dp = DataProxy(stars_lc_df[['m', 'em', 'star', 'mjd']].to_records(), m='m', em='em', star='star', mjd='mjd')
-    dp.make_index('m')
+    # Create dataproxy for the fit
+    piedestal = 0.
+    dp = DataProxy(smphot_lc_df[['flux', 'error', 'star', 'mjd']].to_records(), flux='flux', error='error', star='star', mjd='mjd')
     dp.make_index('star')
     dp.make_index('mjd')
-    w = 1./np.sqrt(dp.em**2+piedestal**2)
+    w = 1./np.sqrt(dp.error**2+piedestal**2)
+
+    # Retrieve matching Gaia catalog to taf fitted constant stars
+    gaia_df = lightcurve.get_ext_catalog('gaia').set_index('Source', drop=True)
+    with open(lightcurve.smphot_stars_path.joinpath("stars_gaiaid.txt"), 'r') as f:
+        gaiaids = list(map(lambda x: int(x.strip()), f.readlines()))
+
+    gaia_df = gaia_df.loc[gaiaids]
 
     # Fit of the constant star model
-    model = LinearModel(list(range(len(dp.nt))), dp.star_index, np.ones_like(dp.m))
-    solver = RobustLinearSolver(model, dp.m, weights=w)
+    model = LinearModel(list(range(len(dp.nt))), dp.star_index, np.ones_like(dp.star, dtype=float))
+    solver = RobustLinearSolver(model, dp.flux, weights=w)
     solver.model.params.free = solver.robust_solution()
 
-    stars_lc_df['mean_m'] = solver.model.params.free[dp.star_index]
-    stars_lc_df['res'] = solver.get_res(dp.m)
-    stars_lc_df['wres'] = stars_lc_df['res']*w
-    stars_lc_df['bad'] = solver.bads
+    # Add fit imformation to the lightcurve dataframe
+    smphot_lc_df = smphot_lc_df.assign(mean_flux=solver.model.params.free[dp.star_index],
+                                       emean_flux=np.sqrt(solver.get_cov().diagonal())[dp.star_index],
+                                       res=solver.get_res(dp.flux),
+                                       bads=solver.bads)
+    smphot_lc_df = smphot_lc_df.assign(mean_mag=-2.5*np.log10(smphot_lc_df['mean_flux']),
+                                       emean_mag=2.5/np.log(10)*smphot_lc_df['emean_flux']/smphot_lc_df['mean_flux'])
+    smphot_lc_df = smphot_lc_df.assign(mag=-2.5*np.log10(smphot_lc_df['flux']),
+                                       emag=2.5/np.log(10)*smphot_lc_df['error']/smphot_lc_df['flux'])
 
-    star_chi2 = np.bincount(dp.star_index[~solver.bads], weights=stars_lc_df.loc[~stars_lc_df['bad']]['wres']**2)/np.bincount(dp.star_index[~solver.bads])
+    # smphot_lc_df = smphot_lc_df.assign(wres=smphot_lc_df['res']/smphot_lc_df['error'])
 
-    stars_df = pd.DataFrame(data={'m': solver.model.params.free, 'em': np.sqrt(solver.get_cov().diagonal()), 'chi2': star_chi2, 'star': dp.star_map.keys()})
+    # # Constant stars dataframe creation
+    # stars_gaiaids = gaia_df.iloc[list(dp.star_map.keys())]
+    # stars_df = pd.DataFrame(data={'mag': -2.5*np.log10(solver.model.params.free),
+    #                               'emag': np.abs(2.5/np.log(10)*np.sqrt(solver.get_cov().diagonal())/solver.model.params.free),
+    #                               'rms_mag': [smphot_lc_df.loc[~solver.bads].loc[smphot_lc_df.loc[~solver.bads]['star'] == star]['res'].std() for star in list(dp.star_map.keys())],
+    #                               'chi2': np.bincount(dp.star_index[~solver.bads], weights=smphot_lc_df.loc[~solver.bads]['wres']**2)/np.bincount(dp.star_index[~solver.bads]),
+    #                               'gaiaid': gaia_df.iloc[list(dp.star_map.keys())].index.tolist()})
 
-    stars_df['cat_mag'] = cat_calib_table.df.iloc[stars_df['star']]['mag'+lightcurve.filterid[1]].tolist()
-    stars_df['cat_emag'] = cat_calib_table.df.iloc[stars_df['star']]['emag'+lightcurve.filterid[1]].tolist()
-    stars_df['cat_color'] = (cat_calib_table.df.iloc[stars_df['star']]['magg'] - cat_calib_table.df.iloc[stars_df['star']]['magi']).tolist()
-    stars_df['cat_ecolor'] = np.sqrt(cat_calib_table.df.iloc[stars_df['star']]['emagg']**2+cat_calib_table.df.iloc[stars_df['star']]['emagi']**2).to_list()
-    stars_df['sigma_m'] = [stars_lc_df.loc[~stars_lc_df['bad']].loc[stars_lc_df.loc[~stars_lc_df['bad']]['star'] == star]['res'].std() for star in stars_df['star'].tolist()]
-    stars_df['ra'] = cat_calib_table.df.iloc[stars_df['star']]['ra']
-    stars_df['dec'] = cat_calib_table.df.iloc[stars_df['star']]['dec']
+    # stars_df.set_index('gaiaid', drop=True, inplace=True)
 
-    stars_df.set_index('star', drop=True, inplace=True)
+    # # Create dataproxy for the fit
+    # piedestal = 0.
 
-    stars_lc_df.to_parquet(lightcurve.smphot_stars_path.joinpath("stars_lightcurves.parquet"))
+    # smphot_lc_df = smphot_lc_df.assign(mag=-2.5*np.log10(smphot_lc_df['flux']),
+    #                                    emag=np.abs(2.5/np.log(10)*smphot_lc_df['error']/smphot_lc_df['flux']))
+    # dp = DataProxy(smphot_lc_df[['mag', 'emag', 'star', 'mjd']].to_records(), mag='mag', emag='emag', star='star', mjd='mjd')
+    # dp.make_index('star')
+    # dp.make_index('mjd')
+    # w = 1./np.sqrt(dp.emag**2+piedestal**2)
+
+    # # Retrieve matching Gaia catalog to taf fitted constant stars
+    # gaia_df = lightcurve.get_ext_catalog('gaia').set_index('Source', drop=True)
+    # with open(lightcurve.smphot_stars_path.joinpath("stars_gaiaid.txt"), 'r') as f:
+    #     gaiaids = list(map(lambda x: int(x.strip()), f.readlines()))
+
+    # gaia_df = gaia_df.loc[gaiaids]
+
+    # # Fit of the constant star model
+    # model = LinearModel(list(range(len(dp.nt))), dp.star_index, np.ones_like(dp.star, dtype=float))
+    # solver = RobustLinearSolver(model, dp.mag, weights=w)
+    # solver.model.params.free = solver.robust_solution()
+
+    # # Add fit imformation to the lightcurve dataframe
+    # smphot_lc_df = smphot_lc_df.assign(mean_mag=solver.model.params.free[dp.star_index],
+    #                                    emean_mag=np.sqrt(solver.get_cov().diagonal())[dp.star_index],
+    #                                    res=solver.get_res(dp.mag),
+    #                                    bads=solver.bads)
+
+    smphot_lc_df = smphot_lc_df.assign(wres=smphot_lc_df['res']/smphot_lc_df['error'])
+    # smphot_lc_df = smphot_lc_df.assign(wres=smphot_lc_df['res']/smphot_lc_df['emag'])
+
+    # Constant stars dataframe creation
+    stars_gaiaids = gaia_df.iloc[list(dp.star_map.keys())]
+    stars_df = pd.DataFrame(data={'mag': -2.5*np.log10(solver.model.params.free),
+                                  'emag': 2.5/np.log(10)*np.sqrt(solver.get_cov().diagonal())/solver.model.params.free,
+                                  'rms_mag': [(-2.5*np.log10(smphot_lc_df.loc[~solver.bads].loc[smphot_lc_df.loc[~solver.bads]['star'] == star]['mean_flux'])+2.5*np.log10(smphot_lc_df.loc[~solver.bads].loc[smphot_lc_df.loc[~solver.bads]['star']==star]['flux'])).std() for star in list(dp.star_map.keys())],
+                                  'chi2': np.bincount(dp.star_index[~solver.bads], weights=smphot_lc_df.loc[~solver.bads]['wres']**2)/np.bincount(dp.star_index[~solver.bads]),
+                                  'gaiaid': gaia_df.iloc[list(dp.star_map.keys())].index.tolist(),
+                                  'star': dp.star_map.keys()})
+
+    stars_df.set_index('gaiaid', inplace=True)
+
+    # stars_gaiaids = gaia_df.iloc[list(dp.star_map.keys())]
+    # stars_df = pd.DataFrame(data={'mag': solver.model.params.free,
+    #                               'emag': np.sqrt(solver.get_cov().diagonal()),
+    #                               # 'rms_mag': [smphot_lc_df.loc[~solver.bads].loc[smphot_lc_df.loc[~solver.bads]['star'] == star]['res'].std() for star in list(dp.star_map.keys())],
+    #                               'chi2': np.bincount(dp.star_index[~solver.bads], weights=smphot_lc_df.loc[~solver.bads]['wres']**2)/np.bincount(dp.star_index[~solver.bads]),
+    #                               'gaiaid': gaia_df.iloc[list(dp.star_map.keys())].index.tolist()})
+
+    # Everything gets saved !
+    smphot_lc_df.to_parquet(lightcurve.smphot_stars_path.joinpath("stars_lightcurves.parquet"))
     stars_df.to_parquet(lightcurve.smphot_stars_path.joinpath("constant_stars.parquet"))
 
+
+    # Update lightcurve yaml with fit informations
     update_yaml(lightcurve.path.joinpath("lightcurve.yaml"), 'constant_stars',
                 {'star_count': len(stars_df),
-                 'chi2': np.sum(stars_lc_df['wres']).item(),
-                 'chi2/ndof': np.sum(stars_lc_df['wres']).item()/len(stars_df),
+                 'chi2': np.sum(smphot_lc_df['wres']).item(),
+                 'chi2/ndof': np.sum(smphot_lc_df['wres']).item()/len(stars_df),
                  'ndof': len(stars_df),
                  'piedestal': piedestal})
 
@@ -384,84 +458,91 @@ def smphot_stars_plot(lightcurve, logger, args):
     from saunerie.linearmodels import LinearModel, RobustLinearSolver
     matplotlib.use('Agg')
 
+    # Create plot output folders
     smphot_stars_plot_output = lightcurve.smphot_stars_path.joinpath("plots")
     smphot_stars_plot_output.mkdir(exist_ok=True)
 
+    star_lc_folder = smphot_stars_plot_output.joinpath("lc_plots")
+    star_lc_folder.mkdir(exist_ok=True)
+
+    # Load catalogs
     stars_lc_df = pd.read_parquet(lightcurve.smphot_stars_path.joinpath("stars_lightcurves.parquet"))
     stars_df = pd.read_parquet(lightcurve.smphot_stars_path.joinpath("constant_stars.parquet"))
+    gaia_df = lightcurve.get_ext_catalog('gaia').reset_index().set_index('Source', drop=False).loc[stars_df.index]
 
-    star_lc_folder = lightcurve.smphot_stars_path.joinpath("lc_plots")
-    star_lc_folder.mkdir(exist_ok=True)
-    stars_lc_outlier_df = stars_lc_df.loc[stars_lc_df['bad']]
-    stars_lc_df = stars_lc_df.loc[~stars_lc_df['bad']]
+    print(stars_df)
 
+    stars_lc_outlier_df = stars_lc_df.loc[stars_lc_df['bads']]
+    stars_lc_df = stars_lc_df.loc[~stars_lc_df['bads']]
+
+    # Compare fitted star magnitude to catalog
     plt.subplots(figsize=(5., 5.))
     plt.suptitle("Fitted star magnitude vs external catalog ({})".format(args.photom_cat))
-    plt.scatter(stars_df['m'].to_numpy(), stars_df['cat_mag'].to_numpy(), c=stars_df['cat_color'].to_numpy(), s=10)
+    plt.scatter(stars_df['mag'].to_numpy(), gaia_df['Gmag'].to_numpy(), c=gaia_df['BP-RP'].to_numpy(), s=10)
     plt.xlabel("$m$ [mag]")
     plt.ylabel("$m_\\mathrm{{{}}}$ [mag]".format(args.photom_cat))
     cbar = plt.colorbar()
-    cbar.set_label("$c_\mathrm{PS1}$ [mag]")
+    cbar.set_label("$c_\mathrm{{{}}}$ [mag]".format(args.photom_cat))
     plt.grid()
-    plt.savefig(lightcurve.smphot_stars_path.joinpath("mag_ext_cat.png"), dpi=300.)
+    plt.savefig(smphot_stars_plot_output.joinpath("mag_ext_cat.png"), dpi=300.)
     plt.close()
 
+    # Repeatability plot
     plt.subplots(figsize=(8., 5.))
     plt.suptitle("Repeatability as a function of star magnitude")
-    plt.plot(stars_df['cat_mag'].to_numpy(), stars_df['sigma_m'].to_numpy(), '.')
+    plt.plot(gaia_df['Gmag'].to_numpy(), stars_df['rms_mag'].to_numpy(), '.')
     plt.axhline(0.01, ls='-.', color='black', label="1%")
     plt.axhline(0.02, ls='--', color='black', label="2%")
     plt.grid()
-    plt.xlabel("$m_\mathrm{PS1}$ [AB mag]")
+    plt.xlabel("$m_\mathrm{{{}}}$ [AB mag]".format(args.photom_cat))
     plt.ylabel("$\sigma_\hat{m}$ [mag]")
     plt.legend()
-    plt.savefig(lightcurve.smphot_stars_path.joinpath("repeatability_mag.png"), dpi=300.)
+    plt.savefig(smphot_stars_plot_output.joinpath("repeatability_mag.png"), dpi=300.)
     plt.close()
 
+    # Same but zoomed in
     plt.subplots(figsize=(8., 5.))
     plt.suptitle("Repeatability as a function of star magnitude")
-    plt.plot(stars_df['cat_mag'].to_numpy(), stars_df['sigma_m'].to_numpy(), '.')
+    plt.plot(gaia_df['Gmag'].to_numpy(), stars_df['rms_mag'].to_numpy(), '.')
     plt.axhline(0.01, ls='-.', color='black', label="1%")
     plt.axhline(0.02, ls='--', color='black', label="2%")
     plt.grid()
-    plt.xlabel("$m_\mathrm{PS1}$ [AB mag]")
+    plt.xlabel("$m_\mathrm{{{}}}$ [AB mag]".format(args.photom_cat))
     plt.ylabel("$\sigma_\hat{m}$ [mag]")
     plt.legend()
     plt.ylim(0., 0.05)
-    plt.savefig(lightcurve.smphot_stars_path.joinpath("repeatability_mag_zoomin.png"), dpi=300.)
+    plt.savefig(smphot_stars_plot_output.joinpath("repeatability_mag_zoomin.png"), dpi=300.)
     plt.close()
 
-    # plt.hist(stars_df['m'], bins=15)
-    # plt.xlabel("$m$ [mag]")
-    # plt.ylabel("Count")
-    # plt.show()
-
+    # Star chi2
     plt.subplots(figsize=(8., 5.))
     plt.suptitle("$\chi^2$ / $m$")
-    plt.plot(stars_df['cat_mag'].to_numpy(), stars_df['chi2'].to_numpy(), '.')
+    plt.plot(gaia_df['Gmag'].to_numpy(), stars_df['chi2'].to_numpy(), '.')
     plt.grid()
     plt.xlabel("$m$ [AB mag]")
     plt.ylabel("$\\chi^2$")
-    plt.savefig(lightcurve.smphot_stars_path.joinpath("mag_chi2.png"), dpi=300.)
+    plt.savefig(smphot_stars_plot_output.joinpath("mag_chi2.png"), dpi=300.)
     plt.close()
 
-    # res_min, res_max = -0.5, 0.5
-    # x = np.linspace(res_min, res_max, 1000)
-    # m, s = norm.fit(stars_lc_df['res'])
 
-    # plt.figure(figsize=(5., 5.))
-    # ax = plt.gca()
-    # ax.tick_params(which='both', direction='in')
-    # ax.xaxis.set_minor_locator(AutoMinorLocator())
-    # ax.yaxis.set_minor_locator(AutoMinorLocator())
-    # plt.xlim(res_min, res_max)
-    # plt.plot(x, norm.pdf(x, loc=m, scale=s), color='black')
-    # plt.hist(stars_lc_df['res'].to_numpy(), bins=100, range=[res_min, res_max], density=True, histtype='step', color='black')
-    # plt.xlabel("$m-\\left<m\\right>$ [mag]")
-    # plt.ylabel("density")
-    # plt.grid()
-    # plt.savefig(smphot_stars_output.joinpath("residual_dist.png"), dpi=300.)
-    # plt.close()
+    res_min, res_max = -1000., 1000.
+    x = np.linspace(res_min, res_max, 1000)
+    m, s = norm.fit(stars_lc_df['res'])
+
+    # Residual distribution
+    plt.figure(figsize=(5., 5.))
+    ax = plt.gca()
+    ax.tick_params(which='both', direction='in')
+    ax.xaxis.set_minor_locator(AutoMinorLocator())
+    ax.yaxis.set_minor_locator(AutoMinorLocator())
+    plt.xlim(res_min, res_max)
+    plt.plot(x, norm.pdf(x, loc=m, scale=s), color='black')
+    plt.hist(stars_lc_df['res'].to_numpy(), bins=50, range=[res_min, res_max], density=True, histtype='step', color='black')
+    plt.xlabel("$f_\mathrm{ADU}-\\left<f_\mathrm{ADU}\\right>$ [ADU]")
+    plt.ylabel("density")
+    plt.grid()
+    plt.savefig(smphot_stars_plot_output.joinpath("residual_dist.png"), dpi=300.)
+    plt.close()
 
 
     # plt.figure(figsize=(8., 4.))
@@ -470,13 +551,13 @@ def smphot_stars_plot(lightcurve, logger, args):
     # ax.tick_params(which='both', direction='in')
     # ax.xaxis.set_minor_locator(AutoMinorLocator())
     # ax.yaxis.set_minor_locator(AutoMinorLocator())
-    # plt.plot(stars_lc_df['em'].to_numpy(), stars_lc_df['sky'].to_numpy(), ',', color='black')
-    # plt.xlim(0., 0.3)
-    # plt.ylim(-100., 100.)
+    # plt.plot(stars_lc_df['emean_flux'].to_numpy(), stars_lc_df['sky'].to_numpy(), ',', color='black')
+    # # plt.xlim(0., 0.3)
+    # # plt.ylim(-100., 100.)
     # plt.xlabel("$\\sigma_m$ [mag]")
     # plt.ylabel("sky [mag]")
     # plt.grid()
-    # plt.savefig(smphot_stars_output.joinpath("sky_var.png"), dpi=300.)
+    # plt.savefig(smphot_stars_plot_output.joinpath("sky_var.png"), dpi=300.)
     # plt.close()
 
 
@@ -508,33 +589,19 @@ def smphot_stars_plot(lightcurve, logger, args):
     # plt.close()
 
 
+    # Fitted magnitude error vs. AB mag
     plt.figure(figsize=(8., 4.))
     ax = plt.gca()
     ax.tick_params(which='both', direction='in')
     ax.xaxis.set_minor_locator(AutoMinorLocator())
     ax.yaxis.set_minor_locator(AutoMinorLocator())
-    plt.plot(stars_df['cat_mag'].to_numpy(), stars_df['em'].to_numpy(), '.', color='black')
+    plt.plot(gaia_df['Gmag'].to_numpy(), stars_df['emag'].to_numpy(), '.', color='black')
     plt.ylim(0., 0.03)
     plt.xlabel("$m$ [AB mag]")
-    plt.ylabel("$\\sigma_\hat{m}$")
+    plt.ylabel("$\\sigma_\hat{m}$ [mag]")
     plt.grid()
-    plt.savefig(lightcurve.smphot_stars_path.joinpath("mag_var.png"), dpi=300.)
+    plt.savefig(smphot_stars_plot_output.joinpath("mag_var.png"), dpi=300.)
     plt.close()
-
-
-    # plt.figure(figsize=(8., 5.))
-    # ax = plt.gca()
-    # ax.tick_params(which='both', direction='in')
-    # ax.xaxis.set_minor_locator(AutoMinorLocator())
-    # ax.yaxis.set_minor_locator(AutoMinorLocator())
-    # plt.plot(stars_lc_df['mag'].to_numpy(), stars_lc_df['res'].to_numpy(), ',', color='black')
-    # plt.ylim(-1., 1.)
-    # plt.xlabel("$m$ [PS1 mag]")
-    # plt.ylabel("$m-\\left<m\\right>$ [mag]")
-    # plt.grid()
-    # plt.savefig(smphot_stars_output.joinpath("residuals_mag.png"), dpi=300.)
-    # plt.close()
-
 
     # plt.figure()
     # ax = plt.gca()
@@ -622,26 +689,29 @@ def smphot_stars_plot(lightcurve, logger, args):
     # plt.axvline(0.05, color='black')
     # plt.hist(sigmas, bins=50, histtype='step', range=[0., 0.2])
     # plt.show()
-    for star_index in list(set(stars_lc_df['star'])):
+    stars_df = stars_df.reset_index().set_index('star')
+    print(stars_df)
+    for star_index in stars_df.index:
         star_mask = (stars_lc_df['star'] == star_index)
         outlier_star_mask = (stars_lc_outlier_df['star'] == star_index)
         if sum(star_mask) == 0 or np.any(stars_lc_df.loc[star_mask]['flux'] <= 0.):
             continue
 
-        m = stars_df.loc[star_index]['m']
-        em = stars_df.loc[star_index]['sigma_m']
-        print("Star n°{}, m={}, sigma_m={}".format(star_index, m, em))
+        m = stars_df.loc[star_index]['mag']
+        em = stars_df.loc[star_index]['rms_mag']
+        cat_mag = gaia_df.loc[stars_df.loc[star_index]['gaiaid']]['Gmag']
+        print("Star n°{}, G={}, m={}, sigma_m={}".format(star_index, cat_mag, m, em))
 
         fig = plt.subplots(ncols=2, nrows=1, figsize=(12., 4.), gridspec_kw={'width_ratios': [5, 1], 'wspace': 0, 'hspace': 0}, sharey=True)
-        plt.suptitle("Star {} - $m_\mathrm{{PS1}}$={} [mag]\n$\\sigma={:.4f}$".format(star_index, stars_lc_df.loc[star_mask]['mag'].tolist()[0], em))
+        plt.suptitle("Star {} - $m_\mathrm{{{}}}$={} [AB mag]\n$m={:.4f}$ [mag], $\\sigma_m={:.4f}$ [mag]".format(star_index, args.photom_cat, cat_mag, m, em))
         ax = plt.subplot(1, 2, 1)
         plt.xlim(mjd_min, mjd_max)
         ax.tick_params(which='both', direction='in')
         ax.xaxis.set_minor_locator(AutoMinorLocator())
         ax.yaxis.set_minor_locator(AutoMinorLocator())
-        plt.errorbar(stars_lc_df.loc[star_mask]['mjd'].to_numpy(), stars_lc_df.loc[star_mask]['m'].to_numpy(), yerr=stars_lc_df.loc[star_mask]['em'].to_numpy(), marker='.', color='black', ls='')
+        plt.errorbar(stars_lc_df.loc[star_mask]['mjd'].to_numpy(), stars_lc_df.loc[star_mask]['mag'].to_numpy(), yerr=stars_lc_df.loc[star_mask]['emag'].to_numpy(), marker='.', color='black', ls='')
         if len(outlier_star_mask) > 0.:
-            plt.errorbar(stars_lc_outlier_df.loc[outlier_star_mask]['mjd'].to_numpy(), stars_lc_outlier_df.loc[outlier_star_mask]['m'].to_numpy(), yerr=stars_lc_outlier_df.loc[outlier_star_mask]['em'].to_numpy(), marker='x', color='black', ls='')
+            plt.errorbar(stars_lc_outlier_df.loc[outlier_star_mask]['mjd'].to_numpy(), stars_lc_outlier_df.loc[outlier_star_mask]['mag'].to_numpy(), yerr=stars_lc_outlier_df.loc[outlier_star_mask]['emag'].to_numpy(), marker='x', color='black', ls='')
         plt.axhline(m, color='black')
         plt.grid(linestyle='--', color='black')
         plt.xlabel("MJD")
@@ -653,9 +723,9 @@ def smphot_stars_plot(lightcurve, logger, args):
         ax.xaxis.set_minor_locator(AutoMinorLocator())
         ax.yaxis.set_minor_locator(AutoMinorLocator())
         ax.set_xticklabels([])
-        x = np.linspace(stars_lc_df.loc[star_mask]['m'].min(), stars_lc_df.loc[star_mask]['m'].max(), 100)
+        x = np.linspace(stars_lc_df.loc[star_mask]['mag'].min(), stars_lc_df.loc[star_mask]['mag'].max(), 100)
         plt.plot(norm.pdf(x, loc=m, scale=em), x)
-        plt.hist(stars_lc_df.loc[star_mask]['m'], orientation='horizontal', density=True, bins='auto', histtype='step')
+        plt.hist(stars_lc_df.loc[star_mask]['mag'], orientation='horizontal', density=True, bins='auto', histtype='step')
 
         plt.savefig(star_lc_folder.joinpath("star_{}.png".format(star_index)), dpi=250.)
         plt.close()

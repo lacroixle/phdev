@@ -33,7 +33,7 @@ def photometry_fit(lightcurve, logger, args):
     from deppol_utils import update_yaml
     import pandas as pd
     from croaks import DataProxy
-    from utils import filtercode2extcatband, make_index_from_list, filtercode2extcatband
+    from utils import mag2extcatmag, make_index_from_list, mag2extcatmag
     from saunerie.linearmodels import LinearModel, RobustLinearSolver, indic
     import pickle
     import matplotlib
@@ -52,19 +52,19 @@ def photometry_fit(lightcurve, logger, args):
     if args.photom_use_aper:
         photometry_stats['cat'] = 'aper'
         matched_stars_df = pd.concat([lightcurve.extract_star_catalog(['aperstars']),
-                                      ext_cat_df[['objID', filtercode2extcatband['ps1'][lightcurve.filterid], 'e_{}'.format(filtercode2extcatband['ps1'][lightcurve.filterid])]]], axis='columns')
+                                      ext_cat_df[['objID', mag2extcatmag['ps1'][lightcurve.filterid], 'e_{}'.format(mag2extcatmag['ps1'][lightcurve.filterid])]]], axis='columns')
         matched_stars_df = matched_stars_df.drop(columns=['cat_index', 'flux', 'eflux']).rename(columns={'objID': 'catid',
-                                                                                                        filtercode2extcatband['ps1'][lightcurve.filterid]: 'cat_mag',
-                                                                                                        'e_{}'.format(filtercode2extcatband['ps1'][lightcurve.filterid]): 'cat_emag'})
+                                                                                                        mag2extcatmag['ps1'][lightcurve.filterid]: 'cat_mag',
+                                                                                                        'e_{}'.format(mag2extcatmag['ps1'][lightcurve.filterid]): 'cat_emag'})
         matched_stars_df.rename(columns={'apfl4': 'flux', 'eapfl4': 'eflux'}, inplace=True)
 
     else:
         photometry_stats['cat'] = 'psf'
         matched_stars_df = pd.concat([lightcurve.extract_star_catalog(['psfstars']),
-                                      ext_cat_df[['objID', filtercode2extcatband['ps1'][lightcurve.filterid], 'e_{}'.format(filtercode2extcatband['ps1'][lightcurve.filterid])]]], axis='columns')
+                                      ext_cat_df[['objID', mag2extcatmag['ps1'][lightcurve.filterid], 'e_{}'.format(mag2extcatmag['ps1'][lightcurve.filterid])]]], axis='columns')
         matched_stars_df = matched_stars_df.drop(columns='cat_index').rename(columns={'objID': 'catid',
-                                                                                      filtercode2extcatband['ps1'][lightcurve.filterid]: 'cat_mag',
-                                                                                      'e_{}'.format(filtercode2extcatband['ps1'][lightcurve.filterid]): 'cat_emag'})
+                                                                                      mag2extcatmag['ps1'][lightcurve.filterid]: 'cat_mag',
+                                                                                      'e_{}'.format(mag2extcatmag['ps1'][lightcurve.filterid]): 'cat_emag'})
 
     matched_stars_df['mag'] = -2.5*np.log10(matched_stars_df['flux'])
     matched_stars_df['emag'] = 1.08*matched_stars_df['eflux']/matched_stars_df['flux']
@@ -192,7 +192,7 @@ def photometry_fit_plot(lightcurve, logger, args):
     import matplotlib.pyplot as plt
     from scipy.stats import norm
     from saunerie.plottools import binplot
-    from utils import idx2markerstyle, filtercode2extcatband, extcat2colorstr, quadrant_name_explode
+    from utils import idx2markerstyle, mag2extcatmag, extcat2colorstr, quadrant_name_explode
     from ztfquery.fields import ccdid_qid_to_rcid
     matplotlib.use('Agg')
 
@@ -237,7 +237,7 @@ def photometry_fit_plot(lightcurve, logger, args):
         for column in ['gmag', 'imag']:
             stars_df[column] = [ps1_df.loc[catid][column] for catid in stars_df.index.tolist()]
 
-        stars_df['cat_mag'] = ps1_df[filtercode2extcatband['ps1'][lightcurve.filterid]]
+        stars_df['cat_mag'] = ps1_df[mag2extcatmag['ps1'][lightcurve.filterid]]
 
         stars_df['color'] = stars_df['imag'] - stars_df['gmag']
 

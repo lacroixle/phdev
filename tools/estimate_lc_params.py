@@ -222,7 +222,7 @@ def estimate_lc_params(ztfname):
             if args.onoff and ztfname in onoff_df.index:
                 # t_min = onoff_df.loc[ztfname, 't_min']
                 # t_max = onoff_df.loc[ztfname, 't_max']
-                t_min = onoff_df.loc[ztfname, 't_inf']-200.
+                t_min = onoff_df.loc[ztfname, 't_inf']-500.
                 t_max = onoff_df.loc[ztfname, 't_sup']
 
                 if np.isnan(t_min):
