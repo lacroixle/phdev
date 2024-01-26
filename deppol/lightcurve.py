@@ -478,6 +478,10 @@ class Lightcurve(_Lightcurve):
             exposure_dict['readnoise'] = float(header['readnoi'])
             exposure_dict['darkcurrent'] = float(header['darkcur'])
 
+            exposure_dict['ztfmagzp'] = float(header['magzp'])
+            exposure_dict['ztfmagzpunc'] = float(header['magzpunc'])
+            exposure_dict['ztfmagzprms'] = float(header['magzprms'])
+
             exposure_dict['skylev'] = float(header['sexsky'])
             exposure_dict['sigma_skylev'] = float(header['sexsigma'])
 

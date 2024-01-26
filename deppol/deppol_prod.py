@@ -60,7 +60,8 @@ deppol_dask_env.sh
 ulimit -n 4096
 export OMP_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
-OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 deppol --ztfname={ztfname} --filtercode={filtercode} -j {j} --wd={wd} --func={func} --rm-intermediates --dump-timings --use-gaia-stars --ext-catalog-cache=/sps/ztf/data/storage/scenemodeling/cat_cache
+#OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 deppol --ztfname={ztfname} --filtercode={filtercode} -j {j} --wd={wd} --func={func} --lc-folder={lc_folder} --exposure-workspace=/dev/shm/llacroix --rm-intermediates --scratch=${{TMPDIR}}/llacroix --astro-degree=5 --discard-calibrated --from-scratch --dump-timings --parallel-reduce --use-gaia-stars --ext-catalog-cache=/sps/ztf/data/storage/scenemodeling/cat_cache --photom-cat=ps1
+OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 deppol --ztfname={ztfname} --filtercode={filtercode} -j {j} --wd={wd} --func={func} --rm-intermediates --dump-timings --parallel-reduce --use-gaia-stars
 echo "done" > {status_path}
 """.format(ztfname=ztfname, filtercode=filtercode, wd=wd, func=",".join(func), status_path=run_folder.joinpath("{}/status/{}-{}".format(run_name, ztfname, filtercode)), j=args.ntasks, lc_folder="/sps/ztf/data/storage/scenemodeling/jacco/lc_jacco")
             with open(batch_folder.joinpath("{}-{}.sh".format(ztfname, filtercode)), 'w') as f:
@@ -129,7 +130,7 @@ def schedule_jobs(run_folder, run_name):
                "-o", log_folder.joinpath("log_{}".format(batch_name)),
                "-A", "ztf",
                "-L", "sps",
-               "--mem={}G".format(10*args.ntasks),
+               "--mem={}G".format(4*args.ntasks),
                "-t", "5-0",
                batch]
 

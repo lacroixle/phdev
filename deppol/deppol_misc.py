@@ -322,12 +322,15 @@ def retrieve_catalogs(lightcurve, logger, args):
 
         return catalog_df
 
-    sn_parameters = pd.read_hdf(args.lc_folder.joinpath("{}.hd5".format(lightcurve.name)), key='sn_info')
+    if args.lc_folder is not None:
+        sn_parameters = pd.read_hdf(args.lc_folder.joinpath("{}.hd5".format(lightcurve.name)), key='sn_info')
+
     def _plot_catalog_coverage(cat_df, name):
         plt.subplots(figsize=(6., 6.))
         plt.suptitle("Coverage for catalog {}".format(name))
         plt.plot(cat_df['ra'].to_numpy(), cat_df['dec'].to_numpy(), '.', label="Catalog stars")
-        plt.plot(sn_parameters['sn_ra'], sn_parameters['sn_dec'], 'x', label="SN")
+        if args.lc_folder is not None:
+            plt.plot(sn_parameters['sn_ra'], sn_parameters['sn_dec'], 'x', label="SN")
         plt.legend()
         plt.axis('equal')
         plt.tight_layout()
@@ -717,15 +720,19 @@ def concat_catalogs(lightcurve, logger, args):
                 _add_prefix_to_column(aperstars_df, 'aper_')
                 _add_prefix_to_column(psfstars_df, 'psf_')
                 _add_prefix_to_column(gaia_df, 'gaia_')
-                _add_prefix_to_column(ps1_df, 'ps1_')
+                _add_prefix_to_column(ps1_df, 'ps1_') #
                 cat_df = pd.concat([aperstars_df, psfstars_df, gaia_df, ps1_df], axis='columns')
+                # cat_df = pd.concat([aperstars_df, psfstars_df, gaia_df], axis='columns')
                 cat_df.insert(0, 'quadrant', exposure.name)
                 for column in headers.columns:
                     cat_df[column] = headers.at[exposure.name, column]
                 cat_dfs.append(cat_df)
 
-        print("")
-        return pd.concat(cat_dfs)
+        # print("")               #
+        if len(cat_dfs) > 0:
+            return pd.concat(cat_dfs)
+        else:
+            return None
 
     logger.info("Extracting star catalogs")
     lightcurve.path.joinpath("measures").mkdir(exist_ok=True)
@@ -733,8 +740,13 @@ def concat_catalogs(lightcurve, logger, args):
         for qid in [1, 2, 3, 4]:
             filename = lightcurve.path.joinpath("measures/measures_{}-{}-c{}-q{}.parquet".format(lightcurve.name, lightcurve.filterid, str(ccdid).zfill(2), str(qid)))
             if not filename.exists():
+                logger.info("ccdid={}, qid={}".format(ccdid, qid))
                 df = _extract_quadrant(ccdid, qid)
-                df.to_parquet(filename)
+                if df is not None:
+                    logger.info("Found {} measures".format(len(df)))
+                    df.to_parquet(filename)
+                else:
+                    logger.info("Found no measure")
 
     return True
 

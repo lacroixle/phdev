@@ -13,9 +13,10 @@ def calib(lightcurve, logger, args):
     import matplotlib.pyplot as plt
     import matplotlib
     from saunerie.plottools import binplot
+    import shutil
     from scipy.stats import norm
 
-    # matplotlib.use('Agg')
+    matplotlib.use('Agg')
 
     # Load constant stars catalog, Gaia catalog (for star identification/matching) and external calibration catalog
     stars_df = pd.read_parquet(lightcurve.smphot_stars_path.joinpath("constant_stars.parquet"))
@@ -197,5 +198,7 @@ def calib(lightcurve, logger, args):
                  'bright_stars_res_mu': bright_stars_mu.item(),
                  'bright_stars_threshold': bright_stars_threshold,
                  'bright_stars_count': len(dp.nt[bright_stars_mask])})
+
+    shutil.copy(lightcurve.path.joinpath("lightcurve.yaml"), lightcurve.path.joinpath("lightcurve_{}-{}.yaml".format(lightcurve.name, lightcurve.filterid)))
 
     return True

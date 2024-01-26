@@ -319,7 +319,6 @@ def smphot_stars(lightcurve, logger, args):
 
 
 def smphot_stars_constant(lightcurve, logger, args):
-    from utils import ListTable
     import numpy as np
     import matplotlib.pyplot as plt
     import pandas as pd
@@ -431,9 +430,10 @@ def smphot_stars_constant(lightcurve, logger, args):
     # Everything gets saved !
     smphot_lc_df.to_parquet(lightcurve.smphot_stars_path.joinpath("stars_lightcurves.parquet"))
     stars_df.to_parquet(lightcurve.smphot_stars_path.joinpath("constant_stars.parquet"))
-
+    logger.info("Done")
 
     # Update lightcurve yaml with fit informations
+    logger.info("Updating lightcurve yaml")
     update_yaml(lightcurve.path.joinpath("lightcurve.yaml"), 'constant_stars',
                 {'star_count': len(stars_df),
                  'chi2': np.sum(smphot_lc_df['wres']).item(),

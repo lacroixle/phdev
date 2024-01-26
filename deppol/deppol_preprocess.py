@@ -86,10 +86,12 @@ def mkcat2(exposure, logger, args):
         gaia_stars_df['x'] = gaia_stars_x
         gaia_stars_df['y'] = gaia_stars_y
 
-        # Removing measures that are too close to each other
-        # Min distance should be a function of seeing idealy
         # aperse_cat.df = aperse_cat.df.loc[aperse_cat.df['flag']==0]
         # aperse_cat.df = aperse_cat.df.loc[aperse_cat.df['gflag']==0]
+
+        # Removing measures that are too close to each other
+        # Min distance should be a function of seeing idealy
+        #
         min_dist = 20.
         n = len(aperse_cat.df)
         X = np.tile(aperse_cat.df['x'].to_numpy(), (n, 1))
