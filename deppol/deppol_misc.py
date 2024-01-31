@@ -425,6 +425,126 @@ def retrieve_catalogs(lightcurve, logger, args):
     return True
 
 
+def compare_catalogs(lightcurve, logger, args):
+    import matplotlib.pyplot as plt
+    from saunerie.plottools import binplot
+    from croaks.match import NearestNeighAssoc
+    from utils import mag2extcatmag, emag2extcatemag
+
+    gaia_df = lightcurve.get_ext_catalog('gaia')
+    ps1_df = lightcurve.get_ext_catalog('ps1')
+    ubercal_df = lightcurve.get_ext_catalog('ubercal_fluxcatalog')
+
+    assoc = NearestNeighAssoc(first=[ps1_df['ra'].to_numpy(), ps1_df['dec'].to_numpy()], radius = 1./60./60.)
+    i = assoc.match(ubercal_df['ra'].to_numpy(), ubercal_df['dec'].to_numpy())
+
+    ps1_df = ps1_df.iloc[i[i>=0]].reset_index(drop=True)
+    ubercal_df = ubercal_df.iloc[i>=0].reset_index(drop=True)
+
+    # First compare PS1 catalog with Ubercal's PS1 catalog
+    plt.subplots(nrows=3, ncols=1, figsize=(15., 9.), gridspec_kw={'hspace': 0}, sharex=True)
+    plt.suptitle("Comparing PS1 catalogs with Ubercal's PS1 catalogs")
+    plt.subplot(3, 1, 1)
+    plt.scatter(ps1_df['gmag'], ps1_df['gmag']-ubercal_df['g_mag'], c=(ps1_df['gmag']-ps1_df['imag']), s=0.5)
+    plt.grid()
+    plt.ylim(-0.2, 0.2)
+    plt.ylabel("$m_g^\mathrm{PS1}-m_g^\mathrm{Ubercal}$ [mag]")
+
+    plt.subplot(3, 1, 2)
+    plt.scatter(ps1_df['gmag'], ps1_df['rmag']-ubercal_df['r_mag'], c=(ps1_df['gmag']-ps1_df['imag']), s=0.5)
+    plt.grid()
+    plt.ylim(-0.2, 0.2)
+    plt.ylabel("$m_g^\mathrm{PS1}-m_g^\mathrm{Ubercal}$ [mag]")
+
+    plt.subplot(3, 1, 3)
+    plt.scatter(ps1_df['gmag'], ps1_df['imag']-ubercal_df['i_mag'], c=(ps1_df['gmag']-ps1_df['imag']), s=0.5)
+    plt.grid()
+    plt.ylim(-0.2, 0.2)
+    plt.xlabel("$m_g^\mathrm{PS1}$ [mag]")
+    plt.ylabel("$m_g^\mathrm{PS1}-m_g^\mathrm{Ubercal}$ [mag]")
+
+    plt.tight_layout()
+    plt.savefig(lightcurve.ext_catalogs_path.joinpath("ubercal_ps1_ps1_comparison.png"), dpi=200.)
+    plt.close()
+
+    # Compare PS1 catalog with Ubercal
+    plt.subplots(nrows=3, ncols=1, figsize=(15., 9.), gridspec_kw={'hspace': 0}, sharex=True)
+    plt.suptitle("Comparing PS1 catalogs with Ubercal's catalogs")
+    plt.subplot(3, 1, 1)
+    plt.scatter(ps1_df['gmag'], ps1_df['gmag']-ubercal_df['zgmag'], c=(ps1_df['gmag']-ps1_df['imag']), s=0.5)
+    plt.grid()
+    plt.ylim(-0.2, 0.2)
+    plt.ylabel("$m_g^\mathrm{PS1}-m_g^\mathrm{Ubercal}$ [mag]")
+
+    plt.subplot(3, 1, 2)
+    plt.scatter(ps1_df['gmag'], ps1_df['rmag']-ubercal_df['zrmag'], c=(ps1_df['gmag']-ps1_df['imag']), s=0.5)
+    plt.grid()
+    plt.ylim(-0.2, 0.2)
+    plt.ylabel("$m_g^\mathrm{PS1}-m_g^\mathrm{Ubercal}$ [mag]")
+
+    plt.subplot(3, 1, 3)
+    plt.scatter(ps1_df['gmag'], ps1_df['imag']-ubercal_df['zimag'], c=(ps1_df['gmag']-ps1_df['imag']), s=0.5)
+    plt.grid()
+    plt.ylim(-0.2, 0.2)
+    plt.xlabel("$m_g^\mathrm{PS1}$ [mag]")
+    plt.ylabel("$m_g^\mathrm{PS1}-m_g^\mathrm{Ubercal}$ [mag]")
+
+    plt.tight_layout()
+    plt.savefig(lightcurve.ext_catalogs_path.joinpath("ubercal_ps1.png"), dpi=200.)
+    plt.close()
+
+    # Compare PS1 catalog with Ubercal - binplots
+    def _ubercal_ps1_binplot(filtercode):
+        mag_ps1 = ps1_df[mag2extcatmag['ps1'][filtercode]].to_numpy()
+        mag_ubercal = ubercal_df[mag2extcatmag['ubercal_fluxcatalog'][filtercode]].to_numpy()
+
+        plt.subplots(nrows=3, ncols=1, figsize=(12., 8.), sharex=True, gridspec_kw={'hspace': 0.})
+        plt.suptitle("Comparing PS1 and Ubercal catalogs - ${}$ band".format(filtercode[1]))
+        plt.subplot(3, 1, 1)
+        mag_binned, d_mag_binned, ed_mag_binned = binplot(mag_ps1, mag_ps1-mag_ubercal, robust=True, data=False, scale=False)
+        plt.scatter(mag_ps1, mag_ps1-mag_ubercal, c=(ps1_df['gmag']-ps1_df['imag']).to_numpy(), s=0.8)
+        plt.ylim(-0.4, 0.4)
+        plt.ylabel("$m_{{{filtercode}}}^\mathrm{{PS1}}-m_{{{filtercode}}}^\mathrm{{Ubercal}}$ [mag]".format(filtercode=filtercode[1]))
+        plt.grid()
+
+        plt.subplot(3, 1, 2)
+        plt.plot(mag_binned, d_mag_binned)
+        plt.ylabel("$\langle m_{{{filtercode}}}^\mathrm{{PS1}}-m_{{{filtercode}}}^\mathrm{{Ubercal}} \\rangle$ [mag]".format(filtercode=filtercode[1]))
+        plt.grid()
+
+        plt.subplot(3, 1, 3)
+        plt.plot(mag_binned, ed_mag_binned)
+        plt.xlabel("$m_{{{filtercode}}}^\mathrm{{PS1}}$ [mag]".format(filtercode=filtercode[1]))
+        plt.ylabel("$\sigma_{{m_{{{filtercode}}}^\mathrm{{PS1}}-m_{{{filtercode}}}^\mathrm{{Ubercal}}}}$ [mag]".format(filtercode=filtercode[1]))
+        plt.grid()
+        plt.tight_layout()
+        plt.savefig(lightcurve.ext_catalogs_path.joinpath("ubercal_ps1_{}.png".format(filtercode)), dpi=200.)
+        plt.close()
+
+    _ubercal_ps1_binplot('zg')
+    _ubercal_ps1_binplot('zr')
+    _ubercal_ps1_binplot('zi')
+
+    return True
+    # < 18
+    # bright = ubercal_df['zgmag'] < 18
+    # res = (ps1_df['gmag']-ubercal_df['zgmag']).loc[bright]
+    res = ps1_df['Gmag'] - ubercal_df['g_mag']
+    # res = res - np.mean(res)
+
+    # plt.plot(ps1_df['gmag'], ubercal_df['Gmag'], '.')
+    #plt.scatter(ps1_df['gmag'], res, c=(ps1_df['gmag']-ps1_df['imag']).to_numpy(), s=0.5)
+    plt.scatter(ps1_df['Gmag'], res, c=(ps1_df['BP-RP']).to_numpy(), s=0.5)
+    # plt.scatter((ps1_df['gmag']-ps1_df['imag']).loc[bright], res, s=0.5)
+    plt.colorbar(label="$m_g-m_i$ [mag]")
+    plt.xlabel("$m_g-m_i$ [AB mag]")
+    plt.ylabel("$m_g-m_\mathrm{ZTF-g}$ [mag]")
+    # plt.ylim(-0.2, 0.2)
+    plt.grid()
+    plt.show()
+
+    pass
+
 def match_catalogs(exposure, logger, args):
     from itertools import chain
     from utils import contained_in_exposure, match_pixel_space, gaiarefmjd, quadrant_width_px, quadrant_height_px

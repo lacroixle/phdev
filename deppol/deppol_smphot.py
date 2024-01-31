@@ -323,7 +323,7 @@ def smphot_stars_constant(lightcurve, logger, args):
     import matplotlib.pyplot as plt
     import pandas as pd
     from deppol_utils import update_yaml
-
+    from utils import ListTable
     from croaks.match import NearestNeighAssoc
     from croaks import DataProxy
     from saunerie.linearmodels import LinearModel, RobustLinearSolver
@@ -345,7 +345,7 @@ def smphot_stars_constant(lightcurve, logger, args):
     w = 1./np.sqrt(dp.error**2+piedestal**2)
 
     # Retrieve matching Gaia catalog to taf fitted constant stars
-    gaia_df = lightcurve.get_ext_catalog('gaia').set_index('Source', drop=True)
+    gaia_df = lightcurve.get_ext_catalog('gaia').drop_duplicates(subset='Source').set_index('Source', drop=True)
     with open(lightcurve.smphot_stars_path.joinpath("stars_gaiaid.txt"), 'r') as f:
         gaiaids = list(map(lambda x: int(x.strip()), f.readlines()))
 

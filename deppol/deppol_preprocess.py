@@ -37,7 +37,7 @@ def mkcat2(exposure, logger, args):
     from utils import match_pixel_space
     from astropy.coordinates import SkyCoord
     import astropy.units as u
-    from utils import contained_in_exposure, sc_array
+    from utils import contained_in_exposure, sc_array, j2000mjd
     import matplotlib.pyplot as plt
 
     run_and_log(["mkcat2", exposure.path, "-o"], logger)
@@ -50,7 +50,11 @@ def mkcat2(exposure, logger, args):
         logger.info("Using Gaia catalog to identify stars")
         aperse_cat = exposure.get_catalog("aperse.list")
         standalone_stars_cat = exposure.get_catalog("standalone_stars.list")
-        gaia_stars_df = exposure.lightcurve.get_ext_catalog('gaia', matched=False)[['Gmag', 'ra', 'dec']].dropna()
+        gaia_stars_df = exposure.lightcurve.get_ext_catalog('gaia', matched=False)[['Gmag', 'ra', 'dec', 'pmRA', 'pmDE']].dropna()
+
+        obsmjd = exposure.mjd
+        gaia_stars_df['ra'] = gaia_stars_df['ra']+(obsmjd-j2000mjd)*gaia_stars_df['pmRA']
+        gaia_stars_df['dec'] = gaia_stars_df['dec']+(obsmjd-j2000mjd)*gaia_stars_df['pmDE']
 
         logger.info("Total Gaia stars={}".format(len(gaia_stars_df)))
         # Remove Gaia stars outside of the exposure
@@ -60,7 +64,6 @@ def mkcat2(exposure, logger, args):
         inside = sum(gaia_stars_inside)
         gaia_stars_inside = contained_in_exposure(gaia_stars_skycoords, wcs, return_mask=True)
         if np.sum(gaia_stars_inside) == 0:
-            print(exposure.name)
             plt.plot(gaia_stars_df['ra'].to_numpy(), gaia_stars_df['dec'], ',')
 
             width, height = wcs.pixel_shape
@@ -109,7 +112,7 @@ def mkcat2(exposure, logger, args):
 
         aperse_cat.df = aperse_cat.df.iloc[keep_idx]
 
-        i = match_pixel_space(gaia_stars_df[['x', 'y']].to_records(), aperse_cat.df[['x', 'y']].to_records(), radius=0.5)
+        i = match_pixel_space(gaia_stars_df[['x', 'y']].to_records(), aperse_cat.df[['x', 'y']].to_records(), radius=5.)
         gaia_indices = i[i>=0]
         cat_indices = np.arange(len(aperse_cat.df))[i>=0]
 

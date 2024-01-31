@@ -15,12 +15,13 @@ def calib(lightcurve, logger, args):
     from saunerie.plottools import binplot
     import shutil
     from scipy.stats import norm
+    from matplotlib.ticker import MultipleLocator, FormatStrFormatter, AutoMinorLocator
 
     matplotlib.use('Agg')
 
     # Load constant stars catalog, Gaia catalog (for star identification/matching) and external calibration catalog
     stars_df = pd.read_parquet(lightcurve.smphot_stars_path.joinpath("constant_stars.parquet"))
-    gaia_df = lightcurve.get_ext_catalog('gaia').reset_index().set_index('Source', drop=False).loc[stars_df.index]
+    gaia_df = lightcurve.get_ext_catalog('gaia').set_index('Source', drop=False).loc[stars_df.index]
     # ext_cat_df = lightcurve.get_ext_catalog(args.photom_cat).loc[gaia_df['index']]
     ext_cat_df = lightcurve.get_ext_catalog(args.photom_cat)
 
@@ -31,10 +32,7 @@ def calib(lightcurve, logger, args):
     gaia_df = gaia_df.iloc[i[i>=0]].reset_index(drop=True)
     ext_cat_df = ext_cat_df.iloc[i>=0].reset_index(drop=True)
 
-    stars_df = stars_df.loc[gaia_df['Source']]
-
-    # plt.plot(stars_df['mag'], stars_df['rms_mag'], '.')
-    # plt.show()
+    stars_df = stars_df.loc[gaia_df['Source'].tolist()]
 
     # Add matched band external catalog magnitude, delta and color
     piedestal = 0.
@@ -51,8 +49,6 @@ def calib(lightcurve, logger, args):
     stars_df = stars_df.loc[stars_df['cat_color']>0.]
 
     stars_df.reset_index(inplace=True)
-    # kwargs = dict([(keyword, keyword) for keyword in stars_df.columns])
-    #
 
     dp = DataProxy(stars_df[['delta_mag', 'delta_emag', 'cat_mag', 'cat_emag', 'gaiaid', 'cat_color']].to_records(), delta_mag='delta_mag', delta_emag='delta_emag', cat_mag='cat_mag', cat_emag='cat_emag', gaiaid='gaiaid', cat_color='cat_color')
     dp.make_index('gaiaid')
@@ -111,7 +107,7 @@ def calib(lightcurve, logger, args):
     plt.close()
 
     plt.subplots(ncols=1, nrows=1, figsize=(8., 5.))
-    plt.title("{}-{}\nResidual plot for the calibration fit onto {}\n$ZP$={:.4f}, $\chi^2/\mathrm{{ndof}}={:.4f}$".format(lightcurve.name, lightcurve.filterid, args.photom_cat, ZP, chi2ndof))
+    plt.title("{}-{}\nResidual plot for the calibration fit onto {}\n$ZP$={:.4f}, $\chi^2/\mathrm{{ndof}}={:.4f}$, Star count={}".format(lightcurve.name, lightcurve.filterid, args.photom_cat, ZP, chi2ndof, len(stars_df)))
     xmin, xmax = np.min(dp.cat_mag)-0.2, np.max(dp.cat_mag)+0.2
     plt.errorbar(dp.cat_mag, res, yerr=dp.delta_emag, fmt='.')
     # plt.scatter(dp.cat_mag, res, c=dp.cat_color, zorder=10., s=6.)
@@ -125,6 +121,34 @@ def calib(lightcurve, logger, args):
     plt.legend()
     plt.tight_layout()
     plt.savefig(output_path.joinpath("res.png"), dpi=200.)
+    plt.close()
+
+
+    # Binplot of the residuals
+    plt.subplots(ncols=1, nrows=2, figsize=(12., 8.), sharex=True, gridspec_kw={'hspace': 0.})
+    plt.suptitle("{}-{}\nResidual plot for the calibration fit onto {}\n$ZP$={:.4f}, $\chi^2/\mathrm{{ndof}}={:.4f}$, Star count={}".format(lightcurve.name, lightcurve.filterid, args.photom_cat, ZP, chi2ndof, len(stars_df)))
+
+    ax = plt.subplot(2, 1, 1)
+    ax.tick_params(which='both', direction='in')
+    ax.xaxis.set_minor_locator(AutoMinorLocator())
+    ax.yaxis.set_minor_locator(AutoMinorLocator())
+    xbinned_mag, yplot_res, res_dispersion = binplot(dp.cat_mag, res, nbins=10, data=False, rms=False, scale=False)
+    plt.plot(dp.cat_mag, res, '.', color='black', zorder=-10.)
+    plt.ylabel("$m_\mathrm{{ZTF}}-m_\mathrm{{{}}}-ZP-\\alpha C$ [mag]".format(args.photom_cat))
+    plt.ylim(-0.4, 0.4)
+    plt.grid()
+
+    ax = plt.subplot(2, 1, 2)
+    ax.tick_params(which='both', direction='in')
+    ax.xaxis.set_minor_locator(AutoMinorLocator())
+    ax.yaxis.set_minor_locator(AutoMinorLocator())
+    plt.plot(xbinned_mag, res_dispersion)
+    plt.grid()
+    plt.xlabel("$m_\mathrm{{{}}}$ [mag]".format(args.photom_cat))
+    plt.ylabel("$\sigma_{{m_\mathrm{{ZTF}}-m_\mathrm{{{}}}-ZP-\\alpha C}}$ [mag]".format(args.photom_cat))
+
+    plt.tight_layout()
+    plt.savefig(output_path.joinpath("binned_res.png"), dpi=200.)
     plt.close()
 
     plt.subplots(nrows=2, ncols=2, figsize=(10., 6.), gridspec_kw={'width_ratios': [5., 1.5], 'hspace': 0., 'wspace': 0.}, sharex=False, sharey=False)
