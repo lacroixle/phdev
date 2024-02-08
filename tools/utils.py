@@ -737,9 +737,17 @@ def get_ubercal_catalog_in_cone(name, ubercal_config_path, center_ra, center_dec
         cat_df = cat_df.loc[cat_df['n_obs']>=ubercal_config['config']['min_measure']]
 
         if name == 'fluxcatalog':
+            cat_df = cat_df.loc[cat_df['calflux_weighted_mean']>0.]
+
+            cat_df['calflux_rms'] = cat_df['calflux_weighted_std']
+            cat_df['calflux_weighted_std'] = cat_df['calflux_weighted_std']/np.sqrt(cat_df['n_obs']-1)
+
             cat_df = cat_df.assign(calmag_weighted_mean=-2.5*np.log10(cat_df['calflux_weighted_mean'].to_numpy()),
-                          calmag_weighted_std=2.5/np.log(10)*cat_df['calflux_weighted_std']/cat_df['calflux_weighted_mean'])
-            cat_df.drop(labels=['calflux_weighted_mean', 'calflux_weighted_std'], axis='columns', inplace=True)
+                                   calmag_weighted_std=2.5/np.log(10)*cat_df['calflux_weighted_std']/cat_df['calflux_weighted_mean'],
+                                   calmag_rms=2.5/np.log(10)*cat_df['calflux_rms']/cat_df['calflux_weighted_mean'])
+
+            cat_df.drop(labels=['calflux_weighted_mean', 'calflux_weighted_std', 'calflux_rms'], axis='columns', inplace=True)
+
         return cat_df
 
     import matplotlib.pyplot as plt
@@ -753,8 +761,8 @@ def get_ubercal_catalog_in_cone(name, ubercal_config_path, center_ra, center_dec
     cat_r_df = cat_r_df.filter(items=common_stars, axis=0)
     cat_i_df = cat_i_df.filter(items=common_stars, axis=0)
 
-    cat_g_df.rename(columns={'calmag_weighted_mean': 'zgmag', 'calmag_weighted_std': 'ezgmag', 'n_obs': 'zg_n_obs', 'chi2_Source_res': 'zg_chi2_Source_res'}, inplace=True)
-    cat_df = pd.concat([cat_g_df, cat_r_df[['calmag_weighted_mean', 'calmag_weighted_std', 'n_obs', 'chi2_Source_res']].rename(columns={'calmag_weighted_mean': 'zrmag', 'calmag_weighted_std': 'ezrmag', 'n_obs': 'zr_n_obs', 'chi2_Source_res': 'zr_chi2_Source_res'}),
-                        cat_i_df[['calmag_weighted_mean', 'calmag_weighted_std', 'n_obs', 'chi2_Source_res']].rename(columns={'calmag_weighted_mean': 'zimag', 'calmag_weighted_std': 'ezimag', 'n_obs': 'zi_n_obs', 'chi2_Source_res': 'zi_chi2_Source_res'})], axis=1)
+    cat_g_df.rename(columns={'calmag_weighted_mean': 'zgmag', 'calmag_weighted_std': 'ezgmag', 'calmag_rms': 'zgrms', 'n_obs': 'zg_n_obs', 'chi2_Source_res': 'zg_chi2_Source_res'}, inplace=True)
+    cat_df = pd.concat([cat_g_df, cat_r_df[['calmag_weighted_mean', 'calmag_weighted_std', 'calmag_rms', 'n_obs', 'chi2_Source_res']].rename(columns={'calmag_weighted_mean': 'zrmag', 'calmag_weighted_std': 'ezrmag', 'calmag_rms': 'zrrms', 'n_obs': 'zr_n_obs', 'chi2_Source_res': 'zr_chi2_Source_res'}),
+                        cat_i_df[['calmag_weighted_mean', 'calmag_weighted_std', 'calmag_rms', 'n_obs', 'chi2_Source_res']].rename(columns={'calmag_weighted_mean': 'zimag', 'calmag_weighted_std': 'ezimag', 'calmag_rms': 'zirms', 'n_obs': 'zi_n_obs', 'chi2_Source_res': 'zi_chi2_Source_res'})], axis=1)
 
     return cat_df
