@@ -6,9 +6,11 @@ import sys
 import logging
 import subprocess
 import shutil
+import itertools
 
 import pandas as pd
 from joblib import Parallel, delayed
+
 
 from deppol_utils import run_and_log, load_timings, quadrants_from_band_path
 import utils
@@ -19,7 +21,7 @@ def get_current_running_sne():
     scheduled_jobs_raw = out.stdout.decode('utf-8').split("\n")
     return dict([(scheduled_job.split(",")[0][4:], scheduled_job.split(",")[1]) for scheduled_job in scheduled_jobs_raw if scheduled_job[:4] == "smp_"])
 
-def generate_jobs(wd, run_folder, func, run_name):
+def generate_jobs(wd, run_folder, func, run_name, lightcurves):
     print("Working directory: {}".format(wd))
     print("Run folder: {}".format(run_folder))
     print("Func list: {}".format(func))
@@ -33,26 +35,13 @@ def generate_jobs(wd, run_folder, func, run_name):
     log_folder.mkdir(exist_ok=True)
     status_folder.mkdir(exist_ok=True)
 
-    print("Generating jobs...")
-    sne_jobs = {}
-    job_count = 0
-    for sn_folder in list(wd.glob("*")):
-        filtercodes = []
-        for filtercode in utils.filtercodes:
-            if sn_folder.joinpath(filtercode).exists():
-                filtercodes.append(filtercode)
-
-        if len(filtercodes) > 0:
-            sne_jobs[sn_folder.name] = filtercodes
-            job_count += len(filtercodes)
-
-    print("Job count: {}".format(job_count))
 #OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 deppol --ztfname={} --filtercode={} -j {j} --wd={} --func={} --lc-folder=/sps/ztf/data/storage/scenemodeling/lc --exposure-workspace=/dev/shm/llacroix --rm-intermediates --scratch=${{TMPDIR}}/llacroix --astro-degree=5 --max-seeing=4.5 --discard-calibrated --from-scratch --dump-timings --parallel-reduce --use-gaia-stars --ext-catalog-cache=/sps/ztf/data/storage/scenemodeling/cat_cache --footprints=~/data/ztf/starflat_footprints.csv --discard-calibrated
 # deppol --ztfname={} --filtercode={} -j {j} --wd={} --func={} --lc-folder=/sps/ztf/data/storage/scenemodeling/lc --rm-intermediates --dump-timings --parallel-reduce --use-gaia-stars --ext-catalog-cache=/sps/ztf/data/storage/scenemodeling/cat_cache --photom-max-star-chi2=4. --photom-cat=ps1 --astro-max-chi2=3. --astro-degree=5 --scratch=$TMPDIR/llacroix --from-scratch
 #OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 deppol --ztfname={ztfname} --filtercode={filtercode} -j {j} --wd={wd} --func={func} --lc-folder={lc_folder} --exposure-workspace=/dev/shm/llacroix --rm-intermediates --scratch=${{TMPDIR}}/llacroix --astro-degree=5 --discard-calibrated --from-scratch --dump-timings --parallel-reduce --use-gaia-stars --ext-catalog-cache=/sps/ztf/data/storage/scenemodeling/cat_cache --discard-calibrated
 #
-    for ztfname in sne_jobs.keys():
-        for filtercode in sne_jobs[ztfname]:
+    for lightcurve_folder in lightcurves.keys():
+        for filtercode in lightcurves[lightcurve_folder]:
+            print("{}-{}".format(lightcurve_folder, filtercode))
             job = """#!/bin/sh
 echo "running" > {status_path}
 conda activate pol
@@ -60,15 +49,19 @@ deppol_dask_env.sh
 ulimit -n 4096
 export OMP_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
-#OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 deppol --ztfname={ztfname} --filtercode={filtercode} -j {j} --wd={wd} --func={func} --lc-folder={lc_folder} --exposure-workspace=/dev/shm/llacroix --rm-intermediates --scratch=${{TMPDIR}}/llacroix --astro-degree=5 --discard-calibrated --from-scratch --dump-timings --parallel-reduce --use-gaia-stars --ext-catalog-cache=/sps/ztf/data/storage/scenemodeling/cat_cache --photom-cat=ps1
-OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 deppol --ztfname={ztfname} --filtercode={filtercode} -j {j} --wd={wd} --func={func} --rm-intermediates --dump-timings --parallel-reduce --use-gaia-stars
+
+# Command line for SNe lightcurves
+OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 deppol --ztfname={ztfname} --filtercode={filtercode} -j $SLURM_NTASKS --wd={wd} --func={func} --lc-folder={lc_folder} --exposure-workspace=/dev/shm/llacroix --rm-intermediates --scratch=${{TMPDIR}}/llacroix --astro-degree=5 --discard-calibrated --from-scratch --dump-timings --parallel-reduce --use-gaia-stars --ext-catalog-cache=/sps/ztf/data/storage/scenemodeling/cat_cache
+
+# Command line for starflats
+#OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 deppol --ztfname={ztfname} --filtercode={filtercode} -j $SLURM_NTASKS --wd={wd} --func={func} --rm-intermediates --dump-timings --use-gaia-stars
 echo "done" > {status_path}
-""".format(ztfname=ztfname, filtercode=filtercode, wd=wd, func=",".join(func), status_path=run_folder.joinpath("{}/status/{}-{}".format(run_name, ztfname, filtercode)), j=args.ntasks, lc_folder="/sps/ztf/data/storage/scenemodeling/jacco/lc_jacco")
-            with open(batch_folder.joinpath("{}-{}.sh".format(ztfname, filtercode)), 'w') as f:
+""".format(ztfname=lightcurve_folder, filtercode=filtercode, wd=wd, func=",".join(func), status_path=run_folder.joinpath("{}/status/{}-{}".format(run_name, lightcurve_folder, filtercode)), j=args.ntasks, lc_folder="/sps/ztf/data/storage/scenemodeling/jacco/lc_jacco")
+            with open(batch_folder.joinpath("{}-{}.sh".format(lightcurve_folder, filtercode)), 'w') as f:
                 f.write(job)
 
 
-def schedule_jobs(run_folder, run_name):
+def schedule_jobs(run_folder, run_name, lightcurves):
     print("Run folder: {}".format(run_folder))
     batch_folder = run_folder.joinpath("{}/batches".format(run_name))
     log_folder = run_folder.joinpath("{}/logs".format(run_name))
@@ -79,44 +72,26 @@ def schedule_jobs(run_folder, run_name):
     logger.addHandler(logging.StreamHandler())
     logger.setLevel(logging.INFO)
 
-    # First get list of currently scheduled jobs
-    # out = subprocess.run(["squeue", "-o", "%j,%t", "-p", "htc", "-h"], capture_output=True)
-    # scheduled_jobs_raw = out.stdout.decode('utf-8').split("\n")
-    # scheduled_jobs = dict([(scheduled_job.split(",")[0][4:], scheduled_job.split(",")[1]) for scheduled_job in scheduled_jobs_raw if scheduled_job[:4] == "smp_"])
+    batches = list(itertools.chain.from_iterable([["{}-{}.sh".format(lightcurve_folder, band) for band in lightcurves[lightcurve_folder]] for lightcurve_folder in lightcurves.keys()]))
+    batches = list(map(lambda x: run_folder.joinpath("{}/{}/batches/{}".format(run_folder, run_name, x)), batches))
+
+    # Write batch list in run folder
+    with open(run_folder.joinpath("{}/lightcurves.txt".format(run_name)), 'w') as f:
+        for batch in batches:
+            f.write("{}\n".format(batch))
+
+    # First get currently running lightcurves
     scheduled_jobs = get_current_running_sne()
 
-    batches = list(batch_folder.glob("*.sh"))
-
-    if args.ztfname:
-        if args.ztfname.exists():
-            with open(args.ztfname, 'r') as f:
-                lines = list(map(lambda x: x.strip(), f.readlines()))
-
-            batches = []
-            for line in lines:
-                batches.append(batch_folder.joinpath("{}.sh".format(line)))
-                # batches.extend([batch_folder.joinpath("{}-{}.sh".format(line, filtercode)) for filtercode in utils.filtercodes])
-            batches = list(filter(lambda x: x.exists(), batches))
-
-            for batch in batches:
-                if not batch.exists():
-                    print("{} does not exist!".format(batch))
-                    exit()
-
-            print("Scheduling {} jobs".format(len(batches)))
-        else:
-            ztfbatch = batch_folder.joinpath("{}.sh".format(ztfname))
-            if ztfbatch.exists():
-                batches = [ztfbatch]
-            else:
-                print("--ztfname specified but does not correspond to a list or a sn-filtercode!")
-                exit()
-
+    # Submit lightcurve jobs
     for batch in batches:
         batch_name = batch.name.split(".")[0]
+
+        # If lightcurve is already running, do not submit it again
         if batch_name in scheduled_jobs.keys():
             continue
 
+        # Check if lightcurve already ran
         batch_status_path = status_folder.joinpath(batch_name)
         if batch_status_path.exists() and not args.ztfname:
             with open(batch_status_path, 'r') as f:
@@ -124,6 +99,8 @@ def schedule_jobs(run_folder, run_name):
                 if status == "done":
                     continue
 
+        # If not, submit it through the SLURM batch system
+        # Configured to run @ CCIN2P3
         cmd = ["sbatch", "--ntasks={}".format(args.ntasks),
                "-D", "{}".format(run_folder.joinpath(run_name)),
                "-J", "smp_{}".format(batch_name),
@@ -145,212 +122,85 @@ def schedule_jobs(run_folder, run_name):
         print("{}: {}".format(batch_name, returncode))
 
 
-def generate_summary(args, funcs):
-    def __is_job_done(status_name):
-        with open(status_name, 'r') as f:
-            return "done" in f.readline()
+def lightcurves_from_ztfname(wd, ztfname):
+    lightcurves = {}
 
-    def __func_status(band_path, func):
-        if band_path.joinpath("{}.success".format(func)).exists():
-            return 1.
-        elif band_path.joinpath("{}.fail".format(func)).exists():
-            return 0.
-        else:
-            quadrant_paths = quadrants_from_band_path(band_path, None)
-            if len(quadrant_paths) == 0:
-                return 0.
-            success = [quadrant_path.joinpath("{}.success".format(func)).exists() for quadrant_path in quadrant_paths]
-            return sum(success)/len(quadrant_paths)
+    # In that case, no ztfname is specified. We simply build the lightcurve list from the working directory
+    if ztfname is None:
+        for lightcurve_folder in list(wd.glob("*")):
+            bands = []
+            for filtercode in utils.filtercodes:
+                if lightcurve_folder.joinpath(filtercode).exists():
+                    bands.append(filtercode)
 
-    status_folder = args.run_folder.joinpath("{}/status".format(args.run_name))
-    sne_status = list(status_folder.glob("*"))
+            if len(bands) == 0:
+                continue
 
-    current_running_sne = get_current_running_sne()
-    ztfname_filter_list = [sn_status.name for sn_status in sne_status if __is_job_done(sn_status)]
+            lightcurves[lightcurve_folder.name] = bands
 
-    if args.j > 1:
-        def _sn_summary(ztfname_filter):
-            ztfname, filtercode = ztfname_filter.split("-")
-            if ztfname_filter in current_running_sne.keys() and args.ignore_running:
-                return
+    # ztfname corresponds to a valid file. Read lightcurves from it
+    elif ztfname.exists():
+        with open(ztfname, 'r') as f:
+            lines = list(map(lambda x: x.strip(), f.readlines()))
 
-            func_status = {}
-            func_timings = {}
-            band_folder = args.wd.joinpath("{}/{}".format(ztfname, filtercode))
-            func_timings['quadrant_count'] = len(list(band_folder.glob("ztf_*")))
+        for line in lines:
+            # This line specify a lightcurve_folder and a band
+            if "-" in line:
+                lightcurve_folder, band = line.split("-")
+                if lightcurve_folder not in lightcurves.keys():
+                    lightcurves[lightcurve_folder] = [band]
+                else:
+                    lightcurves[lightcurve_folder] = list(set(lightcurves[lightcurve_folder] + [band]))
 
-            # Get number of workers from the log...
-            with open(args.run_folder.joinpath("{}/logs/log_{}".format(args.run_name, ztfname_filter))) as f:
-                worker_count = -1
-                worker_count_ok = False
-                galsize_ok = False
-                galsize = float('nan')
-                timings_smphot = band_folder.joinpath("timings_smphot")
-                for line in f.readlines():
-                    line = line.strip()
-                    if "Running a local cluster with" in line:
-                        worker_count = int(line.split(" ")[5])
-                        worker_count_ok = True
-
-                    if timings_smphot.exists():
-                        if "SimPhotFit::AssignIndicesAndToDo: number of parameters" in line:
-                            galsize = int(line.split(" ")[6].split(":")[1])
-                            galsize_ok = True
-
-                    if worker_count_ok and (galsize_ok or not timings_smphot.exists()):
-                        break
-
-                if not worker_count_ok:
-                    print("Could not parse worker count from log!")
-
-                if not galsize_ok and (galsize_ok or not timings_smphot.exists()):
-                    print("Could not parse galaxy size from log!")
-
-            func_timings['worker_count'] = worker_count
-            func_timings['galsize'] = galsize
-            func_timings['total'] = load_timings(band_folder.joinpath("timings_total"))['elapsed']
-
-            success = True
-            for func in funcs:
-                status = __func_status(band_folder, func)
-                func_status[func] = status
-
-                if band_folder.joinpath("timings_{}".format(func)).exists():
-                    elapsed = load_timings(band_folder.joinpath("timings_{}".format(func)))['total']['elapsed']
-                    func_timings[func] = elapsed
-
-            print(".", end="", flush=True)
-            return func_status, func_timings
-
-        results = Parallel(n_jobs=args.j)(delayed(_sn_summary)(ztfname_filter) for ztfname_filter in ztfname_filter_list)
-        func_status = dict([(ztfname_filter, result[0]) for result, ztfname_filter in zip(results, ztfname_filter_list)])
-        func_timings = dict([(ztfname_filter, result[1]) for result, ztfname_filter in zip(results, ztfname_filter_list)])
-
-        success_sne = 0
-        success_smp_sn = 0
-        success_smp_stars = 0
-        failed_list = []
-        for ztfname_filter, status in zip(ztfname_filter_list, func_status):
-            if not func_status[ztfname_filter]['smphot'] or not func_status[ztfname_filter]['smphot_stars']:
-                failed_list.append(ztfname_filter)
+            # This line only specify a lightcurve_folder
             else:
-                success_sne += 1
-
-            if func_status[ztfname_filter]['smphot']:
-                success_smp_sn += 1
-
-            if func_status[ztfname_filter]['smphot_stars']:
-                success_smp_stars += 1
-    else:
-        func_status = {}
-        func_timings = {}
-        failed_list = []
-        success_sne = 0
-        success_smp_sn = 0
-        success_smp_stars = 0
-        for ztfname_filter in ztfname_filter_list:
-            ztfname, filtercode = ztfname_filter.split("-")
-            band_folder = args.wd.joinpath("{}/{}".format(ztfname, filtercode))
-            func_status[ztfname_filter] = {}
-            func_timings[ztfname_filter] = {}
-            func_timings[ztfname_filter]['quadrant_count'] = len(list(band_folder.glob("ztf_*")))
-
-            # Get number of workers from the log...
-            with open(args.run_folder.joinpath("{}/logs/log_{}".format(args.run_name, ztfname_filter))) as f:
-                worker_count = -1
-                worker_count_ok = False
-                galsize_ok = False
-                galsize = float('nan')
-                timings_smphot = band_folder.joinpath("timings_smphot")
-                for line in f.readlines():
-                    line = line.strip()
-                    if "Running a local cluster with" in line:
-                        worker_count = int(line.split(" ")[5])
-                        worker_count_ok = True
-
-                    if timings_smphot.exists():
-                        if "SimPhotFit::AssignIndicesAndToDo: number of parameters" in line:
-                            galsize = int(line.split(" ")[6].split(":")[1])
-                            galsize_ok = True
-
-                    if worker_count_ok and (galsize_ok or not timings_smphot.exists()):
-                        break
-
-                if not worker_count_ok:
-                    print("Could not parse worker count from log!")
+                lightcurve_folder = line
+                bands = list(map(lambda x: x.name, list(filter(lambda x: x not in utils.filtercodes, list(wd.joinpath(lightcurve_folder).glob("z*"))))))
+                if len(bands) == 0:
                     continue
 
-                if not galsize_ok and (galsize_ok or not timings_smphot.exists()):
-                    print("Could not parse galaxy size from log!")
+                if lightcurve_folder not in lightcurves.keys():
+                    lightcurves[lightcurve_folder] = bands
+                else:
+                    lightcurves[lightcurve_folder] = list(set(lightcurves[lightcurve_folder] + bands))
 
-            func_timings[ztfname_filter]['worker_count'] = worker_count
-            func_timings[ztfname_filter]['galsize'] = galsize
-            func_timings[ztfname_filter]['total'] = load_timings(band_folder.joinpath("timings_total"))['elapsed']
-            for func in funcs:
-                status = __func_status(band_folder, func)
-                func_status[ztfname_filter][func] = status
+    # ztfname does not correspond to a filename, might be the name of a lightcurve_folder or lightcurve
+    else:
+        ztfname = ztfname.name
 
-                if band_folder.joinpath("timings_{}".format(func)).exists():
-                    elapsed = load_timings(band_folder.joinpath("timings_{}".format(func)))['total']['elapsed']
-                    func_timings[ztfname_filter][func] = elapsed
-
-            if not func_status[ztfname_filter]['smphot'] or not func_status[ztfname_filter]['smphot_stars']:
-                failed_list.append(ztfname_filter)
+        # SN and band combination
+        if "-" in ztfname:
+            lightcurve_folder, band = ztfname.split("-")
+            if band in utils.filtercodes and wd.joinpath("{}/{}".format(lightcurve_folder, band)).exists():
+                lightcurves[lightcurve_folder] = [band]
             else:
-                success_sne += 1
+                print("For SN/lightcurve_folder {}, {} does not correspond to a valid filtercode! (or there might be no corresponding folder)".format(lightcurve_folder, band, utils.filtercodes)) # Cryptic error message
+                sys.exit()
 
-            if func_status[ztfname_filter]['smphot']:
-                success_smp_sn += 1
+        # Only a SN, get all bands from working directory
+        elif wd.joinpath(ztfname).exists():
+            bands = list(filter(lambda x: x in utils.filtercodes, list(wd.joinpath(ztfname).glob("z*"))))
+            lightcurves[ztfname] = bands
 
-            if func_status[ztfname_filter]['smphot_stars']:
-                success_smp_stars += 1
+        else:
+            print("{} does not correspond to a valid ztfname! (read --help menu to see what constitute a valid one)".format(ztfname))
+            sys.exit()
 
-            if not args.print_failed:
-                print(".", end="", flush=True)
-
-    # if not args.print_failed:
-    #     print("Run summary:")
-    #     print("Total SNe={}".format(len(ztfname_filter_list)))
-    #     print("Success={}".format(success_sne))
-    #     print("Failed={}".format(len(failed_list)))
-    #     print("Success SN SMP={}".format(success_smp_sn))
-    #     print("Success SN stars={}".format(success_smp_stars))
-    #
-
-    print("Run summary:")
-    print("Total SNe={}".format(len(ztfname_filter_list)))
-    print("Success={}".format(success_sne))
-    print("Failed={}".format(len(failed_list)))
-    print("Success SN SMP={}".format(success_smp_sn))
-    print("Success SN stars={}".format(success_smp_stars))
-
-    df_status = pd.DataFrame.from_dict(func_status, orient='index')
-    df_status.to_csv("pipeline_status.csv")
-
-    df_timings = pd.DataFrame.from_dict(func_timings, orient='index')
-    df_timings.to_csv("pipeline_timings.csv")
-
-    if args.print_failed:
-        for failed in failed_list:
-            print(failed)
+    return lightcurves
 
 
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser(description="")
     argparser.add_argument('--generate-jobs', action='store_true', help="If set, generate list of jobs")
     argparser.add_argument('--schedule-jobs', action='store_true', help="If set, schedule jobs onto SLURM")
-    argparser.add_argument('--wd', type=pathlib.Path, required=False)
+    argparser.add_argument('--wd', type=pathlib.Path, required=False, help="Working directory.")
     argparser.add_argument('--run-folder', type=pathlib.Path, required=True)
-    argparser.add_argument('--func', type=pathlib.Path, help="")
+    argparser.add_argument('--func', type=pathlib.Path, help="Comma separated list of pipeline operations. If a valid file, read from it instead, where each line correspond to a pipeline operation.")
     argparser.add_argument('--run-name', type=str, required=True)
-    argparser.add_argument('--ntasks', default=1, type=int)
+    argparser.add_argument('--ntasks', default=1, type=int, help="Number of worker to use when submitting jobs")
     argparser.add_argument('--purge-status', action='store_true')
     argparser.add_argument('--purge', action='store_true')
-    argparser.add_argument('--ztfname', type=pathlib.Path, help="To schedule only one SN. Followong ZTFSNname-filtercode, eg ZTF19aaripqw-zg.\nTo schedule a list, put a filename (as for deppol).\nForces through status.")
-    argparser.add_argument('--generate-summary', action='store_true')
-    argparser.add_argument('--print-failed', action='store_true')
-    argparser.add_argument('-j', type=int, default=1, help="Number of worker to use for parallelized tasks.")
-    argparser.add_argument('--ignore-running', action='store_true', help="For --print-failed action. Ignores running jobs.")
+    argparser.add_argument('--ztfname', type=pathlib.Path, help="If left empty, process all lightcurves in the working directory. If it corresponds to one lightcurve folder (such as a SN folder), process this one in each available bands. If it corresponds to a lightcurve folder name and a filtercode, separated by \"-\" (e.g. ZTF19aaripqw-zg), only process the specified lightcurve. If set to a valid filename, interpret each line of it in the same way as previously described")
 
     args = argparser.parse_args()
 
@@ -372,19 +222,31 @@ if __name__ == '__main__':
 
     if args.func:
         funcs = []
+        # If points to a correct file, read from it
         if args.func.exists():
             with open(args.func, 'r') as f:
                 funcs = list(map(lambda x: x.strip(), f.readlines()))
+
+        # Comma sepparated operations
         else:
             funcs = str(args.func).split(",")
 
+        # Check operations are valid
+        import imp
+        deppol = imp.load_source('deppol', "deppol") # This is deprecated but there are more important things at hand...
+        for func in funcs:
+            if func not in deppol.poloka_func.keys():
+                print("{} pipeline operation does not exists! Exiting...".format(func))
+                sys.exit()
+
     args.run_folder.joinpath(args.run_name).mkdir(exist_ok=True)
 
-    if args.generate_summary:
-        generate_summary(args, funcs)
+    print("Building lightcurve list...")
+    lightcurves = lightcurves_from_ztfname(args.wd, args.ztfname)
+    print("Found {} lightcurve folders, totalling {} lightcurves!".format(len(lightcurves), len(list(itertools.chain.from_iterable(list(lightcurves.values()))))))
 
     if args.generate_jobs:
-        generate_jobs(args.wd, args.run_folder, funcs, args.run_name)
+        generate_jobs(args.wd, args.run_folder, funcs, args.run_name, lightcurves)
 
     if args.schedule_jobs:
-        schedule_jobs(args.run_folder, args.run_name)
+        schedule_jobs(args.run_folder, args.run_name, lightcurves)
