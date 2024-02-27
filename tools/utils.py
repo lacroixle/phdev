@@ -45,6 +45,9 @@ mag2extcatmag = {'gaia': {'zg': 'BPmag',
                  'ubercal_fluxcatalog': {'zg': 'zgmag',
                                          'zr': 'zrmag',
                                          'zi': 'zimag'},
+                 'ubercal_fluxcatalog_or': {'zg': 'zgmag',
+                                         'zr': 'zrmag',
+                                         'zi': 'zimag'},
                  'ubercal_self': {'zg': 'zgmag',
                                   'zr': 'zrmag',
                                   'zi': 'zimag'},
@@ -59,6 +62,9 @@ emag2extcatemag = {'gaia': {'zg': 'e_BPmag',
                            'zr': 'e_rmag',
                            'zi': 'e_imag'},
                    'ubercal_fluxcatalog': {'zg': 'ezgmag',
+                                           'zr': 'ezrmag',
+                                           'zi': 'ezimag'},
+                   'ubercal_fluxcatalog_or': {'zg': 'ezgmag',
                                            'zr': 'ezrmag',
                                            'zi': 'ezimag'},
                  'ubercal_self': {'zg': 'ezgmag',
@@ -736,9 +742,8 @@ def get_ubercal_catalog_in_cone(name, ubercal_config_path, center_ra, center_dec
         cat_df = pd.read_parquet(pathlib.Path(ubercal_config['paths']['ubercal']).joinpath(ubercal_config['paths'][name][filtercode]), filters=[('Source', 'in', gaiaids)], engine='pyarrow').set_index('Source')
         cat_df = cat_df.loc[cat_df['n_obs']>=ubercal_config['config']['min_measure']]
 
-        if name == 'fluxcatalog':
+        if name == 'fluxcatalog' or name == 'fluxcatalog_or':
             cat_df = cat_df.loc[cat_df['calflux_weighted_mean']>0.]
-
             cat_df['calflux_rms'] = cat_df['calflux_weighted_std']
             cat_df['calflux_weighted_std'] = cat_df['calflux_weighted_std']/np.sqrt(cat_df['n_obs']-1)
 

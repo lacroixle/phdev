@@ -116,7 +116,7 @@ def dump_node_config(args):
 
 def map_op(exposure_name, wd, name, filtercode, func, args):
     try:
-        exposure = Exposure(Lightcurve(ztfname, filtercode, wd), exposure_name)
+        exposure = Exposure(Lightcurve(name, filtercode, wd), exposure_name)
 
         start_time = time.perf_counter()
         exposure_path = wd.joinpath("{}/{}/{}".format(name, filtercode, exposure_name))
@@ -140,7 +140,7 @@ def map_op(exposure_name, wd, name, filtercode, func, args):
             logger.addHandler(logging.FileHandler(str(exposure_path.joinpath("output.log")), mode='a'))
             logger.info("")
             logger.info("="*80)
-            logger.info("{}-{}".format(ztfname, filtercode))
+            logger.info("{}-{}".format(name, filtercode))
             logger.info(datetime.datetime.today())
             logger.info("Running map operation \"{}\" on exposure {}.".format(func, exposure_name))
             logger.info("Exposure directory: {}".format(exposure_path))
@@ -193,7 +193,7 @@ def map_op(exposure_name, wd, name, filtercode, func, args):
                 [handler.close() for handler in logger.handlers] # Needed to flush last msg
 
     except Exception as e:
-        print("Exception raised for exposure {} in {}-{}!".format(exposure_name, ztfname, filtercode))
+        print("Exception raised for exposure {} in {}-{}!".format(exposure_name, name, filtercode))
         traceback.print_exc()
         print("{} content:".format(exposure_path))
         print(list(exposure_path.glob("*")))
@@ -203,7 +203,7 @@ def map_op(exposure_name, wd, name, filtercode, func, args):
 
 
 def reduce_op(wd, name, filtercode, func, save_stats, args):
-    lightcurve_path = wd.joinpath("{}/{}".format(ztfname, filtercode))
+    lightcurve_path = wd.joinpath("{}/{}".format(name, filtercode))
     lightcurve = Lightcurve(name, filtercode, wd)
     # If we want to agregate run statistics on the previous map operation
     # if save_stats and results is not None and any(results) and func != 'clean':
@@ -223,12 +223,15 @@ def reduce_op(wd, name, filtercode, func, save_stats, args):
 
             #logger.addHandler(logging.FileHandler(band_path.joinpath("output.log"), mode=logger_mode))
             logger.addHandler(logging.FileHandler(band_path.joinpath("output.log"), mode='a'))
-            logger.addHandler(logging.StreamHandler())
+            ch = logging.StreamHandler()
+            # ch.setLevel(logging.DEBUG)
+            ch.setFormatter(logging.Formatter("%(asctime)s;%(levelname)s;%(message)s"))
+            logger.addHandler(ch)
             logger.setLevel(logging.INFO)
 
         logger.info("")
         logger.info("="*80)
-        logger.info("{}-{}".format(ztfname, filtercode))
+        logger.info("{}-{}".format(name, filtercode))
         logger.info(datetime.datetime.today())
         logger.info("Running reduction {}".format(func))
     else:
@@ -310,7 +313,7 @@ if __name__ == '__main__':
     argparser.add_argument('--parallel-reduce', action='store_true', help="If set, parallelize reduce operations (if op has a parallel codepath).")
     argparser.add_argument('--refexp', type=str)
     argparser.add_argument('--compress', action='store_true', help="If set, work with compressed working directory")
-    argparser.add_argument('--photom-cat', choices=['gaia', 'ps1', 'ubercal_self', 'ubercal_ps1', 'ubercal_fluxcatalog'], type=str, help="Star catalog to use for relative photometry.")
+    argparser.add_argument('--photom-cat', choices=['gaia', 'ps1', 'ubercal_self', 'ubercal_ps1', 'ubercal_fluxcatalog', 'ubercal_fluxcatalog_or'], type=str, help="Star catalog to use for relative photometry.")
     argparser.add_argument('--use-gaia-stars', action='store_true', help="If set, uses Gaia to find stars (ie to build the standalone_stars.list catalog)")
     argparser.add_argument('--ztfin2p3-path', type=pathlib.Path)
     argparser.add_argument('--ext-catalog-cache', type=pathlib.Path)
@@ -337,6 +340,9 @@ if __name__ == '__main__':
 
     if args.footprints:
         args.footprints = args.footprints.expanduser().resolve()
+
+    if args.ubercal_config_path:
+        args.ubercal_config_path = args.ubercal_config_path.expanduser().resolve()
 
     filtercodes = ztf_filtercodes[:3]
     if args.filtercode != 'all':

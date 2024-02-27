@@ -334,8 +334,9 @@ def smphot_stars_constant(lightcurve, logger, args):
     logger.info("Found {} measurements".format(len(smphot_lc_table.df)))
 
     # Remove negative fluxes
-    smphot_lc_df = smphot_lc_table.df.loc[smphot_lc_table.df['flux']>0.]
-    logger.info("Removing negative fluxes, down to {} measurements".format(len(smphot_lc_df)))
+    # smphot_lc_df = smphot_lc_table.df.loc[smphot_lc_table.df['flux']>0.]
+    smphot_lc_df = smphot_lc_table.df
+    # logger.info("Removing negative fluxes, down to {} measurements".format(len(smphot_lc_df)))
 
     # Create dataproxy for the fit
     piedestal = 0.
@@ -352,9 +353,12 @@ def smphot_stars_constant(lightcurve, logger, args):
     gaia_df = gaia_df.loc[gaiaids]
 
     # Fit of the constant star model
+    logger.info("Building model")
     model = LinearModel(list(range(len(dp.nt))), dp.star_index, np.ones_like(dp.star, dtype=float))
     solver = RobustLinearSolver(model, dp.flux, weights=w)
+    logger.info("Solving model")
     solver.model.params.free = solver.robust_solution()
+    logger.info("Done.")
 
     # Add fit imformation to the lightcurve dataframe
     smphot_lc_df = smphot_lc_df.assign(mean_flux=solver.model.params.free[dp.star_index],
@@ -413,10 +417,14 @@ def smphot_stars_constant(lightcurve, logger, args):
     stars_gaiaids = gaia_df.iloc[list(dp.star_map.keys())]
     stars_df = pd.DataFrame(data={'mag': -2.5*np.log10(solver.model.params.free),
                                   'emag': 2.5/np.log(10)*np.sqrt(solver.get_cov().diagonal())/solver.model.params.free,
-                                  'rms_mag': [(-2.5*np.log10(smphot_lc_df.loc[~solver.bads].loc[smphot_lc_df.loc[~solver.bads]['star'] == star]['mean_flux'])+2.5*np.log10(smphot_lc_df.loc[~solver.bads].loc[smphot_lc_df.loc[~solver.bads]['star']==star]['flux'])).std() for star in list(dp.star_map.keys())],
+                                  # 'rms_mag': [np.std(smphot_lc_df.loc[~solver.bads].loc[smphot_lc_df.loc[~solver.bads]['star']==star]['flux']) for star in list(dp.star_map.keys())],
                                   'chi2': np.bincount(dp.star_index[~solver.bads], weights=smphot_lc_df.loc[~solver.bads]['wres']**2)/np.bincount(dp.star_index[~solver.bads]),
                                   'gaiaid': gaia_df.iloc[list(dp.star_map.keys())].index.tolist(),
                                   'star': dp.star_map.keys()})
+
+    # Compute star lightcurve rms, FAST
+    rms_flux = np.sqrt(np.bincount(dp.star_index[~solver.bads], weights=dp.flux[~solver.bads]**2)/np.bincount(dp.star_index[~solver.bads])-(np.bincount(dp.star_index[~solver.bads], weights=dp.flux[~solver.bads])/np.bincount(dp.star_index[~solver.bads]))**2)
+    stars_df = stars_df.assign(rms_mag=2.5/np.log(10)*rms_flux/solver.model.params.free)
 
     stars_df.set_index('gaiaid', inplace=True)
 

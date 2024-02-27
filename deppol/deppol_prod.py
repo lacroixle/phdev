@@ -56,7 +56,7 @@ OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 deppol --ztfname={ztfname} --filtercode
 # Command line for starflats
 #OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 deppol --ztfname={ztfname} --filtercode={filtercode} -j $SLURM_NTASKS --wd={wd} --func={func} --rm-intermediates --dump-timings --use-gaia-stars
 echo "done" > {status_path}
-""".format(ztfname=lightcurve_folder, filtercode=filtercode, wd=wd, func=",".join(func), status_path=run_folder.joinpath("{}/status/{}-{}".format(run_name, lightcurve_folder, filtercode)), j=args.ntasks, lc_folder="/sps/ztf/data/storage/scenemodeling/jacco/lc_jacco")
+""".format(ztfname=lightcurve_folder, filtercode=filtercode, wd=wd, func=",".join(func), status_path=run_folder.joinpath("{}/status/{}-{}".format(run_name, lightcurve_folder, filtercode)), j=args.ntasks, lc_folder="/sps/ztf/data/storage/scenemodeling/lc")
             with open(batch_folder.joinpath("{}-{}.sh".format(lightcurve_folder, filtercode)), 'w') as f:
                 f.write(job)
 

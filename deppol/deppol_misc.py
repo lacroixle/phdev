@@ -359,21 +359,25 @@ def retrieve_catalogs(lightcurve, logger, args):
     write_ds9_reg_circles(lightcurve.ext_catalogs_path.joinpath("joined_catalog.reg"), gaia_df[['ra', 'dec']].to_numpy(), [10.]*len(gaia_df))
 
     if args.ubercal_config_path:
-        logger.info("Retrieving self Ubercal")
-        ubercal_self_df = _get_ubercal_catalog('self', centroids, radius)
-        logger.info("Found {} stars".format(len(ubercal_self_df)))
-        _plot_catalog_coverage(ubercal_self_df, 'ubercal_self_full')
+        # logger.info("Retrieving self Ubercal")
+        # ubercal_self_df = _get_ubercal_catalog('self', centroids, radius)
+        # logger.info("Found {} stars".format(len(ubercal_self_df)))
+        # _plot_catalog_coverage(ubercal_self_df, 'ubercal_self_full')
 
-        logger.info("Retrieving PS1 Ubercal")
-        ubercal_ps1_df = _get_ubercal_catalog('ps1', centroids, radius)
-        logger.info("Found {} stars".format(len(ubercal_ps1_df)))
-        _plot_catalog_coverage(ubercal_ps1_df, 'ubercal_ps1_full')
+        # logger.info("Retrieving PS1 Ubercal")
+        # ubercal_ps1_df = _get_ubercal_catalog('ps1', centroids, radius)
+        # logger.info("Found {} stars".format(len(ubercal_ps1_df)))
+        # _plot_catalog_coverage(ubercal_ps1_df, 'ubercal_ps1_full')
 
         logger.info("Retrieving fluxcatalog Ubercal")
         ubercal_fluxcatalog_df = _get_ubercal_catalog('fluxcatalog', centroids, radius)
         logger.info("Found {} stars".format(len(ubercal_fluxcatalog_df)))
         _plot_catalog_coverage(ubercal_fluxcatalog_df, 'ubercal_fluxcatalog')
 
+        logger.info("Retrieving fluxcatalog_OR Ubercal")
+        ubercal_fluxcatalog_or_df = _get_ubercal_catalog('fluxcatalog_or', centroids, radius)
+        logger.info("Found {} stars".format(len(ubercal_fluxcatalog_or_df)))
+        _plot_catalog_coverage(ubercal_fluxcatalog_or_df, 'ubercal_fluxcatalog_or')
         # common_gaiaids = list(set(set(ubercal_self_df.index) & set(ubercal_ps1_df.index) & set(gaia_df['Source'])))
         # logger.info("Keeping {} stars in common in all catalogs".format(len(common_gaiaids)))
         # gaiaid_mask = gaia_df['Source'].apply(lambda x: x in common_gaiaids).tolist()
@@ -385,9 +389,10 @@ def retrieve_catalogs(lightcurve, logger, args):
         # ubercal_ps1_df = ubercal_ps1_df.filter(items=common_gaiaids, axis=0).reset_index()
 
         # Self Ubercal color-color plot
+        m = ubercal_fluxcatalog_df['zgmag'] <= 20.5
         plt.subplots(figsize=(6., 6.))
         plt.suptitle("Fluxcatalog Ubercal color-color plot")
-        plt.scatter((ubercal_fluxcatalog_df['zgmag']-ubercal_fluxcatalog_df['zrmag']).to_numpy(), (ubercal_fluxcatalog_df['zrmag']-ubercal_fluxcatalog_df['zimag']).to_numpy(), c=ubercal_fluxcatalog_df['zgmag'], s=1.)
+        plt.scatter((ubercal_fluxcatalog_df.loc[m]['zgmag']-ubercal_fluxcatalog_df.loc[m]['zrmag']).to_numpy(), (ubercal_fluxcatalog_df.loc[m]['zrmag']-ubercal_fluxcatalog_df.loc[m]['zimag']).to_numpy(), c=ubercal_fluxcatalog_df.loc[m]['zgmag'], s=1.)
         plt.xlabel("$g_\mathrm{Ubercal}-r_\mathrm{Ubercal}$ [mag]")
         plt.ylabel("$r_\mathrm{Ubercal}-i_\mathrm{Ubercal}$ [mag]")
         plt.axis('equal')
@@ -397,10 +402,24 @@ def retrieve_catalogs(lightcurve, logger, args):
         plt.savefig(lightcurve.ext_catalogs_path.joinpath("fluxcatalog_ubercal_color_color.png"), dpi=300.)
         plt.close()
 
+        m = ubercal_fluxcatalog_or_df['zgmag'] <= 20.5
+        plt.subplots(figsize=(6., 6.))
+        plt.suptitle("Fluxcatalog_Or Ubercal color-color plot")
+        plt.scatter((ubercal_fluxcatalog_or_df.loc[m]['zgmag']-ubercal_fluxcatalog_or_df.loc[m]['zrmag']).to_numpy(), (ubercal_fluxcatalog_or_df.loc[m]['zrmag']-ubercal_fluxcatalog_or_df.loc[m]['zimag']).to_numpy(), c=ubercal_fluxcatalog_or_df.loc[m]['zgmag'], s=1.)
+        plt.xlabel("$g_\mathrm{Ubercal}-r_\mathrm{Ubercal}$ [mag]")
+        plt.ylabel("$r_\mathrm{Ubercal}-i_\mathrm{Ubercal}$ [mag]")
+        plt.axis('equal')
+        plt.grid()
+        plt.colorbar(label="$g_\mathrm{Ubercal}$ [mag]")
+        plt.tight_layout()
+        plt.savefig(lightcurve.ext_catalogs_path.joinpath("fluxcatalog_or_ubercal_color_color.png"), dpi=300.)
+        plt.close()
+
         logger.info("Saving Ubercal catalogs")
         ubercal_fluxcatalog_df.to_parquet(lightcurve.ext_catalogs_path.joinpath("ubercal_fluxcatalog.parquet"))
-        ubercal_self_df.to_parquet(lightcurve.ext_catalogs_path.joinpath("ubercal_self.parquet"))
-        ubercal_ps1_df.to_parquet(lightcurve.ext_catalogs_path.joinpath("ubercal_ps1.parquet"))
+        ubercal_fluxcatalog_or_df.to_parquet(lightcurve.ext_catalogs_path.joinpath("ubercal_fluxcatalog_or.parquet"))
+        # ubercal_self_df.to_parquet(lightcurve.ext_catalogs_path.joinpath("ubercal_self.parquet"))
+        # ubercal_ps1_df.to_parquet(lightcurve.ext_catalogs_path.joinpath("ubercal_ps1.parquet"))
 
     _plot_catalog_coverage(gaia_df, 'matched')
     write_ds9_reg_circles("out.reg", gaia_df[['ra', 'dec']].to_numpy(), [10]*len(gaia_df))

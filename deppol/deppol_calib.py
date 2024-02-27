@@ -42,6 +42,7 @@ def calib(lightcurve, logger, args):
                                delta_emag=np.sqrt(stars_df['emag']**2+stars_df['cat_emag']**2+piedestal**2))
     stars_df = stars_df.assign(cat_color=(ext_cat_df[mag2extcatmag[args.photom_cat]['zg']]-ext_cat_df[mag2extcatmag[args.photom_cat]['zi']]).tolist(),
                                cat_ecolor=np.sqrt(ext_cat_df[emag2extcatemag[args.photom_cat]['zg']]**2+ext_cat_df[emag2extcatemag[args.photom_cat]['zi']]**2).tolist())
+    stars_df = stars_df.assign(gaia_color=gaia_df['BP-RP'])
 
     stars_df.dropna(subset=['cat_emag', 'cat_ecolor'], inplace=True)
 
@@ -50,7 +51,7 @@ def calib(lightcurve, logger, args):
 
     stars_df.reset_index(inplace=True)
 
-    dp = DataProxy(stars_df[['delta_mag', 'delta_emag', 'cat_mag', 'cat_emag', 'gaiaid', 'cat_color']].to_records(), delta_mag='delta_mag', delta_emag='delta_emag', cat_mag='cat_mag', cat_emag='cat_emag', gaiaid='gaiaid', cat_color='cat_color')
+    dp = DataProxy(stars_df[['delta_mag', 'delta_emag', 'cat_mag', 'cat_emag', 'gaiaid', 'cat_color', 'gaia_color']].to_records(), delta_mag='delta_mag', delta_emag='delta_emag', cat_mag='cat_mag', cat_emag='cat_emag', gaiaid='gaiaid', cat_color='cat_color', gaia_color='gaia_color')
     dp.make_index('gaiaid')
 
     def _build_model(dp):
@@ -84,7 +85,7 @@ def calib(lightcurve, logger, args):
 
     # Chromaticity effect plot
     plt.subplots(ncols=1, nrows=1, figsize=(8., 5.))
-    plt.title("{}-{}\nChromaticity effect of the {} catalog\n $\chi^2/\mathrm{{ndof}}={:.4f}$".format(lightcurve.name, lightcurve.filterid, args.photom_cat, chi2ndof))
+    plt.title("{}-{}\nColor term of the {} catalog\n $\chi^2/\mathrm{{ndof}}={:.4f}$".format(lightcurve.name, lightcurve.filterid, args.photom_cat, chi2ndof))
     plt.errorbar(dp.cat_color, dp.delta_mag-ZP, yerr=dp.delta_emag, fmt='.')
     plt.plot([np.min(dp.cat_color), np.max(dp.cat_color)], [alpha*np.min(dp.cat_color), alpha*np.max(dp.cat_color)], label="$\\alpha C_\\mathrm{{{}}}, \\alpha=${:.4f}".format(args.photom_cat, alpha))
     plt.legend()
@@ -132,7 +133,7 @@ def calib(lightcurve, logger, args):
     ax.tick_params(which='both', direction='in')
     ax.xaxis.set_minor_locator(AutoMinorLocator())
     ax.yaxis.set_minor_locator(AutoMinorLocator())
-    xbinned_mag, yplot_res, res_dispersion = binplot(dp.cat_mag, res, nbins=10, data=False, rms=False, scale=False)
+    xbinned_mag, yplot_res, res_dispersion = binplot(dp.cat_mag, res, nbins=10, data=False, scale=False)
     plt.plot(dp.cat_mag, res, '.', color='black', zorder=-10.)
     plt.ylabel("$m_\mathrm{{ZTF}}-m_\mathrm{{{}}}-ZP-\\alpha C$ [mag]".format(args.photom_cat))
     plt.ylim(-0.4, 0.4)
