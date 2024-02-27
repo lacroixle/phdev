@@ -89,6 +89,9 @@ poloka_func.append({'reduce': deppol_photometry.photometry_fit_plot})
 import deppol_calib
 poloka_func.append({'reduce': deppol_calib.calib})
 
+import deppol_pocket_effect
+poloka_func.append({'reduce': deppol_pocket_effect.pocket_effect_cor})
+
 
 poloka_func = dict(zip([list(func.values())[0].__name__ for func in poloka_func], poloka_func))
 
