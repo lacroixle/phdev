@@ -1,0 +1,8 @@
+/.project
+/.pydevproject
+.ipynb_checkpoints
+
+# Ignore Python bytecode
+__pycache__
+*.pyc
+*.pyo
