@@ -35,6 +35,7 @@ def calib(lightcurve, logger, args):
     stars_df = stars_df.loc[gaia_df['Source'].tolist()]
 
     # Add matched band external catalog magnitude, delta and color
+    #piedestal = 0.05 # For ps1
     piedestal = 0.
     stars_df = stars_df.assign(cat_mag=ext_cat_df[mag2extcatmag[args.photom_cat][lightcurve.filterid]].tolist(),
                                cat_emag=ext_cat_df[emag2extcatemag[args.photom_cat][lightcurve.filterid]].tolist())
@@ -71,7 +72,7 @@ def calib(lightcurve, logger, args):
     ZP = solver.model.params['zp'].full.item()
     alpha = solver.model.params['color'].full.item()
 
-    chi2ndof = np.sum(wres)/(len(dp.nt)-2-sum(solver.bads)) # 2 parameters in the model
+    chi2ndof = np.sum(wres**2)/(len(dp.nt)-2-sum(solver.bads)) # 2 parameters in the model
 
     dp.compress(~solver.bads)
 
