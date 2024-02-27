@@ -38,7 +38,7 @@ poloka_func.append({'map': deppol_misc.psf_study, 'reduce': deppol_misc.psf_stud
 #poloka_func.append({'map': deppol_misc.clean, 'reduce': deppol_misc.clean_reduce})
 poloka_func.append({'reduce': deppol_misc.clean})
 poloka_func.append({'reduce': deppol_misc.retrieve_catalogs})
-poloka_func.append({'reduce': deppol_misc.compare_catalogs})
+poloka_func.append({'reduce': deppol_misc.plot_catalogs})
 poloka_func.append({'map': deppol_misc.match_catalogs})
 # poloka_func.append({'map': deppol_misc.stats, 'reduce': deppol_misc.stats_reduce})
 poloka_func.append({'reduce': deppol_misc.filter_seeing})

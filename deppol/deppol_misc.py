@@ -359,20 +359,22 @@ def retrieve_catalogs(lightcurve, logger, args):
     write_ds9_reg_circles(lightcurve.ext_catalogs_path.joinpath("joined_catalog.reg"), gaia_df[['ra', 'dec']].to_numpy(), [10.]*len(gaia_df))
 
     if args.ubercal_config_path:
-        logger.info("Retrieving self Ubercal")
-        ubercal_self_df = _get_ubercal_catalog('self', centroids, radius)
-        logger.info("Found {} stars".format(len(ubercal_self_df)))
-        _plot_catalog_coverage(ubercal_self_df, 'ubercal_self_full')
+        # logger.info("Retrieving self Ubercal")
+        # ubercal_self_df = _get_ubercal_catalog('self', centroids, radius)
+        # logger.info("Found {} stars".format(len(ubercal_self_df)))
+        # _plot_catalog_coverage(ubercal_self_df, 'ubercal_self_full')
 
-        logger.info("Retrieving PS1 Ubercal")
-        ubercal_ps1_df = _get_ubercal_catalog('ps1', centroids, radius)
-        logger.info("Found {} stars".format(len(ubercal_ps1_df)))
-        _plot_catalog_coverage(ubercal_ps1_df, 'ubercal_ps1_full')
+        # logger.info("Retrieving PS1 Ubercal")
+        # ubercal_ps1_df = _get_ubercal_catalog('ps1', centroids, radius)
+        # logger.info("Found {} stars".format(len(ubercal_ps1_df)))
+        # _plot_catalog_coverage(ubercal_ps1_df, 'ubercal_ps1_full')
 
         logger.info("Retrieving fluxcatalog Ubercal")
         ubercal_fluxcatalog_df = _get_ubercal_catalog('fluxcatalog', centroids, radius)
         logger.info("Found {} stars".format(len(ubercal_fluxcatalog_df)))
         _plot_catalog_coverage(ubercal_fluxcatalog_df, 'ubercal_fluxcatalog')
+
+        # ubercal_fluxcatalog_df = ubercal_fluxcatalog_df.loc[ubercal_fluxcatalog_df['is_calibrator'].apply(bool)]
 
         # common_gaiaids = list(set(set(ubercal_self_df.index) & set(ubercal_ps1_df.index) & set(gaia_df['Source'])))
         # logger.info("Keeping {} stars in common in all catalogs".format(len(common_gaiaids)))
@@ -399,8 +401,8 @@ def retrieve_catalogs(lightcurve, logger, args):
 
         logger.info("Saving Ubercal catalogs")
         ubercal_fluxcatalog_df.to_parquet(lightcurve.ext_catalogs_path.joinpath("ubercal_fluxcatalog.parquet"))
-        ubercal_self_df.to_parquet(lightcurve.ext_catalogs_path.joinpath("ubercal_self.parquet"))
-        ubercal_ps1_df.to_parquet(lightcurve.ext_catalogs_path.joinpath("ubercal_ps1.parquet"))
+        # ubercal_self_df.to_parquet(lightcurve.ext_catalogs_path.joinpath("ubercal_self.parquet"))
+        # ubercal_ps1_df.to_parquet(lightcurve.ext_catalogs_path.joinpath("ubercal_ps1.parquet"))
 
     _plot_catalog_coverage(gaia_df, 'matched')
     write_ds9_reg_circles("out.reg", gaia_df[['ra', 'dec']].to_numpy(), [10]*len(gaia_df))
@@ -425,8 +427,10 @@ def retrieve_catalogs(lightcurve, logger, args):
     return True
 
 
-def compare_catalogs(lightcurve, logger, args):
+def plot_catalogs(lightcurve, logger, args):
     import matplotlib.pyplot as plt
+    import numpy as np
+
     from saunerie.plottools import binplot
     from croaks.match import NearestNeighAssoc
     from utils import mag2extcatmag, emag2extcatemag
@@ -441,6 +445,105 @@ def compare_catalogs(lightcurve, logger, args):
     ps1_df = ps1_df.iloc[i[i>=0]].reset_index(drop=True)
     ubercal_df = ubercal_df.iloc[i>=0].reset_index(drop=True)
 
+    # Plot Ubercal RMS
+    plt.subplots(nrows=3, ncols=1, figsize=(15., 9.), gridspec_kw={'hspace': 0.}, sharex=True)
+    plt.suptitle("Ubercal catalog - Star RMS")
+    plt.subplot(3, 1, 1)
+    plt.plot(ps1_df['gmag'], ubercal_df['zgrms'], '.')
+    plt.ylabel("RMS - ZTF-$g$ [mag]")
+    plt.ylim(0., 0.5)
+    plt.grid()
+
+    plt.subplot(3, 1, 2)
+    plt.plot(ps1_df['gmag'], ubercal_df['zgrms'], '.')
+    plt.ylabel("RMS - ZTF-$r$ [mag]")
+    plt.ylim(0., 0.5)
+    plt.grid()
+
+    plt.subplot(3, 1, 3)
+    plt.plot(ps1_df['gmag'], ubercal_df['zgrms'], '.')
+    plt.ylabel("RMS - ZTF-$i$ [mag]")
+    plt.ylim(0., 0.5)
+    plt.grid()
+
+    plt.tight_layout()
+    plt.savefig(lightcurve.ext_catalogs_path.joinpath("ubercal_rms.png"), dpi=200.)
+    plt.close()
+
+    # Plot Ubercal RMS zoom
+    plt.subplots(nrows=3, ncols=1, figsize=(15., 9.), gridspec_kw={'hspace': 0.}, sharex=True)
+    plt.suptitle("Ubercal catalog - Star RMS - Zoomed in")
+    plt.subplot(3, 1, 1)
+    plt.plot(ps1_df['gmag'], ubercal_df['zgrms'], '.')
+    plt.ylabel("RMS - ZTF-$g$ [mag]")
+    plt.ylim(0., 0.1)
+    plt.grid()
+
+    plt.subplot(3, 1, 2)
+    plt.plot(ps1_df['gmag'], ubercal_df['zgrms'], '.')
+    plt.ylabel("RMS - ZTF-$r$ [mag]")
+    plt.ylim(0., 0.1)
+    plt.grid()
+
+    plt.subplot(3, 1, 3)
+    plt.plot(ps1_df['gmag'], ubercal_df['zgrms'], '.')
+    plt.ylabel("RMS - ZTF-$i$ [mag]")
+    plt.ylim(0., 0.1)
+    plt.grid()
+
+    plt.tight_layout()
+    plt.savefig(lightcurve.ext_catalogs_path.joinpath("ubercal_rms_zoom.png"), dpi=200.)
+    plt.close()
+
+    # Plot Ubercal RMS
+    plt.subplots(nrows=3, ncols=1, figsize=(15., 9.), gridspec_kw={'hspace': 0.}, sharex=True)
+    plt.suptitle("Ubercal catalog - Mag std")
+    plt.subplot(3, 1, 1)
+    plt.plot(ps1_df['gmag'], ubercal_df['ezgmag'], '.')
+    plt.ylabel("$\sigma_m$ - ZTF-$g$ [mag]")
+    plt.ylim(0., 0.5)
+    plt.grid()
+
+    plt.subplot(3, 1, 2)
+    plt.plot(ps1_df['gmag'], ubercal_df['ezrmag'], '.')
+    plt.ylabel("$\sigma_m$ - ZTF-$r$ [mag]")
+    plt.ylim(0., 0.5)
+    plt.grid()
+
+    plt.subplot(3, 1, 3)
+    plt.plot(ps1_df['gmag'], ubercal_df['ezimag'], '.')
+    plt.ylabel("$\sigma_m$ - ZTF-$i$ [mag]")
+    plt.ylim(0., 0.5)
+    plt.grid()
+
+    plt.tight_layout()
+    plt.savefig(lightcurve.ext_catalogs_path.joinpath("ubercal_err.png"), dpi=200.)
+    plt.close()
+
+    # Plot Ubercal RMS zoom
+    plt.subplots(nrows=3, ncols=1, figsize=(15., 9.), gridspec_kw={'hspace': 0.}, sharex=True)
+    plt.suptitle("Ubercal catalog - Star RMS - Zoomed in")
+    plt.subplot(3, 1, 1)
+    plt.plot(ps1_df['gmag'], ubercal_df['ezgmag'], '.')
+    plt.ylabel("$\sigma_m$ - ZTF-$g$ [mag]")
+    plt.ylim(0., 0.1)
+    plt.grid()
+
+    plt.subplot(3, 1, 2)
+    plt.plot(ps1_df['gmag'], ubercal_df['ezrmag'], '.')
+    plt.ylabel("$\sigma_m$ - ZTF-$r$ [mag]")
+    plt.ylim(0., 0.1)
+    plt.grid()
+
+    plt.subplot(3, 1, 3)
+    plt.plot(ps1_df['gmag'], ubercal_df['ezimag'], '.')
+    plt.ylabel("$\sigma_m$ - ZTF-$i$ [mag]")
+    plt.ylim(0., 0.1)
+    plt.grid()
+
+    plt.tight_layout()
+    plt.savefig(lightcurve.ext_catalogs_path.joinpath("ubercal_err_zoom.png"), dpi=200.)
+    plt.close()
     # First compare PS1 catalog with Ubercal's PS1 catalog
     plt.subplots(nrows=3, ncols=1, figsize=(15., 9.), gridspec_kw={'hspace': 0}, sharex=True)
     plt.suptitle("Comparing PS1 catalogs with Ubercal's PS1 catalogs")
@@ -466,6 +569,33 @@ def compare_catalogs(lightcurve, logger, args):
     plt.tight_layout()
     plt.savefig(lightcurve.ext_catalogs_path.joinpath("ubercal_ps1_ps1_comparison.png"), dpi=200.)
     plt.close()
+
+    # Same, but zoomed in
+    plt.subplots(nrows=3, ncols=1, figsize=(15., 9.), gridspec_kw={'hspace': 0}, sharex=True)
+    plt.suptitle("Comparing PS1 catalogs with Ubercal's PS1 catalogs")
+    plt.subplot(3, 1, 1)
+    plt.scatter(ps1_df['gmag'], ps1_df['gmag']-ubercal_df['g_mag'], c=(ps1_df['gmag']-ps1_df['imag']), s=0.5)
+    plt.grid()
+    plt.ylim(-0.01, 0.01)
+    plt.ylabel("$m_g^\mathrm{PS1}-m_g^\mathrm{Ubercal}$ [mag]")
+
+    plt.subplot(3, 1, 2)
+    plt.scatter(ps1_df['gmag'], ps1_df['rmag']-ubercal_df['r_mag'], c=(ps1_df['gmag']-ps1_df['imag']), s=0.5)
+    plt.grid()
+    plt.ylim(-0.01, 0.01)
+    plt.ylabel("$m_g^\mathrm{PS1}-m_g^\mathrm{Ubercal}$ [mag]")
+
+    plt.subplot(3, 1, 3)
+    plt.scatter(ps1_df['gmag'], ps1_df['imag']-ubercal_df['i_mag'], c=(ps1_df['gmag']-ps1_df['imag']), s=0.5)
+    plt.grid()
+    plt.ylim(-0.01, 0.01)
+    plt.xlabel("$m_g^\mathrm{PS1}$ [mag]")
+    plt.ylabel("$m_g^\mathrm{PS1}-m_g^\mathrm{Ubercal}$ [mag]")
+
+    plt.tight_layout()
+    plt.savefig(lightcurve.ext_catalogs_path.joinpath("ubercal_ps1_ps1_comparison_zoom.png"), dpi=200.)
+    plt.close()
+
 
     # Compare PS1 catalog with Ubercal
     plt.subplots(nrows=3, ncols=1, figsize=(15., 9.), gridspec_kw={'hspace': 0}, sharex=True)
@@ -497,11 +627,14 @@ def compare_catalogs(lightcurve, logger, args):
     def _ubercal_ps1_binplot(filtercode):
         mag_ps1 = ps1_df[mag2extcatmag['ps1'][filtercode]].to_numpy()
         mag_ubercal = ubercal_df[mag2extcatmag['ubercal_fluxcatalog'][filtercode]].to_numpy()
+        emag_ps1 = ps1_df[emag2extcatemag['ps1'][filtercode]].to_numpy()
+        emag_ubercal = ubercal_df[emag2extcatemag['ubercal_fluxcatalog'][filtercode]].to_numpy()
+        weights = 1./np.sqrt(emag_ps1**2+emag_ubercal**2)
 
         plt.subplots(nrows=3, ncols=1, figsize=(12., 8.), sharex=True, gridspec_kw={'hspace': 0.})
         plt.suptitle("Comparing PS1 and Ubercal catalogs - ${}$ band".format(filtercode[1]))
         plt.subplot(3, 1, 1)
-        mag_binned, d_mag_binned, ed_mag_binned = binplot(mag_ps1, mag_ps1-mag_ubercal, robust=True, data=False, scale=False)
+        mag_binned, d_mag_binned, ed_mag_binned = binplot(mag_ps1, mag_ps1-mag_ubercal, weights=weights, robust=True, data=False, scale=False)
         plt.scatter(mag_ps1, mag_ps1-mag_ubercal, c=(ps1_df['gmag']-ps1_df['imag']).to_numpy(), s=0.8)
         plt.ylim(-0.4, 0.4)
         plt.ylabel("$m_{{{filtercode}}}^\mathrm{{PS1}}-m_{{{filtercode}}}^\mathrm{{Ubercal}}$ [mag]".format(filtercode=filtercode[1]))
@@ -517,6 +650,7 @@ def compare_catalogs(lightcurve, logger, args):
         plt.xlabel("$m_{{{filtercode}}}^\mathrm{{PS1}}$ [mag]".format(filtercode=filtercode[1]))
         plt.ylabel("$\sigma_{{m_{{{filtercode}}}^\mathrm{{PS1}}-m_{{{filtercode}}}^\mathrm{{Ubercal}}}}$ [mag]".format(filtercode=filtercode[1]))
         plt.grid()
+
         plt.tight_layout()
         plt.savefig(lightcurve.ext_catalogs_path.joinpath("ubercal_ps1_{}.png".format(filtercode)), dpi=200.)
         plt.close()
@@ -526,24 +660,7 @@ def compare_catalogs(lightcurve, logger, args):
     _ubercal_ps1_binplot('zi')
 
     return True
-    # < 18
-    # bright = ubercal_df['zgmag'] < 18
-    # res = (ps1_df['gmag']-ubercal_df['zgmag']).loc[bright]
-    res = ps1_df['Gmag'] - ubercal_df['g_mag']
-    # res = res - np.mean(res)
 
-    # plt.plot(ps1_df['gmag'], ubercal_df['Gmag'], '.')
-    #plt.scatter(ps1_df['gmag'], res, c=(ps1_df['gmag']-ps1_df['imag']).to_numpy(), s=0.5)
-    plt.scatter(ps1_df['Gmag'], res, c=(ps1_df['BP-RP']).to_numpy(), s=0.5)
-    # plt.scatter((ps1_df['gmag']-ps1_df['imag']).loc[bright], res, s=0.5)
-    plt.colorbar(label="$m_g-m_i$ [mag]")
-    plt.xlabel("$m_g-m_i$ [AB mag]")
-    plt.ylabel("$m_g-m_\mathrm{ZTF-g}$ [mag]")
-    # plt.ylim(-0.2, 0.2)
-    plt.grid()
-    plt.show()
-
-    pass
 
 def match_catalogs(exposure, logger, args):
     from itertools import chain
