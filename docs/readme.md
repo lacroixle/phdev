@@ -12,7 +12,7 @@ use waf builder version without binding
 
 # Set environment at CCIN2P3
 
-```
+```bash
 #! /bin/bash
 
 
