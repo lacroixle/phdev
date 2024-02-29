@@ -390,18 +390,18 @@ def retrieve_catalogs(lightcurve, logger, args):
         # ubercal_ps1_df = ubercal_ps1_df.filter(items=common_gaiaids, axis=0).reset_index()
 
         # Self Ubercal color-color plot
-        m = ubercal_fluxcatalog_df['zgmag'] <= 20.5
-        plt.subplots(figsize=(6., 6.))
-        plt.suptitle("Fluxcatalog Ubercal color-color plot")
-        plt.scatter((ubercal_fluxcatalog_df.loc[m]['zgmag']-ubercal_fluxcatalog_df.loc[m]['zrmag']).to_numpy(), (ubercal_fluxcatalog_df.loc[m]['zrmag']-ubercal_fluxcatalog_df.loc[m]['zimag']).to_numpy(), c=ubercal_fluxcatalog_df.loc[m]['zgmag'], s=1.)
-        plt.xlabel("$g_\mathrm{Ubercal}-r_\mathrm{Ubercal}$ [mag]")
-        plt.ylabel("$r_\mathrm{Ubercal}-i_\mathrm{Ubercal}$ [mag]")
-        plt.axis('equal')
-        plt.grid()
-        plt.colorbar(label="$g_\mathrm{Ubercal}$ [mag]")
-        plt.tight_layout()
-        plt.savefig(lightcurve.ext_catalogs_path.joinpath("fluxcatalog_ubercal_color_color.png"), dpi=300.)
-        plt.close()
+        # m = ubercal_fluxcatalog_df['zgmag'] <= 20.5
+        # plt.subplots(figsize=(6., 6.))
+        # plt.suptitle("Fluxcatalog Ubercal color-color plot")
+        # plt.scatter((ubercal_fluxcatalog_df.loc[m]['zgmag']-ubercal_fluxcatalog_df.loc[m]['zrmag']).to_numpy(), (ubercal_fluxcatalog_df.loc[m]['zrmag']-ubercal_fluxcatalog_df.loc[m]['zimag']).to_numpy(), c=ubercal_fluxcatalog_df.loc[m]['zgmag'], s=1.)
+        # plt.xlabel("$g_\mathrm{Ubercal}-r_\mathrm{Ubercal}$ [mag]")
+        # plt.ylabel("$r_\mathrm{Ubercal}-i_\mathrm{Ubercal}$ [mag]")
+        # plt.axis('equal')
+        # plt.grid()
+        # plt.colorbar(label="$g_\mathrm{Ubercal}$ [mag]")
+        # plt.tight_layout()
+        # plt.savefig(lightcurve.ext_catalogs_path.joinpath("fluxcatalog_ubercal_color_color.png"), dpi=300.)
+        # plt.close()
 
         m = ubercal_fluxcatalog_or_df['zgmag'] <= 20.5
         plt.subplots(figsize=(6., 6.))

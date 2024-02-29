@@ -19,11 +19,19 @@ def calib(lightcurve, logger, args):
 
     matplotlib.use('Agg')
 
+    if not lightcurve.smphot_stars_path.joinpath("constant_stars.parquet").exists():
+        logger.error("No constant stars catalog!")
+        return False
+
     # Load constant stars catalog, Gaia catalog (for star identification/matching) and external calibration catalog
     stars_df = pd.read_parquet(lightcurve.smphot_stars_path.joinpath("constant_stars.parquet"))
     gaia_df = lightcurve.get_ext_catalog('gaia').set_index('Source', drop=False).loc[stars_df.index]
     # ext_cat_df = lightcurve.get_ext_catalog(args.photom_cat).loc[gaia_df['index']]
     ext_cat_df = lightcurve.get_ext_catalog(args.photom_cat)
+
+    if len(ext_cat_df) == 0:
+        logger.error("Empty calibration catalog \'{}\'!".format(args.photom_cat))
+        return False
 
     # Match external catalog with constant star catalog
     assoc = NearestNeighAssoc(first=[gaia_df['ra'].to_numpy(), gaia_df['dec'].to_numpy()], radius = 2./60./60.)
@@ -52,12 +60,18 @@ def calib(lightcurve, logger, args):
 
     stars_df.reset_index(inplace=True)
 
+    # Remove nans and infs
+    stars_df.replace([np.inf, -np.inf], np.nan, inplace=True)
+    stars_df.dropna(subset=['delta_mag', 'delta_emag'], inplace=True)
+
+    w = 1./stars_df['delta_emag'].to_numpy()
+
     dp = DataProxy(stars_df[['delta_mag', 'delta_emag', 'cat_mag', 'cat_emag', 'gaiaid', 'cat_color', 'gaia_color']].to_records(), delta_mag='delta_mag', delta_emag='delta_emag', cat_mag='cat_mag', cat_emag='cat_emag', gaiaid='gaiaid', cat_color='cat_color', gaia_color='gaia_color')
     dp.make_index('gaiaid')
 
     def _build_model(dp):
         model = indic(np.zeros(len(dp.nt), dtype=int), val=dp.cat_color, name='color') + indic(np.zeros(len(dp.nt), dtype=int), name='zp')
-        return RobustLinearSolver(model, dp.delta_mag, weights=1./dp.delta_emag)
+        return RobustLinearSolver(model, dp.delta_mag, weights=w)
 
     def _solve_model(solver):
         solver.model.params.free = solver.robust_solution(local_param='color')

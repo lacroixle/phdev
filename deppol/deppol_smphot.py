@@ -338,11 +338,16 @@ def smphot_stars_constant(lightcurve, logger, args):
     smphot_lc_df = smphot_lc_table.df
     # logger.info("Removing negative fluxes, down to {} measurements".format(len(smphot_lc_df)))
 
+    # Remove nans and 0's in error term
+    smphot_lc_df.dropna(subset='error', inplace=True)
+    smphot_lc_df = smphot_lc_df.loc[smphot_lc_df['error']>0.]
+
     # Create dataproxy for the fit
     piedestal = 0.
     dp = DataProxy(smphot_lc_df[['flux', 'error', 'star', 'mjd']].to_records(), flux='flux', error='error', star='star', mjd='mjd')
     dp.make_index('star')
     dp.make_index('mjd')
+
     w = 1./np.sqrt(dp.error**2+piedestal**2)
 
     # Retrieve matching Gaia catalog to taf fitted constant stars
@@ -369,6 +374,7 @@ def smphot_stars_constant(lightcurve, logger, args):
                                        emean_mag=2.5/np.log(10)*smphot_lc_df['emean_flux']/smphot_lc_df['mean_flux'])
     smphot_lc_df = smphot_lc_df.assign(mag=-2.5*np.log10(smphot_lc_df['flux']),
                                        emag=2.5/np.log(10)*smphot_lc_df['error']/smphot_lc_df['flux'])
+
 
     # smphot_lc_df = smphot_lc_df.assign(wres=smphot_lc_df['res']/smphot_lc_df['error'])
 
