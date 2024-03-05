@@ -28,6 +28,7 @@ def correction_no_io(image_ori, idx_ccd, idx_quad, mjd):
 
 def correction_with_io(f_ima, idx_ccd, idx_quad, mjd, logger, debug=False):
     # try open and correct image
+    logger.info(f"process image: {f_ima}")
     f_open = False
     f_cor = False
     try:
@@ -63,9 +64,7 @@ def pocket_effect_cor(exposure, logger, args):
         logger.error(e)
         return False
     logger.info("Found at {}".format(image_path))
-
     assert isinstance(exposure, Exposure)
-
     # extract image information
     idx_ccd = exposure.ccdid()
     idx_quad = exposure.qid()
@@ -76,7 +75,8 @@ def pocket_effect_cor(exposure, logger, args):
 
 if __name__ == '__main__':
     import logging
-    logger= logging.getLogger("test")
-    logger.setLevel(logging.DEBUG)
+    import sys
+    logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
+    logger= logging.getLogger()
     correction_with_io("/sps/ztf/data/storage/scenemodeling/pol_fields/test_pe/ztf_20180627482014_000600_zg_c05_o_q1/calibrated.fits",
                        5,1,0,logger,True)
