@@ -3,7 +3,7 @@
 
 def calib(lightcurve, logger, args):
     from deppol_utils import update_yaml
-    from utils import mag2extcatmag, emag2extcatemag
+    from utils import mag2extcatmag, emag2extcatemag, get_ubercal_catalog_in_cone
     import matplotlib.pyplot as plt
     from croaks import DataProxy
     from saunerie.linearmodels import LinearModel, RobustLinearSolver, indic
@@ -16,8 +16,9 @@ def calib(lightcurve, logger, args):
     import shutil
     from scipy.stats import norm
     from matplotlib.ticker import MultipleLocator, FormatStrFormatter, AutoMinorLocator
+    from lightcurve import Exposure
 
-    matplotlib.use('Agg')
+    # matplotlib.use('Agg')
 
     if not lightcurve.smphot_stars_path.joinpath("constant_stars.parquet").exists():
         logger.error("No constant stars catalog!")
@@ -26,19 +27,58 @@ def calib(lightcurve, logger, args):
     # Load constant stars catalog, Gaia catalog (for star identification/matching) and external calibration catalog
     stars_df = pd.read_parquet(lightcurve.smphot_stars_path.joinpath("constant_stars.parquet"))
     gaia_df = lightcurve.get_ext_catalog('gaia').set_index('Source', drop=False).loc[stars_df.index]
+    ps1_df = lightcurve.get_ext_catalog('ps1')
     # ext_cat_df = lightcurve.get_ext_catalog(args.photom_cat).loc[gaia_df['index']]
     ext_cat_df = lightcurve.get_ext_catalog(args.photom_cat)
+
+    reference_exposure = Exposure(lightcurve, lightcurve.get_reference_exposure())
+    # ext_cat_df = get_ubercal_catalog_in_cone('repop', args.ubercal_config_path, reference_exposure.center()[0], reference_exposure.center()[1], 0.6, filtercode=lightcurve.filterid)
+    # ext_cat_df = get_ubercal_catalog_in_cone('repop', args.ubercal_config_path, reference_exposure.center()[0], reference_exposure.center()[1], 0.6)
+
+    # ext_cat_df = ext_cat_df.join(gaia_df, lsuffix='ext', rsuffix='gaia', how='inner')
+    # print(ext_cat_df[['raext', 'decext', 'ragaia', 'decgaia']])
+
+    # plt.subplot(1, 2, 1)
+    # plt.hist(3600*(ext_cat_df['raext']-ext_cat_df['ragaia']), bins='auto')
+    # plt.xlabel("RA_Uber - RA_Gaia [arcsec]")
+    # plt.ylabel("Count")
+
+    # plt.subplot(1, 2, 2)
+    # plt.hist(3600*(ext_cat_df['decext']-ext_cat_df['decgaia']), bins='auto')
+    # plt.xlabel("DEC_Uber - DEC_Gaia [arsec]")
+    # plt.savefig("hist.png", dpi=200.)
+    # plt.close()
+    # return True
+
+    # ext_cat_df = ext_cat_df.loc[ext_cat_df['calflux_weighted_mean']>0.]
+    # ext_cat_df['calflux_rms'] = ext_cat_df['calflux_weighted_std']
+    # ext_cat_df['calflux_weighted_std'] = ext_cat_df['calflux_weighted_std']/np.sqrt(ext_cat_df['n_obs']-1)
+    # ext_cat_df.rename(columns={'calmag_weighted_mean': '{}mag'.format(lightcurve.filterid), 'calmag_weighted_std': 'e{}mag'.format(lightcurve.filterid), 'calmag_rms': '{}rms'.format(lightcurve.filterid), 'n_obs': '{}_n_obs'.format(lightcurve.filterid), 'chi2_Source_res': '{}_chi2_Source_res'.format(lightcurve.filterid)}, inplace=True)
+
+    # import matplotlib.pyplot as plt
+    # plt.plot(ext_cat_df['ra'], ext_cat_df['dec'], 'x', color='grey')
+    # # plt.plot(ps1_df['ra'], ps1_df['dec'], '+')
+    # plt.plot(gaia_df['ra'], gaia_df['dec'], '.')
 
     if len(ext_cat_df) == 0:
         logger.error("Empty calibration catalog \'{}\'!".format(args.photom_cat))
         return False
 
     # Match external catalog with constant star catalog
-    assoc = NearestNeighAssoc(first=[gaia_df['ra'].to_numpy(), gaia_df['dec'].to_numpy()], radius = 2./60./60.)
-    i = assoc.match(ext_cat_df['ra'].to_numpy(), ext_cat_df['dec'].to_numpy())
+    assoc = NearestNeighAssoc(first=[np.deg2rad(gaia_df['ra'].to_numpy()), np.deg2rad(gaia_df['dec'].to_numpy())], radius = np.deg2rad(2./60./60.))
+    i = assoc.match(np.deg2rad(ext_cat_df['ra'].to_numpy()), np.deg2rad(ext_cat_df['dec'].to_numpy()))
 
     gaia_df = gaia_df.iloc[i[i>=0]].reset_index(drop=True)
     ext_cat_df = ext_cat_df.iloc[i>=0].reset_index(drop=True)
+    print(ext_cat_df)
+
+    plt.plot(gaia_df['ra'], gaia_df['dec'], '.', color='black')
+    plt.show()
+    plt.savefig("catalogs.png", dpi=1000.)
+    plt.close()
+    print(ext_cat_df)
+
+    return True
 
     stars_df = stars_df.loc[gaia_df['Source'].tolist()]
 

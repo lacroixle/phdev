@@ -91,7 +91,7 @@ def wcs_residuals(lightcurve, logger, args):
     # Residuals/magnitude binplot
     plt.subplots(nrows=2, ncols=2, figsize=(14., 7.), gridspec_kw={'hspace': 0.})
     plt.subplot(2, 2, 1)
-    xbinned_mag, yplot_res, res_dispersion = binplot(matched_stars_df['mag'].to_numpy(), (matched_stars_df['x']-matched_stars_df['gaia_x']).to_numpy(), nbins=10, data=True, rms=True, scale=False)
+    xbinned_mag, yplot_res, res_dispersion = binplot(matched_stars_df['mag'].to_numpy(), (matched_stars_df['x']-matched_stars_df['gaia_x']).to_numpy(), nbins=10, data=True, scale=False)
     plt.xlabel("$G$ [AB mag]")
     plt.ylabel("$x-x_\\mathrm{Gaia}$ [px]")
     plt.ylim(-0.5, 0.5)
@@ -104,7 +104,7 @@ def wcs_residuals(lightcurve, logger, args):
     plt.grid()
 
     plt.subplot(2, 2, 3)
-    xbinned_mag, yplot_res, res_dispersion = binplot(matched_stars_df['mag'].to_numpy(), (matched_stars_df['y']-matched_stars_df['gaia_y']).to_numpy(), nbins=10, data=True, rms=True, scale=False)
+    xbinned_mag, yplot_res, res_dispersion = binplot(matched_stars_df['mag'].to_numpy(), (matched_stars_df['y']-matched_stars_df['gaia_y']).to_numpy(), nbins=10, data=True, scale=False)
     plt.xlabel("$G$ [AB mag]")
     plt.ylabel("$y-y_\\mathrm{Gaia}$ [px]")
     plt.ylim(-0.5, 0.5)
@@ -265,8 +265,9 @@ def astrometry_fit(lightcurve, logger, args):
     # Load data
     logger.info("Generating star catalog")
     matched_stars_df = lightcurve.extract_star_catalog(['psfstars', 'gaia'])
+
     matched_stars_df['mag'] = -2.5*np.log10(matched_stars_df['psfstars_flux'])
-    matched_stars_df['emag'] = 1.08*matched_stars_df['psfstars_eflux']/matched_stars_df['psfstars_flux']
+    matched_stars_df['emag'] = 1.08*(matched_stars_df['psfstars_eflux']/matched_stars_df['psfstars_flux']).to_numpy()
 
     # Add exposure informations
     exposures_df = lightcurve.extract_exposure_catalog(files_to_check="cat_indices.hd5")
@@ -362,21 +363,18 @@ def astrometry_fit(lightcurve, logger, args):
     # Tangent space to pixel space
 
     # Build model
-    piedestal = 0.05
+    piedestal = 0.1
+    # piedestal = 0.
     tp2px_model = AstromModel(args.astro_degree, len(dp.exposure_set), piedestal=piedestal, full_cov=False)
 
     # Model fitting
     _fit_astrometry(tp2px_model, dp, logger)
 
     res = tp2px_model.residuals((dp.tpx, dp.tpy), (dp.x, dp.y), (dp.pmtpx, dp.pmtpy), dp.mjd, dp.exposure_index)
-    # wres = (res/np.array([np.sqrt(dp.sx**2+piede**2), np.sqrt(dp.sy**2+pied**2)])).flatten()
-    # wres = (res/np.array([dp.sx, dp.sy])).flatten()
     wres = res.flatten()/tp2px_model.sigma(dp)
     chi2 = np.sum(wres**2)
     ndof = (2*len(dp.nt)-len(lightcurve.exposures)*(args.astro_degree+1)*(args.astro_degree+2))
-    print("Chi2={}".format(chi2))
-    print("NDoF={}".format(ndof))
-    print("Chi2/NDoF={}".format(chi2/ndof))
+
     astrometry_stats['tp2px'] = {}
     astrometry_stats['tp2px']['chi2'] = chi2.item()
     astrometry_stats['tp2px']['ndof'] = ndof
@@ -386,7 +384,10 @@ def astrometry_fit(lightcurve, logger, args):
     astrometry_stats['tp2px']['mu_y'] = np.mean(res[1]).item()
     astrometry_stats['tp2px']['sigma_x'] = np.std(res[0]).item()
     astrometry_stats['tp2px']['sigma_y'] = np.std(res[1]).item()
-    tp2px_chi2_exposure = np.bincount(np.hstack([dp.exposure_index]*2), weights=wres**2)/(np.bincount(np.hstack([dp.exposure_index]*2))-2*(args.astro_degree+1)*(args.astro_degree+2))
+    #tp2px_chi2_exposure = np.bincount(np.hstack([dp.exposure_index]*2), weights=wres**2)/(np.bincount(np.hstack([dp.exposure_index]*2))-2*(args.astro_degree+1)*(args.astro_degree+2))
+    tp2px_chi2_exposure = np.bincount(np.hstack([dp.exposure_index]*2), weights=wres**2)/(np.bincount(np.hstack([dp.exposure_index]*2))-(args.astro_degree+1)*(args.astro_degree+2))
+    print(tp2px_chi2_exposure)
+
 
     tp2px_exposure_df = pd.DataFrame(data=tp2px_chi2_exposure, index=list(dp.exposure_map.keys()), columns=['chi2'])
     tp2px_exposure_df.to_csv(lightcurve.astrometry_path.joinpath("tp2px_chi2.csv"), sep=",")
@@ -691,7 +692,7 @@ def astrometry_fit_plot(lightcurve, logger, args):
     plt.subplots(nrows=2, ncols=2, figsize=(18., 10.))
     plt.subplot(2, 2, 1)
     #xbinned_mag, yplot_res, res_dispersion = binplot(dp.mag[measure_mask], ref2px_residuals[0]/np.sqrt(dp.sx[measure_mask]**2+dp.sy[measure_mask]**2), nbins=5, data=True, rms=True, scale=False)
-    xbinned_mag, yplot_res, res_dispersion = binplot(dp.mag[measure_mask], ref2px_residuals[0], nbins=10, data=True, rms=True, scale=False)
+    xbinned_mag, yplot_res, res_dispersion = binplot(dp.mag[measure_mask], ref2px_residuals[0], nbins=10, data=True, scale=False)
     plt.xlabel("$m$ [mag]")
     plt.ylabel("$x-x_\\mathrm{fit}$ [pixel]")
     plt.grid()
@@ -702,7 +703,7 @@ def astrometry_fit_plot(lightcurve, logger, args):
     plt.ylabel("$\\sigma_{x-x_\\mathrm{fit}}$ [pixel]")
 
     plt.subplot(2, 2, 3)
-    xbinned_mag, yplot_res, res_dispersion = binplot(dp.mag[measure_mask], ref2px_residuals[1], nbins=10, data=True, rms=True, scale=False)
+    xbinned_mag, yplot_res, res_dispersion = binplot(dp.mag[measure_mask], ref2px_residuals[1], nbins=10, data=True, scale=False)
     plt.xlabel("$m$ [mag]")
     plt.ylabel("$y-y_\\mathrm{fit}$ [pixel]")
     plt.grid()
@@ -732,7 +733,7 @@ def astrometry_fit_plot(lightcurve, logger, args):
     # Residuals binplot / color
     plt.subplots(nrows=2, ncols=2, figsize=(20., 10.))
     plt.subplot(2, 2, 1)
-    xbinned_mag, yplot_res, res_dispersion = binplot(dp.centered_color[measure_mask], ref2px_residuals[0], nbins=5, data=True, rms=True, scale=False)
+    xbinned_mag, yplot_res, res_dispersion = binplot(dp.centered_color[measure_mask], ref2px_residuals[0], nbins=5, data=True, scale=False)
     plt.xlabel("$B_p-R_p$ [mag]")
     plt.ylabel("$x-x_\\mathrm{fit}$ [pixel]")
     plt.grid()
@@ -744,7 +745,7 @@ def astrometry_fit_plot(lightcurve, logger, args):
     plt.grid()
 
     plt.subplot(2, 2, 3)
-    xbinned_mag, yplot_res, res_dispersion = binplot(dp.centered_color[measure_mask], ref2px_residuals[1], nbins=5, data=True, rms=True, scale=False)
+    xbinned_mag, yplot_res, res_dispersion = binplot(dp.centered_color[measure_mask], ref2px_residuals[1], nbins=5, data=True, scale=False)
     plt.xlabel("$B_p-R_p$ [mag]")
     plt.ylabel("$y-y_\\mathrm{fit}$ [pixel]")
     plt.grid()
@@ -906,9 +907,6 @@ def astrometry_fit_plot(lightcurve, logger, args):
     wres = res/np.array([np.sqrt(dp.sx**2+pied**2), np.sqrt(dp.sy**2+pied**2)])
     chi2 = np.sum(wres**2)
     ndof = (2*len(dp.nt)-len(lightcurve.exposures)*(args.astro_degree+1)*(args.astro_degree+2))
-    print("Chi2={}".format(chi2))
-    print("NDoF={}".format(ndof))
-    print("Chi2/NDoF={}".format(chi2/ndof))
 
     ################################################################################
     # Seeing / rcid
@@ -933,7 +931,7 @@ def astrometry_fit_plot(lightcurve, logger, args):
         plt.subplots(nrows=2, ncols=2, figsize=(15., 8.), sharex=True, gridspec_kw={'hspace': 0.})
         plt.suptitle("TP->PX - Residuals - RCID={}".format(list(dp.rcid_map.keys())[i]))
         plt.subplot(2, 2, 1)
-        xbinned_mag, yplot_res, res_dispersion = binplot(dp.cat_mag[m], res[0][m], nbins=10, data=True, rms=True, scale=False)
+        xbinned_mag, yplot_res, res_dispersion = binplot(dp.cat_mag[m], res[0][m], nbins=10, data=True, scale=False)
         plt.xlabel("$m_G$ [mag]")
         plt.ylabel("$x-x_\\mathrm{model}$ [pixel]")
         plt.grid()
@@ -945,7 +943,7 @@ def astrometry_fit_plot(lightcurve, logger, args):
         plt.grid()
 
         plt.subplot(2, 2, 3)
-        xbinned_mag, yplot_res, res_dispersion = binplot(dp.cat_mag[m], res[1][m], nbins=10, data=True, rms=True, scale=False)
+        xbinned_mag, yplot_res, res_dispersion = binplot(dp.cat_mag[m], res[1][m], nbins=10, data=True, scale=False)
         plt.xlabel("$m_G$ [mag]")
         plt.ylabel("$y-y_\\mathrm{model}$ [pixel]")
         plt.grid()
@@ -969,7 +967,7 @@ def astrometry_fit_plot(lightcurve, logger, args):
         plt.subplots(nrows=2, ncols=2, figsize=(15., 8.), sharex=True, gridspec_kw={'hspace': 0.})
         plt.suptitle("TP->PX - Pulls - RCID={}".format(list(dp.rcid_map.keys())[i]))
         plt.subplot(2, 2, 1)
-        xbinned_mag, yplot_res, res_dispersion = binplot(dp.cat_mag[m], wres[0][m], nbins=10, data=True, rms=True, scale=False)
+        xbinned_mag, yplot_res, res_dispersion = binplot(dp.cat_mag[m], wres[0][m], nbins=10, data=True, scale=False)
         plt.xlabel("$m_G$ [mag]")
         plt.ylabel("$x-x_\\mathrm{model}$ [pixel]")
         plt.grid()
@@ -981,7 +979,7 @@ def astrometry_fit_plot(lightcurve, logger, args):
         plt.grid()
 
         plt.subplot(2, 2, 3)
-        xbinned_mag, yplot_res, res_dispersion = binplot(dp.cat_mag[m], wres[1][m], nbins=10, data=True, rms=True, scale=False)
+        xbinned_mag, yplot_res, res_dispersion = binplot(dp.cat_mag[m], wres[1][m], nbins=10, data=True, scale=False)
         plt.xlabel("$m_G$ [mag]")
         plt.ylabel("$x-x_\\mathrm{model}$ [pixel]")
         plt.grid()
@@ -1172,7 +1170,7 @@ def astrometry_fit_plot(lightcurve, logger, args):
     # Magnitude / residuals binplot
     plt.subplots(nrows=2, ncols=2, figsize=(10., 10.))
     plt.subplot(2, 2, 1)
-    xbinned_mag, yplot_res, res_dispersion = binplot(dp.mag, tp2px_residuals[0], nbins=5, data=True, rms=True, scale=False)
+    xbinned_mag, yplot_res, res_dispersion = binplot(dp.mag, tp2px_residuals[0], nbins=5, data=True, scale=False)
     plt.xlabel("$m$ [mag]")
     plt.ylabel("$x-x_\\mathrm{fit}$ [pixel]")
     plt.grid()
@@ -1183,7 +1181,7 @@ def astrometry_fit_plot(lightcurve, logger, args):
     plt.ylabel("$\\sigma_{x-x_\\mathrm{fit}}$ [pixel]")
 
     plt.subplot(2, 2, 3)
-    xbinned_mag, yplot_res, res_dispersion = binplot(dp.mag, tp2px_residuals[1], nbins=5, data=True, rms=True, scale=False)
+    xbinned_mag, yplot_res, res_dispersion = binplot(dp.mag, tp2px_residuals[1], nbins=5, data=True, scale=False)
     plt.xlabel("$m$ [mag]")
     plt.ylabel("$y-y_\\mathrm{fit}$ [pixel]")
     plt.grid()
@@ -1220,7 +1218,7 @@ def astrometry_fit_plot(lightcurve, logger, args):
     # Residuals/color binplot
     plt.subplots(nrows=2, ncols=2, figsize=(20., 10.))
     plt.subplot(2, 2, 1)
-    xbinned_mag, yplot_res, res_dispersion = binplot(dp.centered_color, tp2px_residuals[0], nbins=5, data=True, rms=True, scale=False)
+    xbinned_mag, yplot_res, res_dispersion = binplot(dp.centered_color, tp2px_residuals[0], nbins=5, data=True, scale=False)
     plt.xlabel("$B_p-R_p$ [mag]")
     plt.ylabel("$x-x_\\mathrm{fit}$ [pixel]")
     plt.grid()
@@ -1232,7 +1230,7 @@ def astrometry_fit_plot(lightcurve, logger, args):
     plt.grid()
 
     plt.subplot(2, 2, 3)
-    xbinned_mag, yplot_res, res_dispersion = binplot(dp.centered_color, tp2px_residuals[1], nbins=5, data=True, rms=True, scale=False)
+    xbinned_mag, yplot_res, res_dispersion = binplot(dp.centered_color, tp2px_residuals[1], nbins=5, data=True, scale=False)
     plt.xlabel("$B_p-R_p$ [mag]")
     plt.ylabel("$y-y_\\mathrm{fit}$ [pixel]")
     plt.grid()
@@ -1257,7 +1255,6 @@ def astrometry_fit_plot(lightcurve, logger, args):
 
     tp2px_exposure_df = pd.DataFrame({'exposure': list(dp.exposure_map.keys()), 'chi2': tp2px_chi2_exposure})
     tp2px_exposure_df.set_index('exposure', drop=True, inplace=True)
-    print(tp2px_exposure_df)
 
     plt.figure()
     plt.plot(range(len(tp2px_chi2_exposure)), tp2px_chi2_exposure, '.')

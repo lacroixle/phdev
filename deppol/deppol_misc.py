@@ -374,10 +374,15 @@ def retrieve_catalogs(lightcurve, logger, args):
         # logger.info("Found {} stars".format(len(ubercal_fluxcatalog_df)))
         # _plot_catalog_coverage(ubercal_fluxcatalog_df, 'ubercal_fluxcatalog')
 
-        logger.info("Retrieving fluxcatalog_OR Ubercal")
-        ubercal_fluxcatalog_or_df = _get_ubercal_catalog('fluxcatalog_or', centroids, radius)
+        # logger.info("Retrieving fluxcatalog_OR Ubercal")
+        # ubercal_fluxcatalog_or_df = _get_ubercal_catalog('fluxcatalog_or', centroids, radius)
+        # logger.info("Found {} stars".format(len(ubercal_fluxcatalog_or_df)))
+        # _plot_catalog_coverage(ubercal_fluxcatalog_or_df, 'ubercal_fluxcatalog_or')
+
+        logger.info("Retrieving repop Ubercal")
+        ubercal_fluxcatalog_or_df = _get_ubercal_catalog('repop', centroids, radius)
         logger.info("Found {} stars".format(len(ubercal_fluxcatalog_or_df)))
-        _plot_catalog_coverage(ubercal_fluxcatalog_or_df, 'ubercal_fluxcatalog_or')
+        _plot_catalog_coverage(ubercal_fluxcatalog_or_df, 'ubercal_repop')
 
         # common_gaiaids = list(set(set(ubercal_self_df.index) & set(ubercal_ps1_df.index) & set(gaia_df['Source'])))
         # logger.info("Keeping {} stars in common in all catalogs".format(len(common_gaiaids)))
@@ -418,7 +423,7 @@ def retrieve_catalogs(lightcurve, logger, args):
 
         logger.info("Saving Ubercal catalogs")
         # ubercal_fluxcatalog_df.to_parquet(lightcurve.ext_catalogs_path.joinpath("ubercal_fluxcatalog.parquet"))
-        ubercal_fluxcatalog_or_df.to_parquet(lightcurve.ext_catalogs_path.joinpath("ubercal_fluxcatalog_or.parquet"))
+        ubercal_fluxcatalog_or_df.to_parquet(lightcurve.ext_catalogs_path.joinpath("ubercal_repop.parquet"))
         # ubercal_self_df.to_parquet(lightcurve.ext_catalogs_path.joinpath("ubercal_self.parquet"))
         # ubercal_ps1_df.to_parquet(lightcurve.ext_catalogs_path.joinpath("ubercal_ps1.parquet"))
 

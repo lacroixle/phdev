@@ -341,6 +341,8 @@ def smphot_stars_constant(lightcurve, logger, args):
     # Remove nans and 0's in error term
     smphot_lc_df.dropna(subset='error', inplace=True)
     smphot_lc_df = smphot_lc_df.loc[smphot_lc_df['error']>0.]
+    smphot_lc_df = smphot_lc_df.loc[smphot_lc_df['flux']>0.]
+    smphot_lc_df = smphot_lc_df.loc[smphot_lc_df['flux']<=1e6]
 
     # Create dataproxy for the fit
     piedestal = 0.

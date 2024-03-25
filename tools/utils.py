@@ -53,8 +53,10 @@ mag2extcatmag = {'gaia': {'zg': 'BPmag',
                                   'zi': 'zimag'},
                  'ubercal_ps1': {'zg': 'zgmag',
                                  'zr': 'zrmag',
-                                 'zi': 'zimag'}}
-
+                                 'zi': 'zimag'},
+                 'ubercal_repop': {'zg': 'zgmag',
+                                   'zr': 'zrmag',
+                                   'zi': 'zimag'}}
 emag2extcatemag = {'gaia': {'zg': 'e_BPmag',
                             'zr': 'e_RPmag',
                             'zi': 'e_RPmag'},
@@ -72,7 +74,10 @@ emag2extcatemag = {'gaia': {'zg': 'e_BPmag',
                                   'zi': 'ezimag'},
                  'ubercal_ps1': {'zg': 'ezgmag',
                                  'zr': 'ezrmag',
-                                 'zi': 'ezimag'}}
+                                 'zi': 'ezimag'},
+                 'ubercal_repop': {'zg': 'ezgmag',
+                                   'zr': 'ezrmag',
+                                   'zi': 'ezimag'}}
 
 
 filtercode2ztffid = {'zg': 1,
@@ -729,7 +734,7 @@ def filter_catalog_in_cone(cat_df, center_ra, center_dec, radius):
     sep = np.rad2deg(angular_separation(np.deg2rad(cat_df['ra'].to_numpy()), np.deg2rad(cat_df['dec'].to_numpy()), np.deg2rad(center_ra), np.deg2rad(center_dec)))
     return sep <= radius
 
-def get_ubercal_catalog_in_cone(name, ubercal_config_path, center_ra, center_dec, radius):
+def get_ubercal_catalog_in_cone(name, ubercal_config_path, center_ra, center_dec, radius, filtercode=None):
     with open(ubercal_config_path, 'r') as f:
         ubercal_config = yaml.load(f, Loader=yaml.Loader)
 
@@ -742,7 +747,7 @@ def get_ubercal_catalog_in_cone(name, ubercal_config_path, center_ra, center_dec
         cat_df = pd.read_parquet(pathlib.Path(ubercal_config['paths']['ubercal']).joinpath(ubercal_config['paths'][name][filtercode]), filters=[('Source', 'in', gaiaids)], engine='pyarrow').set_index('Source')
         cat_df = cat_df.loc[cat_df['n_obs']>=ubercal_config['config']['min_measure']]
 
-        if name == 'fluxcatalog' or name == 'fluxcatalog_or':
+        if name == 'fluxcatalog' or name == 'fluxcatalog_or' or name == 'repop':
             cat_df = cat_df.loc[cat_df['calflux_weighted_mean']>0.]
             cat_df['calflux_rms'] = cat_df['calflux_weighted_std']
             cat_df['calflux_weighted_std'] = cat_df['calflux_weighted_std']/np.sqrt(cat_df['n_obs']-1)
@@ -751,23 +756,27 @@ def get_ubercal_catalog_in_cone(name, ubercal_config_path, center_ra, center_dec
                                    calmag_weighted_std=2.5/np.log(10)*cat_df['calflux_weighted_std']/cat_df['calflux_weighted_mean'],
                                    calmag_rms=2.5/np.log(10)*cat_df['calflux_rms']/cat_df['calflux_weighted_mean'])
 
+            print(cat_df.dtypes)
             cat_df.drop(labels=['calflux_weighted_mean', 'calflux_weighted_std', 'calflux_rms'], axis='columns', inplace=True)
 
         return cat_df
 
-    import matplotlib.pyplot as plt
-    cat_g_df = _get_cat('zg')
-    cat_r_df = _get_cat('zr')
-    cat_i_df = _get_cat('zi')
 
-    common_stars = list(set(set(cat_g_df.index.tolist()) & set(cat_r_df.index.tolist()) & set(cat_i_df.index.tolist())))
+    if filtercode is None:
+        cat_g_df = _get_cat('zg')
+        cat_r_df = _get_cat('zr')
+        cat_i_df = _get_cat('zi')
 
-    cat_g_df = cat_g_df.filter(items=common_stars, axis=0)
-    cat_r_df = cat_r_df.filter(items=common_stars, axis=0)
-    cat_i_df = cat_i_df.filter(items=common_stars, axis=0)
+        common_stars = list(set(set(cat_g_df.index.tolist()) & set(cat_r_df.index.tolist()) & set(cat_i_df.index.tolist())))
 
-    cat_g_df.rename(columns={'calmag_weighted_mean': 'zgmag', 'calmag_weighted_std': 'ezgmag', 'calmag_rms': 'zgrms', 'n_obs': 'zg_n_obs', 'chi2_Source_res': 'zg_chi2_Source_res'}, inplace=True)
-    cat_df = pd.concat([cat_g_df, cat_r_df[['calmag_weighted_mean', 'calmag_weighted_std', 'calmag_rms', 'n_obs', 'chi2_Source_res']].rename(columns={'calmag_weighted_mean': 'zrmag', 'calmag_weighted_std': 'ezrmag', 'calmag_rms': 'zrrms', 'n_obs': 'zr_n_obs', 'chi2_Source_res': 'zr_chi2_Source_res'}),
-                        cat_i_df[['calmag_weighted_mean', 'calmag_weighted_std', 'calmag_rms', 'n_obs', 'chi2_Source_res']].rename(columns={'calmag_weighted_mean': 'zimag', 'calmag_weighted_std': 'ezimag', 'calmag_rms': 'zirms', 'n_obs': 'zi_n_obs', 'chi2_Source_res': 'zi_chi2_Source_res'})], axis=1)
+        cat_g_df = cat_g_df.filter(items=common_stars, axis=0)
+        cat_r_df = cat_r_df.filter(items=common_stars, axis=0)
+        cat_i_df = cat_i_df.filter(items=common_stars, axis=0)
 
-    return cat_df
+        cat_g_df.rename(columns={'calmag_weighted_mean': 'zgmag', 'calmag_weighted_std': 'ezgmag', 'calmag_rms': 'zgrms', 'n_obs': 'zg_n_obs', 'chi2_Source_res': 'zg_chi2_Source_res'}, inplace=True)
+        cat_df = pd.concat([cat_g_df, cat_r_df[['calmag_weighted_mean', 'calmag_weighted_std', 'calmag_rms', 'n_obs', 'chi2_Source_res']].rename(columns={'calmag_weighted_mean': 'zrmag', 'calmag_weighted_std': 'ezrmag', 'calmag_rms': 'zrrms', 'n_obs': 'zr_n_obs', 'chi2_Source_res': 'zr_chi2_Source_res'}),
+                            cat_i_df[['calmag_weighted_mean', 'calmag_weighted_std', 'calmag_rms', 'n_obs', 'chi2_Source_res']].rename(columns={'calmag_weighted_mean': 'zimag', 'calmag_weighted_std': 'ezimag', 'calmag_rms': 'zirms', 'n_obs': 'zi_n_obs', 'chi2_Source_res': 'zi_chi2_Source_res'})], axis=1)
+
+        return cat_df
+    else:
+        return _get_cat(filtercode)

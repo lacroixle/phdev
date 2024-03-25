@@ -95,7 +95,7 @@ if __name__ == '__main__':
                             return
 
                     # Much faster than relying on ScienceQuadrant.from_filename() throwing error
-                    if not sciimg_path.exists() or not (mskimg_path.exists() or maskimg_path_gz.exists()):
+                    if not sciimg_path.exists() or not (mskimg_path.exists() or mskimg_path_gz.exists()):
                         raise FileNotFoundError(sciimg_path)
 
 
