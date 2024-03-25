@@ -761,7 +761,6 @@ def get_ubercal_catalog_in_cone(name, ubercal_config_path, center_ra, center_dec
 
         return cat_df
 
-
     if filtercode is None:
         cat_g_df = _get_cat('zg')
         cat_r_df = _get_cat('zr')

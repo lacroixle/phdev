@@ -1,6 +1,50 @@
 #!/usr/bin/env python3
 
 
+def build_res_cat(lightcurve, logger, args):
+    import pickle
+    import pandas as pd
+    import numpy as np
+    from croaks.match import NearestNeighAssoc
+
+
+    with open(lightcurve.photometry_path.joinpath("filtered_model.pickle"), 'rb') as f:
+        _, photo_dp,  photo_bads, _, photo_res, _, _= pickle.load(f)
+
+    # Retrieve astrometry
+    with open(lightcurve.astrometry_path.joinpath("models.pickle"), 'rb') as f:
+        astro_model = pickle.load(f)
+
+        astro_dp = astro_model['dp']
+        astro_res = astro_model['tp2px'].residuals((astro_dp.tpx, astro_dp.tpy), (astro_dp.x, astro_dp.y), (astro_dp.pmtpx, astro_dp.pmtpy), astro_dp.mjd, astro_dp.exposure_index)
+        astro_df = pd.DataFrame.from_records(astro_dp.nt)
+        astro_df = astro_df.assign(resx=astro_res[0],
+                                   resy=astro_res[1])
+
+    # Retrieve SMP
+    smp_lc_df = pd.read_parquet(lightcurve.smphot_stars_path.joinpath("stars_lightcurves.parquet"))
+    smp_stars_df = pd.read_parquet(lightcurve.smphot_stars_path.joinpath("constant_stars.parquet"))
+
+    with open(lightcurve.smphot_stars_path.joinpath("stars_gaiaid.txt"), 'r') as f:
+        gaiaids = np.array(list(map(lambda x: int(x.strip()), f.readlines())))
+
+    gaia_df = lightcurve.get_ext_catalog('gaia').set_index('Source', drop=True)
+    smp_lc_df = smp_lc_df.assign(gaiaid=gaiaids[smp_lc_df['star']])
+    # smp_lc_df = smp_lc_df.assign(gaia_ra=gaia_df.loc[smp_lc_df['gaiaid']]['ra'].tolist(),
+    #                              gaia_dec=gaia_df.loc[smp_lc_df['gaiaid']]['dec'].tolist())
+
+    smp_lc_df = smp_lc_df[['x', 'y', 'xerror', 'yerror', 'flux', 'error', 'sky', 'skyerror', 'mjd', 'seeing', 'exptime', 'phratio', 'gseeing', 'sesky', 'sigsky', 'ra', 'dec', 'ix', 'iy', 'pmx', 'pmy', 'img', 'star', 'name', 'ha', 'airmass', 'res', 'bads', 'gaiaid']]
+    print(smp_lc_df[['gaiaid', 'name']])
+    print(astro_df)
+
+    gaiaids = list(set(smp_lc_df))
+
+    for gaiaid in gaiaids:
+        pass
+
+    return True
+
+
 def psf_resid(exposure, logger, args):
     from utils import ListTable
     import numpy as np

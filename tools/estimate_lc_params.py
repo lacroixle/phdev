@@ -263,6 +263,9 @@ def estimate_lc_params(ztfname):
         lc_dict, t_inf, t_sup, t_0, gaia_cal_df, sn_info_df = extract_interval(ztfname, t0_inf, t0_sup, off_mul)
     except EmptySQLResult:
         return
+    except KeyError:
+        print("Could not find entry for {}".format(ztfname))
+        return
 
     # Check that at least for one filter we have data
     if not any([lc_dict[zfilter] is not None for zfilter in ['zg', 'zr', 'zi']]):
