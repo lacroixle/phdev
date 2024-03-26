@@ -24,6 +24,9 @@ import matplotlib.patches as patches
 from saunerie.linearmodels import indic, RobustLinearSolver
 from croaks import DataProxy
 
+# path name of current apptainer
+PN_APPTAINER="/sps/ztf/share/apptainer/poloka_waf-1.sif"
+
 
 filtercodes = ['zg', 'zr', 'zi']
 quadrant_width_px, quadrant_height_px = 3072, 3080
@@ -758,3 +761,20 @@ def get_ubercal_catalog_in_cone(name, ubercal_config_path, center_ra, center_dec
                         cat_i_df[['calmag_weighted_mean', 'calmag_weighted_std', 'n_obs', 'chi2_Source_res']].rename(columns={'calmag_weighted_mean': 'zimag', 'calmag_weighted_std': 'ezimag', 'n_obs': 'zi_n_obs', 'chi2_Source_res': 'zi_chi2_Source_res'})], axis=1)
 
     return cat_df
+
+def create_script_submit_under_apptainer(batch, name_app=""):
+    if name_app=="":
+        name_app = PN_APPTAINER
+    dir_batch = os.path.dirname(batch)
+    name_batch =  os.path.basename(batch)
+    print(dir_batch, name_batch)
+    script_app = f"""#!/bin/sh
+echo "==================="
+echo "Job under apptainer"   
+echo "==================="    
+apptainer exec --bind /pbs,/sps/ztf {name_app} {batch}
+"""
+    app_script = f"{dir_batch}/apptainer_{name_batch}" 
+    with open(app_script, 'w') as f:
+        f.write(script_app)
+    return app_script

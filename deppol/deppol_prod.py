@@ -16,6 +16,7 @@ from deppol_utils import run_and_log, load_timings, quadrants_from_band_path
 import utils
 
 
+
 def get_current_running_sne():
     out = subprocess.run(["squeue", "-o", "%j,%t", "-p", "htc", "-h"], capture_output=True)
     scheduled_jobs_raw = out.stdout.decode('utf-8').split("\n")
@@ -101,6 +102,8 @@ def schedule_jobs(run_folder, run_name, lightcurves):
 
         # If not, submit it through the SLURM batch system
         # Configured to run @ CCIN2P3
+        # TODO: add apptainer submission
+        app_batch = utils.create_script_submit_under_apptainer(batch)
         cmd = ["sbatch", "--ntasks={}".format(args.ntasks),
                "-D", "{}".format(run_folder.joinpath(run_name)),
                "-J", "smp_{}".format(batch_name),
@@ -109,7 +112,7 @@ def schedule_jobs(run_folder, run_name, lightcurves):
                "-L", "sps",
                "--mem={}G".format(4*args.ntasks),
                "-t", "5-0",
-               batch]
+               app_batch]
 
         returncode = run_and_log(cmd, logger)
 
