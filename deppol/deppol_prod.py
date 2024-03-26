@@ -51,6 +51,10 @@ ulimit -n 4096
 export OMP_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
 
+# because I can't enable micromamba env at apptainer start  :-(
+eval "$(micromamba shell hook --shell bash)"
+micromamba activate
+
 # Command line for SNe lightcurves
 #OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 deppol --ztfname={ztfname} --filtercode={filtercode} -j $SLURM_NTASKS --wd={wd} --func={func} --lc-folder={lc_folder} --exposure-workspace=/dev/shm/llacroix --rm-intermediates --scratch=${{TMPDIR}}/llacroix --astro-degree=5 --discard-calibrated --from-scratch --dump-timings --parallel-reduce --use-gaia-stars --ext-catalog-cache=/sps/ztf/data/storage/scenemodeling/cat_cache
 
