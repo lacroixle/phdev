@@ -763,6 +763,10 @@ def get_ubercal_catalog_in_cone(name, ubercal_config_path, center_ra, center_dec
     return cat_df
 
 def create_script_submit_under_apptainer(batch, name_app=""):
+    """
+    batch : path/name of script SLURM batch
+    name_app: path/name of Apptainer image 
+    """
     if name_app=="":
         name_app = PN_APPTAINER
     dir_batch = os.path.dirname(batch)
@@ -774,7 +778,7 @@ echo "Job under apptainer"
 echo "==================="    
 apptainer exec --bind /pbs,/sps/ztf {name_app} {batch}
 """
-    app_script = f"{dir_batch}/apptainer_{name_batch}" 
-    with open(app_script, 'w') as f:
+    pn_script = f"{dir_batch}/apptainer_{name_batch}" 
+    with open(pn_script, 'w') as f:
         f.write(script_app)
-    return app_script
+    return pn_script
