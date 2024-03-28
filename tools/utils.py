@@ -776,7 +776,7 @@ def create_script_submit_under_apptainer(batch, name_app=""):
 echo "==================="
 echo "Job under apptainer"   
 echo "==================="    
-apptainer exec --bind /pbs,/sps/ztf {name_app} {batch}
+apptainer exec --bind /pbs,/sps/ztf {name_app} /usr/local/bin/_entrypoint.sh {batch}
 """
     pn_script = f"{dir_batch}/apptainer_{name_batch}" 
     with open(pn_script, 'w') as f:
